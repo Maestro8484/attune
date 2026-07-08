@@ -94,9 +94,23 @@ def import_catalog(db_path, library_json):
     print("stats:", dbm.stats(conn))
 
 
-def _analyze_one(path):
+def _read_path(path, read_map):
+    """Map a stored (canonical) path to a faster local mirror to READ audio from, if that
+    mirror copy exists. The DB key stays the original path; only the bytes are read locally.
+    read_map is a list of (from_prefix, to_prefix) pairs, e.g.
+    (r'\\\\NAS\\music', r'L:\\_MUSIC') so analysis runs off a local disk, not over the LAN."""
+    for a, b in (read_map or []):
+        if a and path.startswith(a):
+            cand = b + path[len(a):]
+            if os.path.exists(cand):
+                return cand
+            break
+    return path
+
+
+def _analyze_one(path, read_path=None):
     t0 = time.time()
-    r = feat.extract(path)
+    r = feat.extract(read_path or path)
     dt = time.time() - t0
     if r and "vec" in r:
         return (path, r["vec"], r["tempo"], None, dt)
@@ -104,7 +118,7 @@ def _analyze_one(path):
     return (path, None, None, err, dt)
 
 
-def analyze(db_path, limit=None, workers=4, paths_file=None):
+def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None):
     conn = dbm.connect(db_path)
     done = dbm.up_to_date_paths(conn)   # skip only unchanged, already-analyzed tracks
     mtimes = {r[0]: r[1] for r in conn.execute("SELECT path, mtime FROM tracks")}
@@ -123,8 +137,11 @@ def analyze(db_path, limit=None, workers=4, paths_file=None):
     n_ok = n_err = 0
     # I/O + numba release the GIL enough that threads give real speedup and avoid
     # re-importing librosa per task (process pool would be far slower to spin up).
+    local = sum(1 for p in todo if _read_path(p, read_map) != p)
+    if read_map:
+        print(f"reading {local}/{len(todo)} from local mirror, the rest from original path")
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        futs = {ex.submit(_analyze_one, p): p for p in todo}
+        futs = {ex.submit(_analyze_one, p, _read_path(p, read_map)): p for p in todo}
         for i, fut in enumerate(cf.as_completed(futs), 1):
             path, vec, tempo, err, dt = fut.result()
             dbm.save_features(conn, path, vec, tempo, int(time.time()), err,
@@ -152,13 +169,16 @@ def main():
     ap.add_argument("--limit", type=int)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--paths-file")
+    ap.add_argument("--read-map", nargs=2, metavar=("FROM", "TO"), action="append",
+                    help="read audio from a local mirror: FROM path-prefix -> TO path-prefix "
+                         "(repeatable). DB paths stay unchanged; only reads are redirected.")
     a = ap.parse_args()
     if a.cmd == "import-folder":
         import_folder(a.db, a.arg)
     elif a.cmd == "import-catalog":
         import_catalog(a.db, a.arg)
     elif a.cmd == "analyze":
-        analyze(a.db, a.limit, a.workers, a.paths_file)
+        analyze(a.db, a.limit, a.workers, a.paths_file, read_map=a.read_map)
     elif a.cmd == "stats":
         print(dbm.stats(dbm.connect(a.db)))
 
