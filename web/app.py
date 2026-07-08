@@ -22,7 +22,7 @@ import importlib.util
 import os
 import sqlite3
 
-from flask import Flask, jsonify, render_template_string, request
+from flask import Flask, Response, jsonify, render_template_string, request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(os.path.dirname(HERE), "src")
@@ -78,11 +78,25 @@ def create_app(db_path):
     labels_lc = [s.lower() for s in labels]
     print(f"Ready — {len(eng.paths):,} songs in the mixable pool.")
 
+    # export: path-map (+ optional Plex), config auto-discovered from a .env
+    exp_spec = importlib.util.spec_from_file_location("attune_export", os.path.join(SRC, "export.py"))
+    export = importlib.util.module_from_spec(exp_spec)
+    exp_spec.loader.exec_module(export)
+    cfg = export.load_env()
+    mapper = export.mapper_from_env(cfg)
+    plex_holder = {}                    # lazily-built PlexExporter (indexes Plex on first use)
+    plex_configured = all(cfg.get(k) for k in
+                          ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID", "PLEX_LIBRARY_ROOT"))
+
+    def _mix_tracks(i, size):
+        seed = eng.paths[i]
+        return [seed] + (eng.mix(seed, size=size) or [])
+
     app = Flask(__name__)
 
     @app.get("/")
     def index():
-        return render_template_string(PAGE, count=len(eng.paths))
+        return render_template_string(PAGE, count=len(eng.paths), plex=plex_configured)
 
     @app.get("/api/search")
     def search():
@@ -112,6 +126,65 @@ def create_app(db_path):
             seed=labels[i],
             tracks=[_label(eng, p) for p in picks],
         )
+
+    def _seed_index():
+        """Parse + bounds-check the ?i / ?size args shared by the export routes."""
+        i = int(request.args.get("i", ""))
+        size = min(max(int(request.args.get("size", 25)), 1), 200)
+        if not (0 <= i < len(eng.paths)):
+            raise IndexError
+        return i, size
+
+    @app.get("/api/export/m3u")
+    def export_m3u():
+        try:
+            i, size = _seed_index()
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        except IndexError:
+            return jsonify(error="unknown seed"), 404
+        flavor = request.args.get("flavor", "unc")
+        if flavor not in ("local", "unc", "plex"):
+            flavor = "unc"
+        oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
+        lines = ["#EXTM3U"]
+        try:
+            for p in _mix_tracks(i, size):
+                m = eng.meta.get(p, {})
+                artist = oneline(m.get("artist") or "?")
+                title = oneline(m.get("title") or os.path.basename(p))
+                lines.append(f"#EXTINF:-1,{artist} - {title}")
+                lines.append(mapper.convert(p, flavor))
+        except ValueError as e:                     # a flavor whose root isn't configured
+            return jsonify(error=str(e)), 400
+        body = "\n".join(lines) + "\n"
+        stem = eng.meta.get(eng.paths[i], {}).get("title") or "mix"
+        safe = "".join(c for c in stem if c.isalnum() or c in " -_").strip()[:60] or "mix"
+        return Response(body, mimetype="audio/x-mpegurl",
+                        headers={"Content-Disposition": f'attachment; filename="Attune-{safe}.m3u8"'})
+
+    @app.post("/api/export/plex")
+    def export_plex():
+        try:
+            i, size = _seed_index()
+        except ValueError:
+            return jsonify(ok=False, error="bad request"), 400
+        except IndexError:
+            return jsonify(ok=False, error="unknown seed"), 404
+        try:
+            if "plex" not in plex_holder:
+                plex_holder["plex"] = export.plex_from_env(cfg, mapper)
+        except SystemExit as e:
+            return jsonify(ok=False, error=str(e)), 400
+        title = f"Attune — like {labels[i]}"
+        try:
+            res = plex_holder["plex"].create_playlist(title, _mix_tracks(i, size))
+        except Exception as e:                      # network / Plex API failure
+            return jsonify(ok=False, error=f"Plex error: {e}"), 502
+        # don't leak full local library paths in the HTTP response — basenames only
+        if isinstance(res.get("missed"), list):
+            res["missed"] = [os.path.basename(p) for p in res["missed"]]
+        return jsonify(res)
 
     return app
 
@@ -171,6 +244,14 @@ PAGE = """<!doctype html>
   }
   .hint { color: var(--muted); font-size: 13px; }
   .spin { color: var(--muted); font-size: 14px; padding: 12px; }
+  .bar { display: flex; gap: 8px; margin: 14px 0 2px; flex-wrap: wrap; }
+  .btn {
+    font-size: 13px; padding: 7px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); cursor: pointer;
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+  .btn:disabled { opacity: .5; cursor: default; }
+  .status { font-size: 13px; color: var(--muted); margin: 8px 0 4px; min-height: 18px; }
 </style>
 </head>
 <body>
@@ -185,7 +266,9 @@ PAGE = """<!doctype html>
 const q = document.getElementById('q');
 const results = document.getElementById('results');
 const mixEl = document.getElementById('mix');
+const PLEX = {{ 'true' if plex else 'false' }};
 let timer = null, seq = 0;
+let cur = { i: null, size: 15 };
 
 q.addEventListener('input', () => {
   clearTimeout(timer);
@@ -208,17 +291,48 @@ async function runSearch(term) {
 }
 
 async function makeMix(i, label) {
+  cur.i = i;
   mixEl.innerHTML = '<div class="spin">Building a playlist that sounds like it…</div>';
-  const r = await fetch('/api/mix?i=' + i + '&size=15');
+  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size);
   const data = await r.json();
   if (data.error || !data.tracks || !data.tracks.length) {
     mixEl.innerHTML = '<div class="spin">Couldn\\'t build a mix for that one.</div>'; return;
   }
+  let bar = '<button class="btn" id="dlM3u">⬇ Download .m3u8</button>';
+  if (PLEX) bar += '<button class="btn" id="toPlex">＋ Send to Plex</button>';
   mixEl.innerHTML = '<div class="mix">'
     + '<h2>Sounds like</h2>'
     + '<p class="seed">' + esc(data.seed) + '</p>'
+    + '<div class="bar">' + bar + '</div>'
+    + '<div class="status" id="xstatus"></div>'
     + '<ol>' + data.tracks.map(t => '<li>' + esc(t) + '</li>').join('') + '</ol></div>';
+  document.getElementById('dlM3u').addEventListener('click', exportM3u);
+  if (PLEX) document.getElementById('toPlex').addEventListener('click', sendPlex);
   mixEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function exportM3u() {
+  if (cur.i === null) return;
+  window.location = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size;
+}
+
+async function sendPlex() {
+  if (cur.i === null) return;
+  const btn = document.getElementById('toPlex'), st = document.getElementById('xstatus');
+  btn.disabled = true;
+  st.textContent = 'Sending to Plex (indexing the library on first use — a few seconds)…';
+  try {
+    const r = await fetch('/api/export/plex?i=' + cur.i + '&size=' + cur.size, { method: 'POST' });
+    const d = await r.json();
+    st.textContent = d.ok
+      ? '✓ Added to Plex — ' + d.matched + ' tracks'
+        + (d.missed && d.missed.length ? ' (' + d.missed.length + ' not in Plex)' : '') + '.'
+      : '✗ ' + (d.error || 'Plex export failed');
+  } catch (e) {
+    st.textContent = '✗ ' + e;
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 function esc(s) {
