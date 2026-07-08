@@ -90,3 +90,9 @@ warranty (see the MIT license's "AS IS" clause).
       returns nothing.
 - [ ] You're comfortable with MIT (permissive). If you'd prefer copyleft, swap to GPL-3.0
       before the first public commit.
+- [ ] Run the local leak checker against `.leakpatterns` (personal paths, emails, tokens):
+      `python tools/leak_check.py`. It must report clean.
+- [ ] **Pickaxe the FULL history**, not just the working tree — a secret removed from HEAD
+      still lives in old commits: `git log -p -S '<email-or-token>' --all`. If anything is
+      found, the repo history must be rewritten/reset before publishing (this is what bit us
+      last time — an email that was clean at HEAD but present in history).
