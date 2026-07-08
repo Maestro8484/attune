@@ -1,0 +1,13 @@
+{
+  "_comment": "Copy to config.json and edit. Attune Bridge serves a modern LAN web UI over a running MusicIP Mixer (API enabled on port 10002).",
+  "mip_url": "http://localhost:10002",
+  "port": 8765,
+  "library_json": "",
+  "export_dir": "C:\\Playlists",
+  "read_path_map": [
+    ["\\\\YourNAS\\music\\Library", "D:\\LocalMirror\\Library"]
+  ],
+  "m3u_path_map": [
+    ["", ""]
+  ]
+}

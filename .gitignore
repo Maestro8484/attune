@@ -1,0 +1,56 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Attune data & artifacts (NEVER commit personal library data) ---
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+validation_paths.txt
+validation_report.json
+
+# Captured MusicIP output / ground truth = derived from your personal library. Private.
+groundtruth/
+**/groundtruth/
+library.json
+library_extended.txt
+*.m3lib
+*.m3lib.snapshot
+*.m3usr
+
+# MusicIP / third-party proprietary binaries — must never be redistributed here
+MusicMagic*.exe
+mipcore.exe
+genpuid*
+*.pem
+register.key
+*register.key
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# demo library (regenerate with examples/make_demo_library.py)
+examples/sample_library/
+
+# bridge personal config + outputs
+bridge/config.json
+bridge/playlists/
+
+# machine-specific personal strings for tools/leak_check.py (checked locally, never published)
+.leakpatterns

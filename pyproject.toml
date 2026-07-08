@@ -1,0 +1,54 @@
+[project]
+name = "attune-mixer"
+version = "0.1.0"
+description = "Local-first acoustic playlist generator — a modern successor to MusicIP Mixer."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+keywords = ["music", "playlist", "acoustic-similarity", "musicip", "librosa",
+            "self-hosted", "plex", "jellyfin", "mfcc", "local-first"]
+authors = [{ name = "Joe Schmidt" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Sound/Audio :: Analysis",
+]
+dependencies = [
+    "librosa>=0.11,<0.12",
+    "numpy>=1.26",
+    "scipy>=1.11",
+    "soundfile>=0.12",
+]
+
+# Optional feature sets. Core install (above) runs the standalone librosa engine.
+#   pip install attune-mixer[neural]   -> hybrid CLAP engine (embed.py + hybrid.py)
+#   pip install attune-mixer[bridge]   -> LAN web UI over a live MusicIP
+#   pip install attune-mixer[all]
+# torch is intentionally unpinned: install the right CPU/CUDA build from pytorch.org first.
+[project.optional-dependencies]
+neural = ["torch", "transformers>=4.40"]
+bridge = ["flask>=3.0", "mutagen>=1.47"]
+all = ["torch", "transformers>=4.40", "flask>=3.0", "mutagen>=1.47"]
+
+[project.scripts]
+attune-scan   = "scan:main"      # import/analyze a library -> mixer.db
+attune-embed  = "embed:main"     # optional CLAP embeddings (needs [neural])
+attune-mix    = "mixer:main"     # librosa engine (core, no neural deps)
+attune-hybrid = "hybrid:main"    # hybrid V2 engine (needs [neural] + a clap table)
+
+[project.urls]
+Homepage = "https://github.com/Maestro8484/attune"
+Issues = "https://github.com/Maestro8484/attune/issues"
+
+# Note: also requires ffmpeg/ffprobe on PATH (external program, not a Python dependency).
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+py-modules = ["features", "db", "scan", "mixer", "hybrid", "embed", "validate", "make_validation_set"]

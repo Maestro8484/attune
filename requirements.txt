@@ -1,0 +1,12 @@
+# Core acoustic analysis stack (all permissively licensed)
+librosa>=0.11,<0.12     # ISC
+numpy>=1.26             # BSD-3
+scipy>=1.11             # BSD-3
+soundfile>=0.12         # BSD-2
+
+# External runtime dependency (NOT a Python package): ffmpeg / ffprobe must be on PATH.
+#   - librosa uses it to decode formats libsndfile can't (mp3/m4a/etc.)
+#   - scan.py import-folder shells out to `ffprobe` to read tags
+# Install: https://ffmpeg.org/download.html  (or: winget install ffmpeg / brew install ffmpeg /
+#          apt install ffmpeg). ffmpeg is LGPL/GPL but is used as a separate program,
+#          not linked into this codebase.
