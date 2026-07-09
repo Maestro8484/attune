@@ -1,7 +1,11 @@
 """MusicIP engine adapter — presents the Attune engine interface over a live MusicIP Mixer.
 
 Wraps the MusicMagic HTTP API (localhost:10002) exactly the way attune/bridge/bridge.py already
-does (proven calls: /api/songs, /api/mix, /api/search) — reuse, not reinvent.
+does for /api/songs and /api/mix — reuse, not reinvent. NOTE: this API build has no working
+/api/search endpoint (verified live: GET /api lists only version/duplicates/mix, and
+/api/search?q=... errors for any query) — search() below substring-matches the cached
+/api/songs catalog instead, the same "search over what we already fetched" fallback
+bridge.py's own /api/search route uses.
 
 Path reconciliation: MusicIP speaks UNC paths (\\\\DiskStation\\music\\Music Library\\...) while our
 DB speaks local L:\\ paths. The library tree is a MIRROR, so we reconcile by the path tail after
@@ -35,6 +39,7 @@ class MusicIPEngine:
     def __init__(self, url="http://localhost:10002", timeout=60):
         self.url = url.rstrip("/")
         self.timeout = timeout
+        self._songs_cache = None
 
     def _get(self, pathq, timeout=None):
         with urllib.request.urlopen(self.url + pathq, timeout=timeout or self.timeout) as r:
@@ -49,16 +54,34 @@ class MusicIPEngine:
             return False
 
     def songs(self):
-        """All track paths MusicIP has analyzed (UNC)."""
-        return [l.strip() for l in self._get("/api/songs", timeout=300).splitlines() if l.strip()]
+        """All track paths MusicIP has analyzed (UNC). Cached: repeated calls (e.g. one
+        per search()) reuse the first fetch instead of re-pulling ~17k lines each time."""
+        if self._songs_cache is None:
+            self._songs_cache = [l.strip() for l in
+                                  self._get("/api/songs", timeout=300).splitlines() if l.strip()]
+        return self._songs_cache
 
     def search(self, q, limit=40):
-        q = (q or "").strip()
+        """Substring match over cached track paths (case-insensitive).
+
+        NOTE (verified live, not assumed): this HTTP API's own root page (GET /api) lists
+        only version/duplicates/mix -- there is no working text-search endpoint on this
+        install. GET /api/search?q=... returns "MusicIP API error - invalid request or
+        internal error." for every query tried (q=, song=, artist=, text=). So this can't
+        wrap a native call the way songs()/similar() do; instead it substring-matches the
+        cached /api/songs catalog's UNC paths (artist/album/title live in the path itself,
+        e.g. .../Albums/ACDC/1980 - Back In Black/...) -- the same "search over what we
+        already fetched" approach bridge.py's own /api/search uses locally."""
+        q = (q or "").strip().lower()
         if len(q) < 2:
             return []
-        raw = self._get("/api/search?" + urllib.parse.urlencode({"q": q}))
-        out = [l.strip() for l in raw.splitlines() if l.strip()]
-        return out[:limit]
+        out = []
+        for p in self.songs():
+            if q in p.lower():
+                out.append(p)
+                if len(out) >= limit:
+                    break
+        return out
 
     def similar(self, seed_path, size=25, style=40, variety=5, **_ignored):
         """MusicIP mix seeded by a full (UNC) song path -> list of track paths (seed removed)."""
