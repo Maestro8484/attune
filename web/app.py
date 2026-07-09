@@ -19,13 +19,34 @@ analyze/embed) — newly-added tracks only appear after a restart.
 """
 import argparse
 import importlib.util
+import mimetypes
 import os
 import sqlite3
+import threading
 
-from flask import Flask, Response, jsonify, render_template_string, request
+from flask import Flask, Response, jsonify, render_template_string, request, send_file
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(os.path.dirname(HERE), "src")
+
+# weights exposed as sliders in the UI (a subset of HybridEngine's full weight dict --
+# "key" stays fixed at its configured/default value, not user-tunable here)
+SLIDER_KEYS = ("clap", "lib", "genre", "bpm", "era")
+
+# extensions the library actually contains (mp3/flac); fall back to mimetypes.guess_type
+# for anything else so /audio still serves a sane Content-Type.
+_AUDIO_MIME_OVERRIDES = {
+    ".mp3": "audio/mpeg", ".flac": "audio/flac", ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg", ".wav": "audio/wav", ".aac": "audio/aac",
+}
+
+
+def _audio_mimetype(path):
+    ext = os.path.splitext(path)[1].lower()
+    if ext in _AUDIO_MIME_OVERRIDES:
+        return _AUDIO_MIME_OVERRIDES[ext]
+    guessed, _ = mimetypes.guess_type(path)
+    return guessed or "application/octet-stream"
 
 
 def _load_hybrid():
@@ -124,11 +145,42 @@ def create_app(db_path):
         f = request.args.get("dedup") or None
         return f if f in DEDUP_FIELDS else None
 
+    # eng.w is process-wide shared state that mix()/_score() read directly; HybridEngine
+    # has no per-call weights param, so per-request slider overrides are applied by
+    # temporarily patching eng.w, running the mix, then restoring it -- serialized via a
+    # lock so two overlapping requests can't see each other's half-applied weights.
+    weights_lock = threading.Lock()
+
+    def _weight_overrides():
+        out = {}
+        for k in SLIDER_KEYS:
+            v = request.args.get(k)
+            if v is None:
+                continue
+            try:
+                out[k] = max(0.0, min(float(v), 5.0))
+            except ValueError:
+                pass
+        return out
+
+    def _with_weights(overrides, fn):
+        if not overrides:
+            return fn()
+        with weights_lock:
+            saved = dict(eng.w)
+            eng.w.update(overrides)
+            try:
+                return fn()
+            finally:
+                eng.w = saved
+
     app = Flask(__name__)
 
     @app.get("/")
     def index():
-        return render_template_string(PAGE, count=len(eng.paths), plex=plex_configured)
+        return render_template_string(
+            PAGE, count=len(eng.paths), plex=plex_configured,
+            weights={k: eng.w.get(k, 0.0) for k in SLIDER_KEYS})
 
     @app.get("/api/search")
     def search():
@@ -158,11 +210,91 @@ def create_app(db_path):
             return jsonify(error="bad request"), 400
         if not (0 <= i < len(eng.paths)):
             return jsonify(error="unknown seed"), 404
-        seed, picks = _build_mix(i, size, _dedup_arg())
+        overrides = _weight_overrides()
+        effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
+        seed, picks = _with_weights(overrides, lambda: _build_mix(i, size, _dedup_arg()))
         return jsonify(
             seed=labels[i],
-            tracks=[_label(eng, p) for p in picks],
+            seed_i=i,
+            tracks=[{"i": eng.idx[p], "label": _label(eng, p)} for p in picks],
+            weights=effective,
         )
+
+    @app.post("/api/refine")
+    def refine():
+        """Thumbs up/down relevance feedback: Rocchio-refine the seed's CLAP vector
+        toward liked and away from disliked pool-indices, then re-rank by cosine to
+        that vector. Indices only -- never accepts a raw path from the client."""
+        data = request.get_json(silent=True) or {}
+        try:
+            i = int(data.get("i"))
+            size = min(max(int(data.get("size", 15)), 1), 100)
+        except (TypeError, ValueError):
+            return jsonify(error="bad request"), 400
+        if not (0 <= i < len(eng.paths)):
+            return jsonify(error="unknown seed"), 404
+
+        def _idx_list(key):
+            vals = data.get(key) or []
+            if not isinstance(vals, list):
+                raise ValueError(f"{key} must be a list")
+            out = []
+            for x in vals:
+                xi = int(x)
+                if not (0 <= xi < len(eng.paths)):
+                    raise ValueError(f"{key} index out of range: {xi}")
+                out.append(xi)
+            return out
+
+        try:
+            liked = _idx_list("liked")
+            disliked = _idx_list("disliked")
+        except (TypeError, ValueError) as e:
+            return jsonify(error=str(e)), 400
+
+        try:
+            q = eng.refine(i, liked_idx=liked, disliked_idx=disliked)
+            picks = eng.mix_from_vector(q, size=size, exclude=[i] + liked + disliked)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+
+        return jsonify(
+            seed=labels[i],
+            seed_i=i,
+            tracks=[{"i": eng.idx[p], "label": _label(eng, p)} for p in picks],
+        )
+
+    @app.get("/api/explain")
+    def explain():
+        """Per-term score breakdown for one (seed, candidate) pair -- backs the
+        "why?" affordance per mix row."""
+        try:
+            si = int(request.args.get("seed", ""))
+            ci = int(request.args.get("cand", ""))
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        if not (0 <= si < len(eng.paths)) or not (0 <= ci < len(eng.paths)):
+            return jsonify(error="unknown track"), 404
+        try:
+            comp = eng.explain(si, ci)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        return jsonify(seed=labels[si], cand=labels[ci], **comp)
+
+    @app.get("/audio")
+    def audio():
+        """Range-streams the audio file for a pool index -- index into eng.paths
+        ONLY, never a raw client-supplied path."""
+        try:
+            i = int(request.args.get("i", ""))
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        if not (0 <= i < len(eng.paths)):
+            return jsonify(error="unknown track"), 404
+        path = eng.paths[i]
+        if not os.path.isfile(path):
+            return jsonify(error="audio file missing on disk"), 404
+        return send_file(path, mimetype=_audio_mimetype(path), conditional=True)
 
     def _seed_index():
         """Parse + bounds-check the ?i / ?size args shared by the export routes."""
@@ -296,12 +428,46 @@ PAGE = """<!doctype html>
   .btn:hover { border-color: var(--accent); color: var(--accent); }
   .btn:disabled { opacity: .5; cursor: default; }
   .status { font-size: 13px; color: var(--muted); margin: 8px 0 4px; min-height: 18px; }
+  details.weights { margin-top: 10px; font-size: 13px; color: var(--muted); }
+  details.weights summary { cursor: pointer; user-select: none; }
+  .wsliders { display: grid; grid-template-columns: 56px 1fr 34px; gap: 6px 10px; align-items: center; margin-top: 10px; }
+  .wsliders label { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .wsliders input[type=range] { width: 100%; }
+  .wsliders .wval { font-size: 12px; font-variant-numeric: tabular-nums; text-align: right; }
+  .player-bar {
+    position: sticky; top: 0; z-index: 5; display: none; gap: 10px; align-items: center;
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 8px 12px; margin: -8px 0 16px; box-shadow: 0 2px 8px rgba(0,0,0,.06);
+  }
+  .player-bar.active { display: flex; }
+  .player-bar audio { flex: 1; min-width: 0; height: 32px; }
+  .player-bar .nowplaying { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 40%; }
+  ol li {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  }
+  ol li .tlabel { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tbtn {
+    font-size: 12px; line-height: 1; padding: 5px 7px; border-radius: 6px; border: 1px solid var(--line);
+    background: var(--card); color: var(--fg); cursor: pointer;
+  }
+  .tbtn:hover { border-color: var(--accent); color: var(--accent); }
+  .tbtn.on.up { color: #16a34a; border-color: #16a34a; }
+  .tbtn.on.down { color: #dc2626; border-color: #dc2626; }
+  .why-panel {
+    flex-basis: 100%; font-size: 12px; color: var(--muted); background: var(--hover);
+    border-radius: 6px; padding: 6px 10px; margin-top: 2px;
+  }
+  .why-panel code { font-variant-numeric: tabular-nums; }
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>Attune</h1>
   <p class="sub">{{ "{:,}".format(count) }} songs · type a song or artist, click one to hear-alike</p>
+  <div class="player-bar" id="playerBar">
+    <audio id="player" controls preload="none"></audio>
+    <span class="nowplaying" id="nowPlaying"></span>
+  </div>
   <input type="search" id="q" placeholder="e.g. black dog, beatles, miles davis" autocomplete="off" autofocus>
   <div class="opts">
     <label class="chk"><input type="checkbox" id="dedup"> Filter duplicates</label>
@@ -311,6 +477,26 @@ PAGE = """<!doctype html>
       <option value="file">same file name</option>
     </select>
   </div>
+  <details class="weights">
+    <summary>Mix weights</summary>
+    <div class="wsliders">
+      <label for="w_clap">clap</label>
+      <input type="range" id="w_clap" min="0" max="2" step="0.05" value="{{ weights['clap'] }}">
+      <span class="wval" id="w_clap_v">{{ weights['clap'] }}</span>
+      <label for="w_lib">lib</label>
+      <input type="range" id="w_lib" min="0" max="2" step="0.05" value="{{ weights['lib'] }}">
+      <span class="wval" id="w_lib_v">{{ weights['lib'] }}</span>
+      <label for="w_genre">genre</label>
+      <input type="range" id="w_genre" min="0" max="2" step="0.05" value="{{ weights['genre'] }}">
+      <span class="wval" id="w_genre_v">{{ weights['genre'] }}</span>
+      <label for="w_bpm">bpm</label>
+      <input type="range" id="w_bpm" min="0" max="2" step="0.05" value="{{ weights['bpm'] }}">
+      <span class="wval" id="w_bpm_v">{{ weights['bpm'] }}</span>
+      <label for="w_era">era</label>
+      <input type="range" id="w_era" min="0" max="2" step="0.05" value="{{ weights['era'] }}">
+      <span class="wval" id="w_era_v">{{ weights['era'] }}</span>
+    </div>
+  </details>
   <div class="results" id="results"></div>
   <div class="mix" id="mix"></div>
 </div>
@@ -321,10 +507,25 @@ const mixEl = document.getElementById('mix');
 const PLEX = {{ 'true' if plex else 'false' }};
 const dedupCk = document.getElementById('dedup');
 const dedupSel = document.getElementById('dedupField');
+const player = document.getElementById('player');
+const playerBar = document.getElementById('playerBar');
+const nowPlaying = document.getElementById('nowPlaying');
+const SLIDER_KEYS = ['clap', 'lib', 'genre', 'bpm', 'era'];
 let timer = null, seq = 0;
-let cur = { i: null, size: 15 };
+let cur = { i: null, size: 15, liked: new Set(), disliked: new Set() };
 
 function dedupParam() { return dedupCk.checked ? '&dedup=' + dedupSel.value : ''; }
+
+function weightParams() {
+  return SLIDER_KEYS.map(k => '&' + k + '=' + document.getElementById('w_' + k).value).join('');
+}
+
+SLIDER_KEYS.forEach(k => {
+  const el = document.getElementById('w_' + k);
+  const out = document.getElementById('w_' + k + '_v');
+  el.addEventListener('input', () => { out.textContent = el.value; });
+  el.addEventListener('change', () => { if (cur.i !== null) makeMix(cur.i); });
+});
 
 function refresh() {
   const term = q.value.trim();
@@ -356,23 +557,103 @@ async function runSearch(term) {
 
 async function makeMix(i, label) {
   cur.i = i;
+  cur.liked = new Set();
+  cur.disliked = new Set();
   mixEl.innerHTML = '<div class="spin">Building a playlist that sounds like it…</div>';
-  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam());
+  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam() + weightParams());
   const data = await r.json();
   if (data.error || !data.tracks || !data.tracks.length) {
     mixEl.innerHTML = '<div class="spin">Couldn\\'t build a mix for that one.</div>'; return;
   }
+  renderMix(data.seed, data.tracks);
+}
+
+function renderMix(seedLabel, tracks) {
   let bar = '<button class="btn" id="dlM3u">⬇ Download .m3u8</button>';
   if (PLEX) bar += '<button class="btn" id="toPlex">＋ Send to Plex</button>';
   mixEl.innerHTML = '<div class="mix">'
     + '<h2>Sounds like</h2>'
-    + '<p class="seed">' + esc(data.seed) + '</p>'
+    + '<p class="seed">' + esc(seedLabel) + '</p>'
     + '<div class="bar">' + bar + '</div>'
     + '<div class="status" id="xstatus"></div>'
-    + '<ol>' + data.tracks.map(t => '<li>' + esc(t) + '</li>').join('') + '</ol></div>';
+    + '<ol>' + tracks.map(renderTrackRow).join('') + '</ol></div>';
   document.getElementById('dlM3u').addEventListener('click', exportM3u);
   if (PLEX) document.getElementById('toPlex').addEventListener('click', sendPlex);
+  wireTrackRows();
   mixEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function renderTrackRow(t) {
+  const up = cur.liked.has(t.i) ? 'on up' : '';
+  const down = cur.disliked.has(t.i) ? 'on down' : '';
+  return `<li data-i="${t.i}">`
+    + `<button class="tbtn play" title="Play">▶</button>`
+    + `<span class="tlabel">${esc(t.label)}</span>`
+    + `<button class="tbtn up ${up}" title="More like this">👍</button>`
+    + `<button class="tbtn down ${down}" title="Less like this">👎</button>`
+    + `<button class="tbtn why" title="Why this track?">?</button>`
+    + `<div class="why-panel" style="display:none"></div>`
+    + `</li>`;
+}
+
+function wireTrackRows() {
+  mixEl.querySelectorAll('ol li').forEach(li => {
+    const i = parseInt(li.dataset.i, 10);
+    li.querySelector('.play').addEventListener('click', () => playTrack(i, li.querySelector('.tlabel').textContent));
+    li.querySelector('.up').addEventListener('click', () => rate(i, 'liked'));
+    li.querySelector('.down').addEventListener('click', () => rate(i, 'disliked'));
+    li.querySelector('.why').addEventListener('click', () => toggleWhy(i, li));
+  });
+}
+
+function playTrack(i, label) {
+  player.src = '/audio?i=' + i;
+  playerBar.classList.add('active');
+  nowPlaying.textContent = label;
+  player.play().catch(() => {});
+}
+
+async function rate(i, kind) {
+  if (cur.i === null) return;
+  const other = kind === 'liked' ? cur.disliked : cur.liked;
+  other.delete(i);
+  const set = kind === 'liked' ? cur.liked : cur.disliked;
+  if (set.has(i)) set.delete(i); else set.add(i);
+
+  const st = document.getElementById('xstatus');
+  if (st) st.textContent = 'Refining…';
+  try {
+    const r = await fetch('/api/refine', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        i: cur.i, size: cur.size,
+        liked: Array.from(cur.liked), disliked: Array.from(cur.disliked),
+      }),
+    });
+    const data = await r.json();
+    if (data.error || !data.tracks) { if (st) st.textContent = '✗ ' + (data.error || 'refine failed'); return; }
+    renderMix(data.seed, data.tracks);
+  } catch (e) {
+    if (st) st.textContent = '✗ ' + e;
+  }
+}
+
+async function toggleWhy(i, li) {
+  const panel = li.querySelector('.why-panel');
+  if (panel.style.display !== 'none') { panel.style.display = 'none'; return; }
+  panel.style.display = 'block';
+  panel.textContent = 'Loading…';
+  try {
+    const r = await fetch('/api/explain?seed=' + cur.i + '&cand=' + i);
+    const d = await r.json();
+    if (d.error) { panel.textContent = '✗ ' + d.error; return; }
+    const parts = ['clap', 'lib', 'genre', 'bpm', 'key', 'era']
+      .map(k => k + '=<code>' + d[k].toFixed(3) + '</code>').join('  ');
+    panel.innerHTML = parts + '  &nbsp;→&nbsp; total=<code>' + d.total.toFixed(3) + '</code>';
+  } catch (e) {
+    panel.textContent = '✗ ' + e;
+  }
 }
 
 function exportM3u() {
