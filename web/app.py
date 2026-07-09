@@ -30,8 +30,13 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(os.path.dirname(HERE), "src")
 
 # weights exposed as sliders in the UI (a subset of HybridEngine's full weight dict --
-# "key" stays fixed at its configured/default value, not user-tunable here)
+# "key" stays fixed at its configured/default value, not user-tunable here). V2-only.
 SLIDER_KEYS = ("clap", "lib", "genre", "bpm", "era")
+
+# MusicIP-native controls exposed instead of the weight sliders when --engine musicip.
+# Defaults match musicip_engine.MIX_DEFAULTS (style=40, variety=5).
+MUSICIP_STYLE_DEFAULT = 40
+MUSICIP_VARIETY_DEFAULT = 5
 
 # extensions the library actually contains (mp3/flac); fall back to mimetypes.guess_type
 # for anything else so /audio still serves a sane Content-Type.
@@ -53,6 +58,18 @@ def _load_hybrid():
     """Import hybrid.py by path so this works whether or not attune is installed."""
     spec = importlib.util.spec_from_file_location("hybrid", os.path.join(SRC, "hybrid.py"))
     mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_engine_iface():
+    """Import engine.py (src/engine.py) by path -- the common Engine/V2Engine/MusicIPAdapter
+    interface search() and mix() route through, so the shell doesn't care which concrete
+    engine produced a result (see engine.py's module docstring)."""
+    import sys
+    spec = importlib.util.spec_from_file_location("engine", os.path.join(SRC, "engine.py"))
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["engine"] = mod    # engine.py's @dataclass needs its module registered
     spec.loader.exec_module(mod)
     return mod
 
@@ -89,15 +106,35 @@ def _check_db(db_path):
             f"or point --db at a library that already has CLAP vectors.")
 
 
-def create_app(db_path):
+def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002"):
     _check_db(db_path)
     hybrid = _load_hybrid()
     print(f"Loading library from {db_path} ...")
+    # HybridEngine loads regardless of --engine: playback (/audio), .m3u8/Plex export, and
+    # dedup all key off of ITS pool indices (eng.paths/eng.meta) -- MusicIPAdapter resolves
+    # its own results into that same pool, so meta/playback/export don't have to know which
+    # engine picked the tracks. hybrid.py never imports torch (it only reads precomputed CLAP
+    # vectors already in the DB), so this stays torch-free either way.
     eng = hybrid.HybridEngine(db_path)
     # precompute a lowercased label per pool index once; search is then a cheap scan
     labels = [_label(eng, p) for p in eng.paths]
     labels_lc = [s.lower() for s in labels]
     print(f"Ready — {len(eng.paths):,} songs in the mixable pool.")
+
+    # search + mix are routed through the common engine interface (src/engine.py) so the
+    # concrete engine (our CLAP/librosa hybrid, or a live MusicIP Mixer) is swappable.
+    eng_iface = _load_engine_iface()
+    if engine_name == "musicip":
+        active = eng_iface.MusicIPAdapter(eng.paths, url=musicip_url, log=print)
+        active.attach_meta(eng.meta)
+        if not active.mip.alive():
+            raise SystemExit(
+                f"--engine musicip requires a live MusicIP Mixer at {musicip_url}; "
+                f"it did not respond. Start MusicIP Mixer's web API, or run with --engine v2.")
+        print(f"MusicIP engine ready at {musicip_url}.")
+    else:
+        active = eng_iface.V2Engine(hybrid_engine=eng)
+    is_musicip = engine_name == "musicip"
 
     # export: path-map (+ optional Plex), config auto-discovered from a .env
     exp_spec = importlib.util.spec_from_file_location("attune_export", os.path.join(SRC, "export.py"))
@@ -205,8 +242,9 @@ def create_app(db_path):
     @app.get("/")
     def index():
         return render_template_string(
-            PAGE, count=len(eng.paths), plex=plex_configured,
-            weights={k: eng.w.get(k, 0.0) for k in SLIDER_KEYS})
+            PAGE, count=len(eng.paths), plex=plex_configured, engine=engine_name,
+            weights={k: eng.w.get(k, 0.0) for k in SLIDER_KEYS},
+            musicip_style=MUSICIP_STYLE_DEFAULT, musicip_variety=MUSICIP_VARIETY_DEFAULT)
 
     @app.get("/api/search")
     def search():
@@ -214,17 +252,19 @@ def create_app(db_path):
         if not q:
             return jsonify(results=[])
         field = _dedup_arg()
+        # with a dedup field, over-fetch generously so 50 UNIQUE hits can still surface
+        # (matches the old scan-till-50-unique behaviour) instead of capping pre-dedup.
+        limit = 5000 if field else 50
         out, seen = [], set()
-        for i, lab in enumerate(labels_lc):
-            if q in lab:
-                if field:
-                    k = _dupkey(eng.paths[i], field)
-                    if k in seen:
-                        continue
-                    seen.add(k)
-                out.append({"i": i, "label": labels[i]})
-                if len(out) >= 50:
-                    break
+        for r in active.search(q, limit=limit):
+            if field:
+                k = _dupkey(eng.paths[r.pool_i], field)
+                if k in seen:
+                    continue
+                seen.add(k)
+            out.append({"i": r.pool_i, "label": r.label})
+            if len(out) >= 50:
+                break
         return jsonify(results=out, truncated=len(out) >= 50)
 
     @app.get("/api/mix")
@@ -236,12 +276,41 @@ def create_app(db_path):
             return jsonify(error="bad request"), 400
         if not (0 <= i < len(eng.paths)):
             return jsonify(error="unknown seed"), 404
+        field = _dedup_arg()
+
+        if is_musicip:
+            try:
+                style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), 100)
+                variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), 9)
+            except ValueError:
+                return jsonify(error="bad request"), 400
+            pool_size = min(size * 4, 200) if field else size
+            seed_ref = eng_iface.Ref(pool_i=i, label=labels[i])
+            refs = active.similar(seed_ref, size=pool_size, style=style, variety=variety)
+            if field:
+                seen, uniq = {_dupkey(eng.paths[i], field)}, []
+                for r in refs:
+                    k = _dupkey(eng.paths[r.pool_i], field)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    uniq.append(r)
+                refs = uniq
+            refs = refs[:size]
+            return jsonify(
+                seed=labels[i],
+                seed_i=i,
+                tracks=[{"i": r.pool_i, "label": r.label} for r in refs],
+                style=style,
+                variety=variety,
+            )
+
         overrides = _weight_overrides()
         effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
         variety = (request.args.get("variety") or "").lower() in ("1", "true", "on")
         flow = (request.args.get("flow") or "").lower() in ("1", "true", "on")
         seed, picks = _with_weights(
-            overrides, lambda: _build_mix(i, size, _dedup_arg(), variety, flow))
+            overrides, lambda: _build_mix(i, size, field, variety, flow))
         return jsonify(
             seed=labels[i],
             seed_i=i,
@@ -505,13 +574,28 @@ PAGE = """<!doctype html>
       <option value="title">same title</option>
       <option value="file">same file name</option>
     </select>
+    {% if engine != 'musicip' %}
     <label class="chk" title="Pick a less samey set via MMR diversity re-ranking">
       <input type="checkbox" id="variety"> Variety
     </label>
     <label class="chk" title="Reorder the mix for gentler track-to-track transitions">
       <input type="checkbox" id="flow"> Smooth flow
     </label>
+    {% endif %}
   </div>
+  {% if engine == 'musicip' %}
+  <details class="weights">
+    <summary>MusicIP mix controls</summary>
+    <div class="wsliders">
+      <label for="mip_style">style</label>
+      <input type="range" id="mip_style" min="0" max="100" step="1" value="{{ musicip_style }}">
+      <span class="wval" id="mip_style_v">{{ musicip_style }}</span>
+      <label for="mip_variety">variety</label>
+      <input type="range" id="mip_variety" min="0" max="9" step="1" value="{{ musicip_variety }}">
+      <span class="wval" id="mip_variety_v">{{ musicip_variety }}</span>
+    </div>
+  </details>
+  {% else %}
   <details class="weights">
     <summary>Mix weights</summary>
     <div class="wsliders">
@@ -532,6 +616,7 @@ PAGE = """<!doctype html>
       <span class="wval" id="w_era_v">{{ weights['era'] }}</span>
     </div>
   </details>
+  {% endif %}
   <div class="results" id="results"></div>
   <div class="mix" id="mix"></div>
 </div>
@@ -540,6 +625,7 @@ const q = document.getElementById('q');
 const results = document.getElementById('results');
 const mixEl = document.getElementById('mix');
 const PLEX = {{ 'true' if plex else 'false' }};
+const ENGINE = {{ (engine == 'musicip') | tojson }};
 const dedupCk = document.getElementById('dedup');
 const dedupSel = document.getElementById('dedupField');
 const varietyCk = document.getElementById('variety');
@@ -553,19 +639,34 @@ let cur = { i: null, size: 15, liked: new Set(), disliked: new Set() };
 
 function dedupParam() { return dedupCk.checked ? '&dedup=' + dedupSel.value : ''; }
 
-function varietyParam() { return varietyCk.checked ? '&variety=1' : ''; }
-function flowParam() { return flowCk.checked ? '&flow=1' : ''; }
+function varietyParam() { return (varietyCk && varietyCk.checked) ? '&variety=1' : ''; }
+function flowParam() { return (flowCk && flowCk.checked) ? '&flow=1' : ''; }
 
 function weightParams() {
   return SLIDER_KEYS.map(k => '&' + k + '=' + document.getElementById('w_' + k).value).join('');
 }
 
-SLIDER_KEYS.forEach(k => {
-  const el = document.getElementById('w_' + k);
-  const out = document.getElementById('w_' + k + '_v');
-  el.addEventListener('input', () => { out.textContent = el.value; });
-  el.addEventListener('change', () => { if (cur.i !== null) makeMix(cur.i); });
-});
+function musicipParams() {
+  const style = document.getElementById('mip_style').value;
+  const variety = document.getElementById('mip_variety').value;
+  return '&style=' + style + '&variety=' + variety;
+}
+
+if (ENGINE) {
+  ['mip_style', 'mip_variety'].forEach(id => {
+    const el = document.getElementById(id);
+    const out = document.getElementById(id + '_v');
+    el.addEventListener('input', () => { out.textContent = el.value; });
+    el.addEventListener('change', () => { if (cur.i !== null) makeMix(cur.i); });
+  });
+} else {
+  SLIDER_KEYS.forEach(k => {
+    const el = document.getElementById('w_' + k);
+    const out = document.getElementById('w_' + k + '_v');
+    el.addEventListener('input', () => { out.textContent = el.value; });
+    el.addEventListener('change', () => { if (cur.i !== null) makeMix(cur.i); });
+  });
+}
 
 function refresh() {
   const term = q.value.trim();
@@ -574,8 +675,8 @@ function refresh() {
 }
 dedupCk.addEventListener('change', () => { dedupSel.disabled = !dedupCk.checked; refresh(); });
 dedupSel.addEventListener('change', refresh);
-varietyCk.addEventListener('change', refresh);
-flowCk.addEventListener('change', refresh);
+if (varietyCk) varietyCk.addEventListener('change', refresh);
+if (flowCk) flowCk.addEventListener('change', refresh);
 
 q.addEventListener('input', () => {
   clearTimeout(timer);
@@ -602,7 +703,8 @@ async function makeMix(i, label) {
   cur.liked = new Set();
   cur.disliked = new Set();
   mixEl.innerHTML = '<div class="spin">Building a playlist that sounds like it…</div>';
-  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam() + weightParams() + varietyParam() + flowParam());
+  const extra = ENGINE ? musicipParams() : (weightParams() + varietyParam() + flowParam());
+  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam() + extra);
   const data = await r.json();
   if (data.error || !data.tracks || !data.tracks.length) {
     mixEl.innerHTML = '<div class="spin">Couldn\\'t build a mix for that one.</div>'; return;
@@ -626,6 +728,13 @@ function renderMix(seedLabel, tracks) {
 }
 
 function renderTrackRow(t) {
+  if (ENGINE) {
+    // musicip engine: no thumbs/refine or why/explain -- those need our CLAP vectors.
+    return `<li data-i="${t.i}">`
+      + `<button class="tbtn play" title="Play">▶</button>`
+      + `<span class="tlabel">${esc(t.label)}</span>`
+      + `</li>`;
+  }
   const up = cur.liked.has(t.i) ? 'on up' : '';
   const down = cur.disliked.has(t.i) ? 'on down' : '';
   return `<li data-i="${t.i}">`
@@ -642,6 +751,7 @@ function wireTrackRows() {
   mixEl.querySelectorAll('ol li').forEach(li => {
     const i = parseInt(li.dataset.i, 10);
     li.querySelector('.play').addEventListener('click', () => playTrack(i, li.querySelector('.tlabel').textContent));
+    if (ENGINE) return;    // no refine/explain controls to wire in musicip mode
     li.querySelector('.up').addEventListener('click', () => rate(i, 'liked'));
     li.querySelector('.down').addEventListener('click', () => rate(i, 'disliked'));
     li.querySelector('.why').addEventListener('click', () => toggleWhy(i, li));
@@ -731,14 +841,20 @@ function esc(s) {
 
 
 def main():
-    ap = argparse.ArgumentParser(description="Attune web front-end for the V2 hybrid engine.")
+    ap = argparse.ArgumentParser(description="Attune web front-end.")
     ap.add_argument("--db", required=True,
                     help="path to an analyzed+CLAP-embedded mixer SQLite DB (see scan.py / embed.py)")
     ap.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1; use 0.0.0.0 for LAN)")
     ap.add_argument("--port", type=int, default=8778, help="port (default: 8778)")
+    ap.add_argument("--engine", choices=("musicip", "v2"), default="musicip",
+                    help="mix engine: 'musicip' (default) drives a live MusicIP Mixer "
+                         "(http://localhost:10002) for search/mix; 'v2' uses our own "
+                         "CLAP/librosa HybridEngine with the full weights/refine/mmr/flow UI.")
+    ap.add_argument("--musicip-url", default="http://localhost:10002",
+                    help="MusicIP Mixer HTTP API base URL (only used with --engine musicip)")
     args = ap.parse_args()
-    app = create_app(args.db)
-    print(f"Serving on http://{args.host}:{args.port}")
+    app = create_app(args.db, engine_name=args.engine, musicip_url=args.musicip_url)
+    print(f"Serving on http://{args.host}:{args.port} (engine={args.engine})")
     app.run(host=args.host, port=args.port, debug=False)
 
 
