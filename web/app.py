@@ -200,9 +200,43 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             picks = eng.order_by_flow(picks)
         return seed, picks
 
-    def _mix_tracks(i, size, field=None):
-        seed, picks = _build_mix(i, size, field)
-        return [seed] + picks
+    def _active_mix_indices(i, size, field=None):
+        """Pool indices of the mix picks for seed index `i` via the ACTIVE engine, applying
+        the same controls /api/mix parses from the request. Does NOT include the seed.
+        Raises ValueError on bad control args (caller returns 400).
+
+        This is the single source of truth both /api/mix and the export routes build their
+        track list from, so an exported playlist always equals the mix the user is viewing
+        under whichever engine is active (musicip or v2)."""
+        if is_musicip:
+            style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), 100)
+            variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), 9)
+            pool_size = min(size * 4, 200) if field else size
+            seed_ref = eng_iface.Ref(pool_i=i, label=labels[i])
+            refs = active.similar(seed_ref, size=pool_size, style=style, variety=variety)
+            if field:
+                seen, uniq = {_dupkey(eng.paths[i], field)}, []
+                for r in refs:
+                    k = _dupkey(eng.paths[r.pool_i], field)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                    uniq.append(r)
+                refs = uniq
+            return [r.pool_i for r in refs[:size]]
+        overrides = _weight_overrides()
+        variety = (request.args.get("variety") or "").lower() in ("1", "true", "on")
+        flow = (request.args.get("flow") or "").lower() in ("1", "true", "on")
+        _seed, picks = _with_weights(
+            overrides, lambda: _build_mix(i, size, field, variety, flow))
+        return [eng.idx[p] for p in picks]
+
+    def _active_mix_tracks(i, size, field=None):
+        """[seed_path] + pick paths, picks chosen by the ACTIVE engine (the same selection
+        /api/mix returns). Export routes build their track list from this so the exported
+        m3u/Plex playlist matches the mix on screen regardless of engine."""
+        picks_i = _active_mix_indices(i, size, field)
+        return [eng.paths[i]] + [eng.paths[pi] for pi in picks_i]
 
     def _dedup_arg():
         f = request.args.get("dedup") or None
@@ -278,51 +312,29 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error="unknown seed"), 404
         field = _dedup_arg()
 
+        try:
+            picks_i = _active_mix_indices(i, size, field)
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        tracks = [{"i": pi, "label": labels[pi]} for pi in picks_i]
+
         if is_musicip:
-            try:
-                style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), 100)
-                variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), 9)
-            except ValueError:
-                return jsonify(error="bad request"), 400
-            pool_size = min(size * 4, 200) if field else size
-            seed_ref = eng_iface.Ref(pool_i=i, label=labels[i])
-            refs = active.similar(seed_ref, size=pool_size, style=style, variety=variety)
-            if field:
-                seen, uniq = {_dupkey(eng.paths[i], field)}, []
-                for r in refs:
-                    k = _dupkey(eng.paths[r.pool_i], field)
-                    if k in seen:
-                        continue
-                    seen.add(k)
-                    uniq.append(r)
-                refs = uniq
-            refs = refs[:size]
+            style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), 100)
+            variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), 9)
             return jsonify(
-                seed=labels[i],
-                seed_i=i,
-                tracks=[{"i": r.pool_i, "label": r.label} for r in refs],
-                style=style,
-                variety=variety,
-            )
+                seed=labels[i], seed_i=i, tracks=tracks, style=style, variety=variety)
 
         overrides = _weight_overrides()
         effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
-        variety = (request.args.get("variety") or "").lower() in ("1", "true", "on")
-        flow = (request.args.get("flow") or "").lower() in ("1", "true", "on")
-        seed, picks = _with_weights(
-            overrides, lambda: _build_mix(i, size, field, variety, flow))
-        return jsonify(
-            seed=labels[i],
-            seed_i=i,
-            tracks=[{"i": eng.idx[p], "label": _label(eng, p)} for p in picks],
-            weights=effective,
-        )
+        return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective)
 
     @app.post("/api/refine")
     def refine():
         """Thumbs up/down relevance feedback: Rocchio-refine the seed's CLAP vector
         toward liked and away from disliked pool-indices, then re-rank by cosine to
         that vector. Indices only -- never accepts a raw path from the client."""
+        if "refine" not in active.capabilities:
+            return jsonify(error=f"refine not supported by the '{active.name}' engine"), 501
         data = request.get_json(silent=True) or {}
         try:
             i = int(data.get("i"))
@@ -366,6 +378,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     def explain():
         """Per-term score breakdown for one (seed, candidate) pair -- backs the
         "why?" affordance per mix row."""
+        if "explain" not in active.capabilities:
+            return jsonify(error=f"explain not supported by the '{active.name}' engine"), 501
         try:
             si = int(request.args.get("seed", ""))
             ci = int(request.args.get("cand", ""))
@@ -413,10 +427,14 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         flavor = request.args.get("flavor", "unc")
         if flavor not in ("local", "unc", "plex"):
             flavor = "unc"
+        try:
+            tracks = _active_mix_tracks(i, size, _dedup_arg())
+        except ValueError:
+            return jsonify(error="bad request"), 400
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
         lines = ["#EXTM3U"]
         try:
-            for p in _mix_tracks(i, size, _dedup_arg()):
+            for p in tracks:
                 m = eng.meta.get(p, {})
                 artist = oneline(m.get("artist") or "?")
                 title = oneline(m.get("title") or os.path.basename(p))
@@ -439,13 +457,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         except IndexError:
             return jsonify(ok=False, error="unknown seed"), 404
         try:
+            tracks = _active_mix_tracks(i, size, _dedup_arg())
+        except ValueError:
+            return jsonify(ok=False, error="bad request"), 400
+        try:
             if "plex" not in plex_holder:
                 plex_holder["plex"] = export.plex_from_env(cfg, mapper)
         except SystemExit as e:
             return jsonify(ok=False, error=str(e)), 400
         title = f"Attune — like {labels[i]}"
         try:
-            res = plex_holder["plex"].create_playlist(title, _mix_tracks(i, size, _dedup_arg()))
+            res = plex_holder["plex"].create_playlist(title, tracks)
         except Exception as e:                      # network / Plex API failure
             return jsonify(ok=False, error=f"Plex error: {e}"), 502
         # don't leak full local library paths in the HTTP response — basenames only
