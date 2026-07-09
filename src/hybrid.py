@@ -224,6 +224,180 @@ class HybridEngine:
                 break
         return out
 
+    # ------------------------------------------------------------------
+    # Relevance-feedback / re-ranking helpers (additive; V2's mix()/_score()
+    # above are untouched, and none of these are called by mix() or main()).
+    # ------------------------------------------------------------------
+
+    def _as_index(self, x):
+        """Accept either a path (resolved like mix()'s seed) or a raw pool index."""
+        if isinstance(x, str):
+            canon = self.resolve(x)
+            return None if canon is None else self.idx[canon]
+        return int(x)
+
+    def _unit(self, v):
+        v = np.asarray(v, dtype=np.float64)
+        n = np.linalg.norm(v)
+        return v / n if n > 1e-9 else v
+
+    def mix_from_vector(self, q, size=25, artist_spacing=3, exclude=None):
+        """Rank the pool by cosine similarity to an arbitrary CLAP-space query vector
+        `q` (e.g. a Rocchio-refined vector from refine()), instead of a library seed.
+        Same top-K + artist-spacing behaviour as mix(). `exclude` is an optional
+        iterable of paths/indices to drop from the results (e.g. tracks already shown)."""
+        qn = self._unit(q)
+        if np.linalg.norm(qn) < 1e-9:
+            raise ValueError("zero query vector")
+        s = self.X @ qn
+        order = np.argsort(-s)
+        excl = set()
+        for e in (exclude or []):
+            ei = self._as_index(e)
+            if ei is not None:
+                excl.add(ei)
+        out, recent = [], []
+        for j in order:
+            j = int(j)
+            if j in excl:
+                continue
+            a = self.artist[j]
+            if a and a in recent[-artist_spacing:]:
+                continue
+            out.append(self.paths[j]); recent.append(a)
+            if len(out) >= size:
+                break
+        return out
+
+    def refine(self, seed_or_vec, liked_idx=None, disliked_idx=None, alpha=1.0, beta=0.75):
+        """Rocchio relevance feedback: q' = alpha*q0 + beta*mean(liked) - beta*mean(disliked),
+        re-normalized to unit length (all CLAP rows in self.X are already unit vectors, so
+        this keeps q' comparable to them via plain dot product / mix_from_vector()).
+
+        seed_or_vec: a library path/index (used as-is, i.e. its raw CLAP row) or an
+        already-CLAP-space vector to start from.
+        liked_idx / disliked_idx: iterables of paths or pool indices (thumbs-up/down).
+        """
+        if isinstance(seed_or_vec, (str, int, np.integer)):
+            i0 = self._as_index(seed_or_vec)
+            if i0 is None:
+                raise ValueError(f"seed not found/not embedded: {seed_or_vec}")
+            q0 = self.X[i0].astype(np.float64)
+        else:
+            q0 = self._unit(seed_or_vec)
+
+        liked = [self._as_index(x) for x in (liked_idx or [])]
+        liked = [i for i in liked if i is not None]
+        disliked = [self._as_index(x) for x in (disliked_idx or [])]
+        disliked = [i for i in disliked if i is not None]
+
+        q = alpha * q0
+        if liked:
+            q = q + beta * self.X[liked].mean(axis=0)
+        if disliked:
+            q = q - beta * self.X[disliked].mean(axis=0)
+        return self._unit(q)
+
+    def mmr(self, candidates, k=None, lambda_=0.5, query=None):
+        """Maximal Marginal Relevance re-ranking of `candidates` (paths, already ranked
+        by relevance, e.g. the output of mix()/mix_from_vector()) for diversity.
+
+        relevance(cand)  = cosine(cand, query) if `query` given, else the candidate's
+                            rank position in the input list (first = most relevant);
+        diversity(cand)  = max CLAP cosine similarity to an already-selected candidate.
+        Greedily picks argmax[ lambda_*relevance - (1-lambda_)*diversity ] until k picked.
+        lambda_=1.0 reduces to plain top-k by relevance; lower lambda_ favors diversity.
+        """
+        idxs = [self.idx[c] for c in candidates if c in self.idx]
+        kept = [c for c in candidates if c in self.idx]
+        if not idxs:
+            return []
+        k = len(idxs) if k is None else max(0, min(k, len(idxs)))
+        if k == 0:
+            return []
+        Xc = self.X[idxs]
+        if query is not None:
+            rel = Xc @ self._unit(query)
+        else:
+            # no explicit query: trust the caller's input ordering as relevance rank
+            rel = np.linspace(1.0, 0.0, num=len(idxs))
+        sim = Xc @ Xc.T
+
+        selected = [int(np.argmax(rel))]
+        remaining = [i for i in range(len(idxs)) if i != selected[0]]
+        while remaining and len(selected) < k:
+            sel_arr = np.array(selected)
+            best_j, best_score = None, -np.inf
+            for j in remaining:
+                div = float(np.max(sim[j, sel_arr]))
+                score = lambda_ * rel[j] - (1.0 - lambda_) * div
+                if score > best_score:
+                    best_score, best_j = score, j
+            selected.append(best_j)
+            remaining.remove(best_j)
+        return [kept[i] for i in selected]
+
+    def order_by_flow(self, paths):
+        """Greedy nearest-neighbour ordering over CLAP vectors: start at paths[0] and
+        repeatedly append the closest not-yet-used track (by CLAP cosine), to minimize
+        abrupt back-to-back jumps ("flow") in a mix. Unknown paths are dropped."""
+        kept = [p for p in paths if p in self.idx]
+        if len(kept) <= 2:
+            return kept
+        idxs = [self.idx[p] for p in kept]
+        Xc = self.X[idxs]
+        sim = Xc @ Xc.T
+        n = len(kept)
+        used = [False] * n
+        order = [0]
+        used[0] = True
+        cur = 0
+        for _ in range(n - 1):
+            best_j, best_sim = None, -np.inf
+            for j in range(n):
+                if not used[j] and sim[cur, j] > best_sim:
+                    best_sim, best_j = sim[cur, j], j
+            order.append(best_j)
+            used[best_j] = True
+            cur = best_j
+        return [kept[i] for i in order]
+
+    def explain(self, seed, cand):
+        """Per-term breakdown of _score() for a single (seed, candidate) pair: the same
+        weighted clap/lib/genre/bpm/era/key contributions _score() sums over the whole
+        pool, computed here for one candidate so comp["total"] == _score(si)[ci]."""
+        si, ci = self._as_index(seed), self._as_index(cand)
+        if si is None or ci is None:
+            raise ValueError("seed/cand not found/not embedded")
+        w = self.w
+        comp = {"clap": 0.0, "lib": 0.0, "genre": 0.0, "bpm": 0.0, "key": 0.0, "era": 0.0}
+
+        comp["clap"] = float(w["clap"] * (self.X[ci] @ self.X[si]))
+
+        if self.use_lib and w.get("lib"):
+            comp["lib"] = float(w["lib"] * (self.L[ci] @ self.L[si]))
+
+        if w.get("genre"):
+            st, gt = self.genre_tags[si], self.genre_tags[ci]
+            jac = len(st & gt) / len(st | gt) if st and gt else 0.0
+            comp["genre"] = float(w["genre"] * jac)
+
+        if w.get("bpm"):
+            sb, cb = self.bpm[si], self.bpm[ci]
+            dbpm = abs(cb - sb) / 40.0 if (sb > 0 and cb > 0) else 0.5
+            comp["bpm"] = float(-w["bpm"] * dbpm)
+
+        if w.get("key") and self.key[si]:
+            comp["key"] = float(w["key"] * _key_compat(self.key[si], self.key[ci]))
+
+        if w.get("era"):
+            sy, cy = self.year[si], self.year[ci]
+            dera = abs(cy - sy) / 25.0 if (sy > 0 and cy > 0) else 0.5
+            comp["era"] = float(-w["era"] * dera)
+
+        comp["total"] = comp["clap"] + comp["lib"] + comp["genre"] + comp["bpm"] + comp["key"] + comp["era"]
+        return comp
+
 
 def main():
     import argparse
