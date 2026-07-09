@@ -1,0 +1,153 @@
+{
+  "n_pool": 21236,
+  "n_seeds": 900,
+  "n_candidates": 19860,
+  "blend_weights": {
+    "clap": 1.0,
+    "lib": 0.4,
+    "genre": 0.3,
+    "bpm": 0.3,
+    "era": 0.1,
+    "key": 0.0
+  },
+  "clap_only_weights": {
+    "clap": 1.0,
+    "lib": 0.0,
+    "genre": 0.0,
+    "bpm": 0.0,
+    "era": 0.0,
+    "key": 0.0
+  },
+  "summary_blend": {
+    "n_seeds_evaluated": 900,
+    "precision_at_k": 0.2604444444444445,
+    "precision_at_k_n": 900,
+    "mrr": 0.5868230428518021,
+    "mrr_n": 900,
+    "album_precision_at_k": 0.27269503546099294,
+    "album_n": 564,
+    "album_mrr": 0.5740744179321561,
+    "artist_precision_at_k": 0.14205186020293123,
+    "artist_n": 887,
+    "artist_mrr": 0.37535695890432785,
+    "dupe_seeds_tested": 300,
+    "dupe_pass_rate": 0.3933333333333333,
+    "dupe_failures": [
+      {
+        "seed": "07 - Here Comes The Sun.mp3",
+        "rank": 3
+      },
+      {
+        "seed": "Chris Farley - Luke.mp3",
+        "rank": 1428
+      },
+      {
+        "seed": "10 Howard Shore - Precedent.mp3",
+        "rank": 18
+      },
+      {
+        "seed": "Weezer - 10 - Butterfly.mp3",
+        "rank": 62
+      },
+      {
+        "seed": "02 - Same Boy You've Always Known (.mp3",
+        "rank": 7
+      },
+      {
+        "seed": "09 - Peaches And Cream.mp3",
+        "rank": 3166
+      },
+      {
+        "seed": "12 - My Best Was Never Good Enough.mp3",
+        "rank": 7
+      },
+      {
+        "seed": "19 Steve Berman (Skit).mp3",
+        "rank": 85
+      },
+      {
+        "seed": "violent femmes - add it up.mp3",
+        "rank": 130
+      },
+      {
+        "seed": "09 - Hook.mp3",
+        "rank": 2
+      }
+    ],
+    "neg_mean_percentile": 0.526027488271735,
+    "neg_n": 855,
+    "neg_topk_leak_rate": 0.0
+  },
+  "summary_clap_alone": {
+    "n_seeds_evaluated": 900,
+    "precision_at_k": 0.11866666666666667,
+    "precision_at_k_n": 900,
+    "mrr": 0.4250619818442572,
+    "mrr_n": 900,
+    "album_precision_at_k": 0.022872340425531917,
+    "album_n": 564,
+    "album_mrr": 0.11437106074906815,
+    "artist_precision_at_k": 0.023562570462232247,
+    "artist_n": 887,
+    "artist_mrr": 0.14904461509181816,
+    "dupe_seeds_tested": 300,
+    "dupe_pass_rate": 1.0,
+    "dupe_failures": [],
+    "neg_mean_percentile": 0.5039576267802384,
+    "neg_n": 855,
+    "neg_topk_leak_rate": 0.0005847953216374269
+  },
+  "comparison": {
+    "precision_at_k": {
+      "blend": 0.2604444444444445,
+      "clap_alone": 0.11866666666666667,
+      "delta": -0.1417777777777778
+    },
+    "mrr": {
+      "blend": 0.5868230428518021,
+      "clap_alone": 0.4250619818442572,
+      "delta": -0.1617610610075449
+    },
+    "album_precision_at_k": {
+      "blend": 0.27269503546099294,
+      "clap_alone": 0.022872340425531917,
+      "delta": -0.24982269503546103
+    },
+    "album_mrr": {
+      "blend": 0.5740744179321561,
+      "clap_alone": 0.11437106074906815,
+      "delta": -0.4597033571830879
+    },
+    "artist_precision_at_k": {
+      "blend": 0.14205186020293123,
+      "clap_alone": 0.023562570462232247,
+      "delta": -0.11848928974069899
+    },
+    "artist_mrr": {
+      "blend": 0.37535695890432785,
+      "clap_alone": 0.14904461509181816,
+      "delta": -0.2263123438125097
+    },
+    "dupe_pass_rate": {
+      "blend": 0.3933333333333333,
+      "clap_alone": 1.0,
+      "delta": 0.6066666666666667
+    },
+    "neg_mean_percentile": {
+      "blend": 0.526027488271735,
+      "clap_alone": 0.5039576267802384,
+      "delta": -0.02206986149149659
+    },
+    "neg_topk_leak_rate": {
+      "blend": 0.0,
+      "clap_alone": 0.0005847953216374269,
+      "delta": 0.0005847953216374269
+    }
+  },
+  "verdict_lines": [
+    "precision@10: clap-alone loses to blend by -0.1418 (0.1187 vs 0.2604)",
+    "MRR: clap-alone loses to blend by -0.1618 (0.4251 vs 0.5868)",
+    "dupe pass-rate: clap-alone beats blend by +0.6067 (1.0000 vs 0.3933)"
+  ],
+  "elapsed_sec": 31.4
+}
