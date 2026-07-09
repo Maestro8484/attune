@@ -88,9 +88,41 @@ def create_app(db_path):
     plex_configured = all(cfg.get(k) for k in
                           ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID", "PLEX_LIBRARY_ROOT"))
 
-    def _mix_tracks(i, size):
+    DEDUP_FIELDS = ("song", "title", "file")   # what counts as a "duplicate"
+
+    def _dupkey(path, field):
+        m = eng.meta.get(path, {})
+        if field == "song":
+            return f"{(m.get('artist') or '').lower()}|{(m.get('title') or '').lower()}"
+        if field == "title":
+            return (m.get("title") or os.path.basename(path)).lower()
+        if field == "file":
+            return os.path.basename(path).lower()
+        return None
+
+    def _build_mix(i, size, field=None):
+        """Return (seed_path, picks). With a dedup field, over-fetch then collapse
+        same-key tracks (and any that duplicate the seed), so you still get `size`."""
         seed = eng.paths[i]
-        return [seed] + (eng.mix(seed, size=size) or [])
+        picks = eng.mix(seed, size=min(size * 4, 200) if field else size) or []
+        if field:
+            seen, uniq = {_dupkey(seed, field)}, []
+            for p in picks:
+                k = _dupkey(p, field)
+                if k in seen:
+                    continue
+                seen.add(k)
+                uniq.append(p)
+            picks = uniq
+        return seed, picks[:size]
+
+    def _mix_tracks(i, size, field=None):
+        seed, picks = _build_mix(i, size, field)
+        return [seed] + picks
+
+    def _dedup_arg():
+        f = request.args.get("dedup") or None
+        return f if f in DEDUP_FIELDS else None
 
     app = Flask(__name__)
 
@@ -103,9 +135,15 @@ def create_app(db_path):
         q = (request.args.get("q") or "").strip().lower()
         if not q:
             return jsonify(results=[])
-        out = []
+        field = _dedup_arg()
+        out, seen = [], set()
         for i, lab in enumerate(labels_lc):
             if q in lab:
+                if field:
+                    k = _dupkey(eng.paths[i], field)
+                    if k in seen:
+                        continue
+                    seen.add(k)
                 out.append({"i": i, "label": labels[i]})
                 if len(out) >= 50:
                     break
@@ -120,8 +158,7 @@ def create_app(db_path):
             return jsonify(error="bad request"), 400
         if not (0 <= i < len(eng.paths)):
             return jsonify(error="unknown seed"), 404
-        seed = eng.paths[i]
-        picks = eng.mix(seed, size=size) or []
+        seed, picks = _build_mix(i, size, _dedup_arg())
         return jsonify(
             seed=labels[i],
             tracks=[_label(eng, p) for p in picks],
@@ -149,7 +186,7 @@ def create_app(db_path):
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
         lines = ["#EXTM3U"]
         try:
-            for p in _mix_tracks(i, size):
+            for p in _mix_tracks(i, size, _dedup_arg()):
                 m = eng.meta.get(p, {})
                 artist = oneline(m.get("artist") or "?")
                 title = oneline(m.get("title") or os.path.basename(p))
@@ -178,7 +215,7 @@ def create_app(db_path):
             return jsonify(ok=False, error=str(e)), 400
         title = f"Attune — like {labels[i]}"
         try:
-            res = plex_holder["plex"].create_playlist(title, _mix_tracks(i, size))
+            res = plex_holder["plex"].create_playlist(title, _mix_tracks(i, size, _dedup_arg()))
         except Exception as e:                      # network / Plex API failure
             return jsonify(ok=False, error=f"Plex error: {e}"), 502
         # don't leak full local library paths in the HTTP response — basenames only
@@ -219,6 +256,13 @@ PAGE = """<!doctype html>
     border: 1px solid var(--line); background: var(--card); color: var(--fg);
   }
   input[type=search]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .opts { display: flex; align-items: center; gap: 12px; margin-top: 10px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .opts .chk { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+  .opts select {
+    font-size: 13px; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--card); color: var(--fg);
+  }
+  .opts select:disabled { opacity: .45; }
   .row {
     display: flex; align-items: center; justify-content: space-between; gap: 10px;
     padding: 10px 12px; border-radius: 8px; cursor: pointer; border: 1px solid transparent;
@@ -259,6 +303,14 @@ PAGE = """<!doctype html>
   <h1>Attune</h1>
   <p class="sub">{{ "{:,}".format(count) }} songs · type a song or artist, click one to hear-alike</p>
   <input type="search" id="q" placeholder="e.g. black dog, beatles, miles davis" autocomplete="off" autofocus>
+  <div class="opts">
+    <label class="chk"><input type="checkbox" id="dedup"> Filter duplicates</label>
+    <select id="dedupField" disabled title="what counts as a duplicate">
+      <option value="song">same song (artist + title)</option>
+      <option value="title">same title</option>
+      <option value="file">same file name</option>
+    </select>
+  </div>
   <div class="results" id="results"></div>
   <div class="mix" id="mix"></div>
 </div>
@@ -267,8 +319,20 @@ const q = document.getElementById('q');
 const results = document.getElementById('results');
 const mixEl = document.getElementById('mix');
 const PLEX = {{ 'true' if plex else 'false' }};
+const dedupCk = document.getElementById('dedup');
+const dedupSel = document.getElementById('dedupField');
 let timer = null, seq = 0;
 let cur = { i: null, size: 15 };
+
+function dedupParam() { return dedupCk.checked ? '&dedup=' + dedupSel.value : ''; }
+
+function refresh() {
+  const term = q.value.trim();
+  if (term) runSearch(term);
+  if (cur.i !== null) makeMix(cur.i);
+}
+dedupCk.addEventListener('change', () => { dedupSel.disabled = !dedupCk.checked; refresh(); });
+dedupSel.addEventListener('change', refresh);
 
 q.addEventListener('input', () => {
   clearTimeout(timer);
@@ -279,7 +343,7 @@ q.addEventListener('input', () => {
 
 async function runSearch(term) {
   const mine = ++seq;
-  const r = await fetch('/api/search?q=' + encodeURIComponent(term));
+  const r = await fetch('/api/search?q=' + encodeURIComponent(term) + dedupParam());
   if (mine !== seq) return;               // a newer keystroke already fired
   const data = await r.json();
   if (!data.results.length) { results.innerHTML = '<div class="spin">No matches.</div>'; return; }
@@ -293,7 +357,7 @@ async function runSearch(term) {
 async function makeMix(i, label) {
   cur.i = i;
   mixEl.innerHTML = '<div class="spin">Building a playlist that sounds like it…</div>';
-  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size);
+  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam());
   const data = await r.json();
   if (data.error || !data.tracks || !data.tracks.length) {
     mixEl.innerHTML = '<div class="spin">Couldn\\'t build a mix for that one.</div>'; return;
@@ -313,7 +377,7 @@ async function makeMix(i, label) {
 
 function exportM3u() {
   if (cur.i === null) return;
-  window.location = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size;
+  window.location = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size + dedupParam();
 }
 
 async function sendPlex() {
@@ -322,7 +386,7 @@ async function sendPlex() {
   btn.disabled = true;
   st.textContent = 'Sending to Plex (indexing the library on first use — a few seconds)…';
   try {
-    const r = await fetch('/api/export/plex?i=' + cur.i + '&size=' + cur.size, { method: 'POST' });
+    const r = await fetch('/api/export/plex?i=' + cur.i + '&size=' + cur.size + dedupParam(), { method: 'POST' });
     const d = await r.json();
     st.textContent = d.ok
       ? '✓ Added to Plex — ' + d.matched + ' tracks'
