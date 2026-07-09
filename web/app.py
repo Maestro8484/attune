@@ -121,11 +121,31 @@ def create_app(db_path):
             return os.path.basename(path).lower()
         return None
 
-    def _build_mix(i, size, field=None):
+    def _build_mix(i, size, field=None, variety=False, flow=False):
         """Return (seed_path, picks). With a dedup field, over-fetch then collapse
-        same-key tracks (and any that duplicate the seed), so you still get `size`."""
+        same-key tracks (and any that duplicate the seed), so you still get `size`.
+
+        variety=True: over-fetch a much larger candidate pool (up to 200; a 4x
+        over-fetch like dedup uses isn't enough headroom for MMR to substitute
+        genuinely different picks -- verified empirically) and pick the final
+        `size` via eng.mmr() (MMR diversity re-ranking, lambda_=0.3 favors
+        diversity over plain relevance) instead of plain top-N, trusting mix()'s
+        relevance order (mmr's query=None mode). Composes with dedup: the
+        field-collapse above runs first, so mmr only ever sees already-deduped
+        candidates.
+
+        flow=True: reorder the final `size` picks via eng.order_by_flow() (greedy
+        nearest-neighbour on CLAP vectors) for smoother track-to-track transitions.
+        Same set of tracks, different order -- applied last so it doesn't fight mmr.
+        """
         seed = eng.paths[i]
-        picks = eng.mix(seed, size=min(size * 4, 200) if field else size) or []
+        if variety:
+            pool_size = 200
+        elif field:
+            pool_size = min(size * 4, 200)
+        else:
+            pool_size = size
+        picks = eng.mix(seed, size=pool_size) or []
         if field:
             seen, uniq = {_dupkey(seed, field)}, []
             for p in picks:
@@ -135,7 +155,13 @@ def create_app(db_path):
                 seen.add(k)
                 uniq.append(p)
             picks = uniq
-        return seed, picks[:size]
+        if variety:
+            picks = eng.mmr(picks, k=size, lambda_=0.3)
+        else:
+            picks = picks[:size]
+        if flow:
+            picks = eng.order_by_flow(picks)
+        return seed, picks
 
     def _mix_tracks(i, size, field=None):
         seed, picks = _build_mix(i, size, field)
@@ -212,7 +238,10 @@ def create_app(db_path):
             return jsonify(error="unknown seed"), 404
         overrides = _weight_overrides()
         effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
-        seed, picks = _with_weights(overrides, lambda: _build_mix(i, size, _dedup_arg()))
+        variety = (request.args.get("variety") or "").lower() in ("1", "true", "on")
+        flow = (request.args.get("flow") or "").lower() in ("1", "true", "on")
+        seed, picks = _with_weights(
+            overrides, lambda: _build_mix(i, size, _dedup_arg(), variety, flow))
         return jsonify(
             seed=labels[i],
             seed_i=i,
@@ -476,6 +505,12 @@ PAGE = """<!doctype html>
       <option value="title">same title</option>
       <option value="file">same file name</option>
     </select>
+    <label class="chk" title="Pick a less samey set via MMR diversity re-ranking">
+      <input type="checkbox" id="variety"> Variety
+    </label>
+    <label class="chk" title="Reorder the mix for gentler track-to-track transitions">
+      <input type="checkbox" id="flow"> Smooth flow
+    </label>
   </div>
   <details class="weights">
     <summary>Mix weights</summary>
@@ -507,6 +542,8 @@ const mixEl = document.getElementById('mix');
 const PLEX = {{ 'true' if plex else 'false' }};
 const dedupCk = document.getElementById('dedup');
 const dedupSel = document.getElementById('dedupField');
+const varietyCk = document.getElementById('variety');
+const flowCk = document.getElementById('flow');
 const player = document.getElementById('player');
 const playerBar = document.getElementById('playerBar');
 const nowPlaying = document.getElementById('nowPlaying');
@@ -515,6 +552,9 @@ let timer = null, seq = 0;
 let cur = { i: null, size: 15, liked: new Set(), disliked: new Set() };
 
 function dedupParam() { return dedupCk.checked ? '&dedup=' + dedupSel.value : ''; }
+
+function varietyParam() { return varietyCk.checked ? '&variety=1' : ''; }
+function flowParam() { return flowCk.checked ? '&flow=1' : ''; }
 
 function weightParams() {
   return SLIDER_KEYS.map(k => '&' + k + '=' + document.getElementById('w_' + k).value).join('');
@@ -534,6 +574,8 @@ function refresh() {
 }
 dedupCk.addEventListener('change', () => { dedupSel.disabled = !dedupCk.checked; refresh(); });
 dedupSel.addEventListener('change', refresh);
+varietyCk.addEventListener('change', refresh);
+flowCk.addEventListener('change', refresh);
 
 q.addEventListener('input', () => {
   clearTimeout(timer);
@@ -560,7 +602,7 @@ async function makeMix(i, label) {
   cur.liked = new Set();
   cur.disliked = new Set();
   mixEl.innerHTML = '<div class="spin">Building a playlist that sounds like it…</div>';
-  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam() + weightParams());
+  const r = await fetch('/api/mix?i=' + i + '&size=' + cur.size + dedupParam() + weightParams() + varietyParam() + flowParam());
   const data = await r.json();
   if (data.error || !data.tracks || !data.tracks.length) {
     mixEl.innerHTML = '<div class="spin">Couldn\\'t build a mix for that one.</div>'; return;
