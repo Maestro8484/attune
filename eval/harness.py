@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import inspect
 import json
 import os
 import random
@@ -46,6 +47,11 @@ if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
 from hybrid import HybridEngine  # noqa: E402  (path shimmed above)
+
+# The engine's shipped default artist-spacing for mix() -- read from the live signature
+# (rather than hardcoded) so this harness can never silently drift out of sync with
+# hybrid.py. See mix_rank_array() below for why the eval now uses this, not raw _score().
+_MIX_ARTIST_SPACING_DEFAULT = inspect.signature(HybridEngine.mix).parameters["artist_spacing"].default
 
 # Album names that mean "no real album" (untagged/loose singles bucket, live comp
 # grab-bags, etc.) -- grouping by these would create FALSE same-album positives.
@@ -144,18 +150,76 @@ def sample_negatives(eng, seed_idx, k, rng, max_tries=300):
     return out
 
 
+def _validate_out_path(out_arg, eval_dir):
+    """Restrict --out to inside attune/eval/ (this module's directory), so a typo'd
+    or malicious path can't make the harness write a report somewhere unexpected on
+    disk. Resolves symlinks/`..` first so those can't be used to escape the check."""
+    eval_real = os.path.realpath(eval_dir)
+    out_real = os.path.realpath(out_arg)
+    try:
+        common = os.path.commonpath([eval_real, out_real])
+    except ValueError:
+        common = None  # e.g. different drives on Windows -- definitely outside
+    if common != eval_real:
+        raise SystemExit(
+            f"[harness] --out must be inside {eval_real} "
+            f"(got: {out_arg!r} -> resolves to {out_real!r})")
+    return out_real
+
+
 # ---------------------------------------------------------------------------
 # Scoring
 # ---------------------------------------------------------------------------
 
 def rank_array(eng, si):
-    """Full descending rank (1 = best) over the pool for seed index si, excluding si."""
+    """Full descending rank (1 = best) over the pool for seed index si, excluding si,
+    from the raw _score() ordering. Kept for reference/comparison -- NOT what a user
+    actually sees, since mix() also applies an artist-spacing filter on top of this
+    (see mix_rank_array(), which is what evaluate() uses)."""
     scores = eng._score(si)
     order = np.argsort(-scores)
     order = order[order != si]
     ranks = np.empty(len(eng.paths), dtype=np.int64)
     ranks[order] = np.arange(1, len(order) + 1)
     return order, ranks
+
+
+def mix_rank_array(eng, si, artist_spacing=_MIX_ARTIST_SPACING_DEFAULT):
+    """Rank array over the ACTUAL user-facing ordering from HybridEngine.mix() (score
+    order + its greedy artist-spacing filter), not raw _score(). This is what the
+    harness scores against, since that's what a user sees.
+
+    GOTCHA (do not change to "fix" this -- see hybrid.py's mix() comment): mix()'s
+    artist-spacing filter is a single greedy pass -- a candidate skipped because its
+    artist appeared too recently is dropped for good, not deferred/retried later. So
+    unrolled over the WHOLE pool (as here, so every relevant/negative track still gets
+    *some* rank), some tracks never get a "kept" slot at all. Those all tie for one
+    rank just past the last kept track, since that's what mix() actually does with
+    them: never shows them, regardless of how good their raw _score() was. Changing
+    that spacing behavior is a shipped-behavior change that needs a human ear test
+    first -- this function only measures it, it does not alter it.
+    """
+    scores = eng._score(si)
+    order = np.argsort(-scores)
+    order = order[order != si]
+
+    kept, dropped, recent = [], [], []
+    for j in order:
+        j = int(j)
+        a = eng.artist[j]
+        if a and a in recent[-artist_spacing:]:
+            dropped.append(j)
+            continue
+        kept.append(j)
+        recent.append(a)
+
+    ranks = np.empty(len(eng.paths), dtype=np.int64)
+    if kept:
+        ranks[np.array(kept, dtype=np.int64)] = np.arange(1, len(kept) + 1)
+    worst_rank = len(kept) + 1
+    if dropped:
+        ranks[np.array(dropped, dtype=np.int64)] = worst_rank
+    return np.array(kept, dtype=np.int64), ranks
 
 
 def _disp(path):
@@ -168,7 +232,7 @@ def evaluate(eng, seeds, album_pos, artist_pos, dupe_pos, k, neg_per_seed, rng):
     rows = []
     for seed in seeds:
         si = eng.idx[seed]
-        order, ranks = rank_array(eng, si)
+        order, ranks = mix_rank_array(eng, si)
         top_k_idx = set(order[:k].tolist())
 
         a_paths = album_pos.get(seed, set())
@@ -335,8 +399,20 @@ def main():
           f"({len(dupe_seeds)} dupe-guaranteed [of {len(all_dupe_seeds)} found] "
           f"+ {len(sampled_rest)} random weak-positive-only) out of {len(candidates)} candidates")
 
+    if not seeds:
+        raise SystemExit(
+            "[harness] ERROR: no labelled eval seeds available (no album-mate, "
+            "artist-mate, or CLAP-dupe positives were bootstrapped from this pool) -- "
+            "cannot compute precision@k/MRR. Refusing to report NaN as a real result. "
+            "Check that --db points at a populated library.")
+
     print(f"[harness] scoring HybridEngine (k={args.k}, {args.neg_per_seed} neg/seed) ...")
     rows = evaluate(eng, seeds, album_pos, artist_pos, dupe_pos, args.k, args.neg_per_seed, rng)
+    if not rows:
+        raise SystemExit(
+            "[harness] ERROR: 0 eval seeds actually scored (every sampled seed lost its "
+            "relevant set at scoring time). Cannot compute precision@k/MRR. Refusing to "
+            "report NaN as a real result.")
     summary = summarize(rows, args.k)
     summary["k"] = args.k
     summary["n_pool"] = n_pool
@@ -387,7 +463,8 @@ def main():
     print(f"elapsed: {summary['elapsed_sec']}s")
     print("=" * 60)
 
-    out_path = args.out or os.path.join(_HERE, f"report_{time.strftime('%Y%m%d_%H%M%S')}.json")
+    out_path = (_validate_out_path(args.out, _HERE) if args.out
+                else os.path.join(_HERE, f"report_{time.strftime('%Y%m%d_%H%M%S')}.json"))
     with open(out_path, "w") as f:
         json.dump({"summary": summary, "rows": rows}, f, indent=2)
     print(f"\n[harness] full report written to {out_path}")

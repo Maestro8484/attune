@@ -25,7 +25,7 @@ features (scan.py analyze); with lib active the pool is the clap∩librosa inter
 If CLAP is absent, use the librosa engine in mixer.py.
 """
 from __future__ import annotations
-import os, json, sqlite3
+import os, json, sqlite3, pathlib
 import numpy as np
 
 # V2 — the recipe that WON the human blind listening test (see extracted/human_ratings.md).
@@ -37,6 +37,21 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 # Krumhansl-Schmuckler key profiles (major / minor) for key estimation from chroma.
 _KRUM_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
 _KRUM_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
+
+
+def _connect_readonly(db_path, timeout=30):
+    """Open db_path strictly read-only via a file: URI (mode=ro), so this engine can
+    never accidentally CREATE the DB file (e.g. a typo'd path) or write to it. Falls
+    back to a plain (non-uri) connect if db_path can't be turned into a file: URI —
+    e.g. it's already a "file:...?..." URI itself, or pathlib chokes on it."""
+    if db_path.startswith("file:"):
+        return sqlite3.connect(db_path, timeout=timeout, uri=True)
+    try:
+        uri = pathlib.Path(os.path.abspath(db_path)).as_uri() + "?mode=ro"
+        return sqlite3.connect(uri, timeout=timeout, uri=True)
+    except ValueError:
+        # not representable as a URI for some reason -- fall back rather than fail
+        return sqlite3.connect(db_path, timeout=timeout)
 
 
 def _tags(g):
@@ -94,7 +109,7 @@ class HybridEngine:
         if weights:
             self.w.update(weights)
 
-        conn = sqlite3.connect(db_path, timeout=30)
+        conn = _connect_readonly(db_path, timeout=30)
         conn.execute("PRAGMA busy_timeout=15000")
         meta = {p: (a, t, al, g, y) for p, a, t, al, g, y in
                 conn.execute("SELECT path,artist,album,title,genre,year FROM tracks")}
@@ -207,6 +222,10 @@ class HybridEngine:
         return hits[0] if len(hits) == 1 else None
 
     def mix(self, seed, size=25, artist_spacing=3):
+        # GOTCHA (do not "fix" without a human ear test first -- shipped behavior):
+        # a candidate skipped below for violating artist_spacing is dropped for good,
+        # not deferred/retried later in this single pass -- see eval/harness.py's
+        # mix_rank_array() for a fuller writeup of the consequence.
         canon = self.resolve(seed)
         if canon is None:
             return None
@@ -230,11 +249,19 @@ class HybridEngine:
     # ------------------------------------------------------------------
 
     def _as_index(self, x):
-        """Accept either a path (resolved like mix()'s seed) or a raw pool index."""
+        """Accept either a path (resolved like mix()'s seed) or a raw pool index.
+        A raw index is bounds-checked: negative or out-of-range values are NOT passed
+        through (numpy would silently wrap a negative index, or a plain > len fancy
+        index would raise a confusing IndexError deep in some other call) -- reject
+        them here with a clear error instead."""
         if isinstance(x, str):
             canon = self.resolve(x)
             return None if canon is None else self.idx[canon]
-        return int(x)
+        i = int(x)
+        if not (0 <= i < len(self.paths)):
+            raise ValueError(
+                f"track index out of range: {i} (pool has {len(self.paths)} tracks)")
+        return i
 
     def _unit(self, v):
         v = np.asarray(v, dtype=np.float64)
