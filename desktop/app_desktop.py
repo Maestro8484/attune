@@ -1,28 +1,39 @@
-"""Attune desktop — a native window wrapping the web UI (no browser tab).
+"""Attune desktop — a native window wrapping Attune Studio (no browser tab).
 
 Run in place:
     python attune/desktop/app_desktop.py
 Build a one-click .exe:
     python attune/desktop/build.py         (writes dist/Attune/Attune.exe)
 
-Finding your library: the app looks for the music DB in this order —
-  1. the ATTUNE_DB environment variable,
-  2. mixer.db (or data/mixer.db) sitting next to the program,
-  3. a mixer-ng/data/mixer.db found by walking up from the program.
-So the exe "just works" inside the repo, and stays portable if you copy
-mixer.db next to it.
+Self-contained by design. The bundled app needs NO external service to run:
+  * Engine: it probes for a live MusicIP Mixer on localhost:10002 and uses it if present,
+    otherwise it falls back to the built-in V2 engine (CLAP/librosa vectors already stored
+    in mixer.db — no torch, no librosa, no network). So it always starts and always mixes.
+  * Library DB (mixer.db): found via ATTUNE_DB, then next to the program, then by walking up
+    the repo tree.
+  * Playlist folder: ATTUNE_PLAYLIST_DIR, or a "Playlists" folder next to the program.
+
+What it CANNOT do standalone (stated honestly, not hidden):
+  * bundle or launch MusicIP Mixer itself — it is closed third-party software.
+  * analyze brand-new tracks — that needs the heavy torch/librosa/CLAP stack, which this
+    build deliberately omits. It plays and mixes an already-analyzed library.
+  * play audio whose files aren't present at their stored paths (the music itself is not
+    bundled; the app streams it live from disk).
 """
 import importlib.util
 import os
 import sys
+import urllib.request
 
-# app.py loads hybrid.py / export.py by file path (importlib), so PyInstaller's
-# static analysis can't see their imports — pull the heavy runtime deps in here
-# explicitly so they get bundled.
+# app.py loads hybrid.py / engine.py / musicip_engine.py / export.py / studio.py by file
+# path (importlib), so PyInstaller's static analysis can't see their imports — pull the
+# heavy runtime deps in here explicitly so they get bundled.
 import json          # noqa: F401
 import sqlite3       # noqa: F401
 import flask         # noqa: F401
 import numpy         # noqa: F401
+import mutagen       # noqa: F401
+import requests      # noqa: F401  (MusicIP adapter + Plex export)
 import webview
 
 
@@ -60,13 +71,28 @@ def _find_db():
               os.path.join(home, "data", "mixer.db")):
         if c and os.path.exists(c):
             return os.path.abspath(c)
-    # walk up for a repo-style mixer-ng/data/mixer.db, from both the program's
-    # folder AND this file's folder — so source mode works from any cwd.
     for start in (home, os.path.dirname(os.path.abspath(__file__))):
         hit = _walk_up_for(start, os.path.join("mixer-ng", "data", "mixer.db"))
         if hit:
             return hit
     return None
+
+
+def _find_playlists():
+    home = _home_dir()
+    for c in (os.environ.get("ATTUNE_PLAYLIST_DIR"),
+              os.path.join(home, "Playlists")):
+        if c and os.path.isdir(c):
+            return os.path.abspath(c)
+    return None
+
+
+def _musicip_alive(url="http://localhost:10002/api/version", timeout=2.0):
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as r:
+            return b"MusicIP" in r.read(64)
+    except Exception:
+        return False
 
 
 def _load_create_app(base):
@@ -80,44 +106,52 @@ def _load_create_app(base):
 def _message_html(msg):
     return (
         "<div style='font-family:Segoe UI,system-ui,sans-serif;padding:34px;"
-        "color:#1a1a1a;background:#fafafa;height:100%'>"
-        "<div style='font-size:24px;font-weight:600'>Attune</div>"
+        "color:#e7e9ee;background:#0e1014;height:100%'>"
+        "<div style='font-size:24px;font-weight:600;color:#6d8cff'>◆ Attune</div>"
         f"<p style='font-size:15px;line-height:1.6;margin-top:14px'>{msg}</p></div>"
     )
+
+
+def _fail(msg, w=680, h=420):
+    webview.create_window("Attune", html=_message_html(msg.replace("\n", "<br>")),
+                          width=w, height=h)
+    webview.start()
 
 
 def main():
     db = _find_db()
     if not db:
-        webview.create_window(
-            "Attune",
-            html=_message_html(
-                "No music database found.<br><br>Put your <code>mixer.db</code> "
-                "next to this program, or set the <code>ATTUNE_DB</code> environment "
-                "variable to its full path."),
-            width=640, height=380)
-        webview.start()
+        _fail("No music database found.<br><br>Put your <code>mixer.db</code> next to this "
+              "program, or set the <code>ATTUNE_DB</code> environment variable to its full path.")
         return
-    print(f"Attune desktop — loading library from {db}")
+
+    # Pick the engine that is actually available, don't assume one and crash.
+    engine = "musicip" if _musicip_alive() else "v2"
+    playlists = _find_playlists()
+    print(f"Attune desktop — db={db}")
+    print(f"  engine={engine}  (MusicIP {'detected' if engine == 'musicip' else 'not running -> built-in V2'})")
+    print(f"  playlists={playlists or '(none configured)'}")
+
     try:
         create_app = _load_create_app(_base_dir())
-        app = create_app(db)
+        app = create_app(db, engine_name=engine, playlist_dir=playlists)
     except SystemExit as e:
-        # _check_db raises SystemExit with a friendly, actionable message
-        webview.create_window("Attune", html=_message_html(str(e).replace("\n", "<br>")),
-                              width=680, height=420)
-        webview.start()
-        return
+        # If MusicIP vanished between the probe and load, or the DB is unusable, try one
+        # clean fall back to V2 before giving up.
+        if engine == "musicip":
+            try:
+                app = create_app(db, engine_name="v2", playlist_dir=playlists)
+            except Exception as e2:
+                _fail("Couldn't start the engine.<br><br>" + str(e2))
+                return
+        else:
+            _fail(str(e))
+            return
     except Exception as e:
-        # missing bundled file, corrupt DB, engine failure — show it instead of a
-        # silent exit (a --windowed build has no console to print a traceback to)
-        webview.create_window("Attune",
-                              html=_message_html("Couldn't start the engine.<br><br>"
-                                                 + str(e).replace("\n", "<br>")),
-                              width=680, height=420)
-        webview.start()
+        _fail("Couldn't start the engine.<br><br>" + str(e))
         return
-    webview.create_window("Attune", app, width=780, height=920, min_size=(430, 560))
+
+    webview.create_window("Attune Studio", app, width=1360, height=880, min_size=(900, 620))
     webview.start()
 
 
