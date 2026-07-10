@@ -7,10 +7,10 @@ does for /api/songs and /api/mix — reuse, not reinvent. NOTE: this API build h
 /api/songs catalog instead, the same "search over what we already fetched" fallback
 bridge.py's own /api/search route uses.
 
-Path reconciliation: MusicIP speaks UNC paths (\\\\DiskStation\\music\\Music Library\\...) while our
-DB speaks local L:\\ paths. The library tree is a MIRROR, so we reconcile by the path tail after
-"Music Library/" (the same swap export.py's PathMapper does for playlists). This keeps the adapter
-engine-agnostic — no hardcoded drive letters.
+Path reconciliation: MusicIP speaks UNC paths (\\\\<server>\\<share>\\<library>\\...) while our
+DB speaks local mapped-drive paths. The library tree is a MIRROR, so we reconcile by the path
+tail below the library root (the same swap export.py's PathMapper does for playlists). This
+keeps the adapter engine-agnostic — no hardcoded server names or drive letters.
 
 Capabilities: search + similar + MusicIP-native style/variety controls. It does NOT support the
 CLAP-only extras (thumbs/refine, mmr, flow, explain) — those need our vectors and stay a hybrid/V2

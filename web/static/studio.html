@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Attune Studio</title>
+<link rel="stylesheet" href="/studio.css">
+</head>
+<body>
+
+<header id="toolbar">
+  <div class="brand"><span class="logo">◆</span> Attune <span class="sub">Studio</span></div>
+
+  <button id="btnMix" class="primary" title="Create a mix from the selected track (Ctrl+M)">
+    <span class="ico">✦</span> Create Mix
+  </button>
+
+  <label class="field">
+    <input id="mixSize" type="number" min="1" max="600" value="25" title="Mix length">
+    <select id="sizeType" title="Mix length units — Minutes trims a 100-track mix to fit">
+      <option value="tracks">Tracks</option>
+      <option value="minutes">Minutes</option>
+    </select>
+  </label>
+
+  <button id="btnOptions" title="Mix options">⚙ Options</button>
+  <button id="btnShuffle" title="Shuffle the current view">⤨ Shuffle</button>
+  <button id="btnExport" title="Export">⇪ Export</button>
+
+  <span class="spacer"></span>
+
+  <label class="search">
+    <span class="ico">⌕</span>
+    <input id="q" type="search" placeholder="Search all" autocomplete="off">
+  </label>
+</header>
+
+<!-- options popover -->
+<div id="optionsPanel" class="popover" hidden>
+  <div class="poptitle">Mix options</div>
+
+  <div class="engineRow">
+    <span class="k">Engine</span>
+    <span id="engineName" class="pill">—</span>
+  </div>
+
+  <div id="mipControls">
+    <label class="slider">
+      <span class="k">Similarity <em id="styleV">40</em></span>
+      <input id="style" type="range" min="0" max="845" step="1" value="40">
+      <span class="hint">0 = pure acoustic (cross-genre). Higher = follow the artist's style.
+        Above ~845 the pool collapses to the seed's own artist.</span>
+    </label>
+    <label class="slider">
+      <span class="k">Variety <em id="varietyV">5</em></span>
+      <input id="variety" type="range" min="0" max="9" step="1" value="5">
+      <span class="hint">Keeps each candidate with probability 1/(1+variety), walking down
+        the similarity ranking. Higher = reach deeper, more artists and genres.</span>
+    </label>
+  </div>
+
+  <div id="v2Controls" hidden>
+    <label class="slider"><span class="k">CLAP <em id="clapV">1.0</em></span>
+      <input id="clap" type="range" min="0" max="2" step="0.05" value="1.0"></label>
+    <label class="slider"><span class="k">Timbre <em id="libV">0.4</em></span>
+      <input id="lib" type="range" min="0" max="2" step="0.05" value="0.4"></label>
+    <label class="slider"><span class="k">Genre <em id="genreV">0.3</em></span>
+      <input id="genre" type="range" min="0" max="2" step="0.05" value="0.3"></label>
+    <label class="slider"><span class="k">Tempo <em id="bpmV">0.3</em></span>
+      <input id="bpm" type="range" min="0" max="2" step="0.05" value="0.3"></label>
+    <label class="slider"><span class="k">Era <em id="eraV">0.1</em></span>
+      <input id="era" type="range" min="0" max="2" step="0.05" value="0.1"></label>
+    <div class="presets">
+      <span class="k">Presets</span>
+      <button data-preset="v2" class="chip">V2 (shipped)</button>
+      <button data-preset="nobpm" class="chip">bpm = 0 <span class="tag">measured</span></button>
+    </div>
+    <label class="chk"><input id="mmr" type="checkbox"> MMR variety</label>
+    <label class="chk"><input id="flow" type="checkbox"> Flow ordering</label>
+  </div>
+
+  <label class="chk"><input id="dedupOn" type="checkbox" checked> Hide duplicates</label>
+  <select id="dedupField">
+    <option value="song">same artist + title</option>
+    <option value="title">same title</option>
+    <option value="file">same filename</option>
+  </select>
+</div>
+
+<!-- export popover -->
+<div id="exportPanel" class="popover" hidden>
+  <div class="poptitle">Export <span id="exportCount" class="pill">0 tracks</span></div>
+  <label class="row"><span class="k">Name</span>
+    <input id="plName" type="text" placeholder="Attune mix"></label>
+  <!-- Labels stay generic; the real roots come from the server at runtime (they live in
+       .env, which is gitignored). Never hardcode a machine/share name in tracked source. -->
+  <label class="row"><span class="k">Path style</span>
+    <select id="flavor">
+      <option value="unc">UNC share — other LAN players</option>
+      <option value="local">Local drive — this PC</option>
+      <option value="plex">Plex server path</option>
+    </select></label>
+  <div id="flavorRoot" class="hint"></div>
+  <div class="btnrow">
+    <button id="btnSaveDir" class="primary">Save to playlist folder</button>
+    <button id="btnDownload">Download .m3u8</button>
+    <button id="btnPlex">Create Plex playlist</button>
+  </div>
+  <div id="exportDir" class="hint"></div>
+  <div id="exportMsg" class="msg"></div>
+</div>
+
+<!-- context menu -->
+<ul id="ctx" class="ctxmenu" hidden>
+  <li data-act="mix"><b>Create Mix</b><kbd>Ctrl+M</kbd></li>
+  <li data-act="more">More Like This</li>
+  <li data-act="less">Less Like This</li>
+  <li class="sep"></li>
+  <li data-act="play">Play</li>
+  <li data-act="queue">Add to Now Playing</li>
+  <li class="sep"></li>
+  <li data-act="artist">Select Artist</li>
+  <li data-act="album">Select Album</li>
+  <li data-act="genre">Select Genre</li>
+  <li class="sep"></li>
+  <li data-act="why">Why this pick?</li>
+  <li data-act="reveal">Open File Location</li>
+  <li data-act="copy">Copy Artist — Title</li>
+</ul>
+
+<main id="grid">
+
+  <!-- left: tree + art + transport -->
+  <aside id="left">
+    <div class="pane treepane">
+      <div class="paneHead">Filters / Playlists</div>
+      <ul id="tree" class="tree">
+        <li data-view="library" class="on"><span class="ti">▤</span> Library</li>
+        <li data-view="nowplaying"><span class="ti">▶</span> Now Playing <b id="npN">0</b></li>
+        <li data-view="mix"><span class="ti">✦</span> Mix <b id="mixN">0</b></li>
+        <li class="grouphead">Playlists <b id="plN">0</b></li>
+      </ul>
+      <ul id="plList" class="tree pl"></ul>
+    </div>
+
+    <div class="pane artpane">
+      <div id="art" class="art"><span class="noart">♪</span></div>
+      <div id="npTitle" class="npTitle">—</div>
+      <div id="npArtist" class="npArtist"></div>
+      <audio id="audio" preload="none"></audio>
+      <div class="transport">
+        <button id="tPrev" title="Previous">⏮</button>
+        <button id="tPlay" class="play" title="Play/Pause">▶</button>
+        <button id="tNext" title="Next">⏭</button>
+        <span id="tCur" class="t">0:00</span>
+        <input id="tSeek" class="seek" type="range" min="0" max="1000" value="0">
+        <span id="tDur" class="t">0:00</span>
+        <span class="vol">🔊<input id="tVol" type="range" min="0" max="1" step="0.01" value="0.9"></span>
+      </div>
+    </div>
+  </aside>
+
+  <!-- right: facets + tracks -->
+  <section id="right">
+    <div id="facets">
+      <div class="pane facet">
+        <div class="paneHead">Genres <b id="gN">0</b></div>
+        <ul id="fGenre" class="flist"></ul>
+      </div>
+      <div class="pane facet">
+        <div class="paneHead">Artists <b id="aN">0</b></div>
+        <ul id="fArtist" class="flist"></ul>
+      </div>
+      <div class="pane facet">
+        <div class="paneHead">Albums <b id="bN">0</b></div>
+        <ul id="fAlbum" class="flist"></ul>
+      </div>
+    </div>
+
+    <div class="pane tablepane">
+      <div id="viewBar" class="viewBar">
+        <span id="viewLabel">Library</span>
+        <span id="viewSub" class="hint"></span>
+        <span class="spacer"></span>
+        <button id="btnBackLib" hidden>← Back to Library</button>
+      </div>
+      <div class="tableWrap">
+        <table id="tbl">
+          <thead><tr>
+            <th data-sort="track" class="c-track">Track</th>
+            <th data-sort="title" class="c-title">Title</th>
+            <th data-sort="length" class="c-len">Length</th>
+            <th data-sort="artist" class="c-artist">Artist</th>
+            <th data-sort="album" class="c-album">Album</th>
+            <th data-sort="year" class="c-year">Year</th>
+            <th data-sort="status" class="c-status">Status</th>
+          </tr></thead>
+          <tbody id="tbody"></tbody>
+        </table>
+        <div id="empty" class="empty" hidden>Nothing here.</div>
+      </div>
+      <div id="pager" class="pager"></div>
+    </div>
+  </section>
+</main>
+
+<footer id="status">
+  <span id="sLib">—</span>
+  <span class="sep">│</span>
+  <span id="sSel">—</span>
+  <span class="spacer"></span>
+  <span id="sTot">—</span>
+</footer>
+
+<div id="toast" class="toast" hidden></div>
+<div id="why" class="why" hidden></div>
+
+<script src="/studio.js"></script>
+</body>
+</html>
