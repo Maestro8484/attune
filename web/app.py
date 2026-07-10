@@ -24,7 +24,8 @@ import os
 import sqlite3
 import threading
 
-from flask import Flask, Response, jsonify, render_template_string, request, send_file
+from flask import (Flask, Response, jsonify, redirect, render_template_string,
+                   request, send_file)
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SRC = os.path.join(os.path.dirname(HERE), "src")
@@ -37,6 +38,14 @@ SLIDER_KEYS = ("clap", "lib", "genre", "bpm", "era")
 # Defaults match musicip_engine.MIX_DEFAULTS (style=40, variety=5).
 MUSICIP_STYLE_DEFAULT = 40
 MUSICIP_VARIETY_DEFAULT = 5
+
+# The style dial is NOT 0-100. Measured against the live engine (extracted/TEACHER_MECHANICS.md
+# B.6): the eligible pool is flat (~14,810 tracks) from style 0 to ~400 while the ORDERING keeps
+# changing, then a hard threshold bites between 845 and 846 and the pool collapses -- at style
+# >= 950 the only survivors are the seed's own artist. Clamping to 100 discarded ~88% of the
+# usable range. 845 is the last value that still returns a workable pool.
+MUSICIP_STYLE_MAX = 845
+MUSICIP_VARIETY_MAX = 9
 
 # extensions the library actually contains (mp3/flac); fall back to mimetypes.guess_type
 # for anything else so /audio still serves a sane Content-Type.
@@ -106,7 +115,16 @@ def _check_db(db_path):
             f"or point --db at a library that already has CLAP vectors.")
 
 
-def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002"):
+def _load_studio():
+    path = os.path.join(HERE, "studio.py")
+    spec = importlib.util.spec_from_file_location("attune_studio", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
+               playlist_dir=None):
     _check_db(db_path)
     hybrid = _load_hybrid()
     print(f"Loading library from {db_path} ...")
@@ -209,8 +227,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         track list from, so an exported playlist always equals the mix the user is viewing
         under whichever engine is active (musicip or v2)."""
         if is_musicip:
-            style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), 100)
-            variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), 9)
+            style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), MUSICIP_STYLE_MAX)
+            variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), MUSICIP_VARIETY_MAX)
             pool_size = min(size * 4, 200) if field else size
             seed_ref = eng_iface.Ref(pool_i=i, label=labels[i])
             refs = active.similar(seed_ref, size=pool_size, style=style, variety=variety)
@@ -275,10 +293,15 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
 
     @app.get("/")
     def index():
+        return redirect("/studio")
+
+    @app.get("/classic")
+    def classic():
         return render_template_string(
             PAGE, count=len(eng.paths), plex=plex_configured, engine=engine_name,
             weights={k: eng.w.get(k, 0.0) for k in SLIDER_KEYS},
-            musicip_style=MUSICIP_STYLE_DEFAULT, musicip_variety=MUSICIP_VARIETY_DEFAULT)
+            musicip_style=MUSICIP_STYLE_DEFAULT, musicip_variety=MUSICIP_VARIETY_DEFAULT,
+            musicip_style_max=MUSICIP_STYLE_MAX)
 
     @app.get("/api/search")
     def search():
@@ -319,8 +342,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         tracks = [{"i": pi, "label": labels[pi]} for pi in picks_i]
 
         if is_musicip:
-            style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), 100)
-            variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), 9)
+            style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), MUSICIP_STYLE_MAX)
+            variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), MUSICIP_VARIETY_MAX)
             return jsonify(
                 seed=labels[i], seed_i=i, tracks=tracks, style=style, variety=variety)
 
@@ -475,6 +498,21 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             res["missed"] = [os.path.basename(p) for p in res["missed"]]
         return jsonify(res)
 
+    # ---- Attune Studio: the MusicIP-shaped desktop view. Adds library facets, the
+    # playlist-folder browser, album art and save-to-folder export. It reuses the routes
+    # above rather than reimplementing them; _active_mix_tracks is handed over so an
+    # exported playlist always equals the mix on screen.
+    _load_studio().register(app, {
+        "db_path": db_path,
+        "eng": eng,
+        "labels": labels,
+        "mapper": mapper,
+        "playlist_dir": playlist_dir,
+        "engine_name": engine_name,
+        "plex_configured": plex_configured,
+        "active_mix_tracks": _active_mix_tracks,
+    })
+
     return app
 
 
@@ -610,7 +648,7 @@ PAGE = """<!doctype html>
     <summary>MusicIP mix controls</summary>
     <div class="wsliders">
       <label for="mip_style">style</label>
-      <input type="range" id="mip_style" min="0" max="100" step="1" value="{{ musicip_style }}">
+      <input type="range" id="mip_style" min="0" max="{{ musicip_style_max }}" step="1" value="{{ musicip_style }}">
       <span class="wval" id="mip_style_v">{{ musicip_style }}</span>
       <label for="mip_variety">variety</label>
       <input type="range" id="mip_variety" min="0" max="9" step="1" value="{{ musicip_variety }}">
@@ -832,7 +870,10 @@ async function toggleWhy(i, li) {
 
 function exportM3u() {
   if (cur.i === null) return;
-  window.location = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size + dedupParam();
+  // the export routes rebuild the mix from these args -- omit them and you export a
+  // DIFFERENT mix than the one on screen.
+  const extra = ENGINE ? musicipParams() : (weightParams() + varietyParam() + flowParam());
+  window.location = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size + dedupParam() + extra;
 }
 
 async function sendPlex() {
@@ -841,7 +882,9 @@ async function sendPlex() {
   btn.disabled = true;
   st.textContent = 'Sending to Plex (indexing the library on first use — a few seconds)…';
   try {
-    const r = await fetch('/api/export/plex?i=' + cur.i + '&size=' + cur.size + dedupParam(), { method: 'POST' });
+    const extra = ENGINE ? musicipParams() : (weightParams() + varietyParam() + flowParam());
+    const r = await fetch('/api/export/plex?i=' + cur.i + '&size=' + cur.size + dedupParam() + extra,
+                          { method: 'POST' });
     const d = await r.json();
     st.textContent = d.ok
       ? '✓ Added to Plex — ' + d.matched + ' tracks'
@@ -874,8 +917,12 @@ def main():
                          "CLAP/librosa HybridEngine with the full weights/refine/mmr/flow UI.")
     ap.add_argument("--musicip-url", default="http://localhost:10002",
                     help="MusicIP Mixer HTTP API base URL (only used with --engine musicip)")
+    ap.add_argument("--playlists", default=os.environ.get("ATTUNE_PLAYLIST_DIR"),
+                    help="folder of .m3u/.m3u8 playlists to browse, and the ONLY folder "
+                         "'Save to playlist folder' can write into")
     args = ap.parse_args()
-    app = create_app(args.db, engine_name=args.engine, musicip_url=args.musicip_url)
+    app = create_app(args.db, engine_name=args.engine, musicip_url=args.musicip_url,
+                     playlist_dir=args.playlists)
     print(f"Serving on http://{args.host}:{args.port} (engine={args.engine})")
     app.run(host=args.host, port=args.port, debug=False)
 

@@ -60,3 +60,6 @@ bridge/playlists/
 
 # machine-specific personal strings for tools/leak_check.py (checked locally, never published)
 .leakpatterns
+
+# MAD-loop scratch (adversarial review staging)
+.mad/
