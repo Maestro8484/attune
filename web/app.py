@@ -123,6 +123,15 @@ def _load_studio():
     return mod
 
 
+def _load_config():
+    """Import config.py (src/config.py) by path — the one settings store every entry
+    point (web, desktop, analyzer) reads. See config.py's module docstring."""
+    spec = importlib.util.spec_from_file_location("attune_config", os.path.join(SRC, "config.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
                playlist_dir=None):
     _check_db(db_path)
@@ -328,7 +337,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     def mix():
         try:
             i = int(request.args.get("i", ""))
-            size = min(max(int(request.args.get("size", 15)), 1), 100)
+            size = min(max(int(request.args.get("size", 100)), 20), 150)
         except ValueError:
             return jsonify(error="bad request"), 400
         if not (0 <= i < len(eng.paths)):
@@ -361,7 +370,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         data = request.get_json(silent=True) or {}
         try:
             i = int(data.get("i"))
-            size = min(max(int(data.get("size", 15)), 1), 100)
+            size = min(max(int(data.get("size", 100)), 20), 150)
         except (TypeError, ValueError):
             return jsonify(error="bad request"), 400
         if not (0 <= i < len(eng.paths)):
@@ -432,9 +441,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return send_file(path, mimetype=_audio_mimetype(path), conditional=True)
 
     def _seed_index():
-        """Parse + bounds-check the ?i / ?size args shared by the export routes."""
+        """Parse + bounds-check the ?i / ?size args shared by the export routes. Mix length
+        is capped at 150 to match /api/mix (a playlist longer than that is the 'too long'
+        case we deliberately don't generate)."""
         i = int(request.args.get("i", ""))
-        size = min(max(int(request.args.get("size", 25)), 1), 200)
+        size = min(max(int(request.args.get("size", 100)), 1), 150)
         if not (0 <= i < len(eng.paths)):
             raise IndexError
         return i, size
@@ -498,11 +509,34 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             res["missed"] = [os.path.basename(p) for p in res["missed"]]
         return jsonify(res)
 
+    # ---- Settings: the one config source of truth (src/config.py). GET hands the
+    # client its server-side settings; POST merges a partial update and reports which
+    # keys need a process restart to take effect (honestly, instead of pretending).
+    cfgmod = _load_config()
+
+    @app.get("/api/settings")
+    def get_settings():
+        s = cfgmod.load()
+        return jsonify(settings=s, path=cfgmod.settings_path(),
+                       restart_keys=sorted(cfgmod.RESTART_KEYS))
+
+    @app.post("/api/settings")
+    def post_settings():
+        patch = request.get_json(silent=True)
+        if not isinstance(patch, dict):
+            return jsonify(ok=False, error="expected a JSON object"), 400
+        patch.pop("settings_version", None)          # managed by config.py, not the client
+        unknown = sorted(k for k in patch if k not in cfgmod.DEFAULTS)
+        if unknown:
+            return jsonify(ok=False, error=f"unknown settings: {', '.join(unknown)}"), 400
+        s, needs_restart = cfgmod.update(patch)
+        return jsonify(ok=True, settings=s, needs_restart=needs_restart)
+
     # ---- Attune Studio: the MusicIP-shaped desktop view. Adds library facets, the
     # playlist-folder browser, album art and save-to-folder export. It reuses the routes
     # above rather than reimplementing them; _active_mix_tracks is handed over so an
     # exported playlist always equals the mix on screen.
-    _load_studio().register(app, {
+    lib = _load_studio().register(app, {
         "db_path": db_path,
         "eng": eng,
         "labels": labels,
@@ -512,6 +546,39 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "plex_configured": plex_configured,
         "active_mix_tracks": _active_mix_tracks,
     })
+
+    # ---- user data: ratings / play counts / tag editor / ReplayGain (userdata.py).
+    # A tag edit must also refresh the precomputed search labels here and inside the
+    # active V2 engine, or search would keep matching the OLD artist/title.
+    def _on_tags_changed(i):
+        labels[i] = _label(eng, eng.paths[i])
+        labels_lc[i] = labels[i].lower()
+        if hasattr(active, "_labels"):
+            active._labels[i] = labels[i]
+            active._labels_lc[i] = labels_lc[i]
+
+    ud_spec = importlib.util.spec_from_file_location(
+        "attune_userdata", os.path.join(HERE, "userdata.py"))
+    userdata = importlib.util.module_from_spec(ud_spec)
+    ud_spec.loader.exec_module(userdata)
+    userdata.register(app, {"db_path": db_path, "eng": eng, "lib": lib,
+                            "on_tags_changed": _on_tags_changed})
+
+    # ---- auto-playlists: user-defined smart-playlist rules (smartlists.py). Registered
+    # AFTER userdata so lib already carries rating/plays/loved/date_added columns the
+    # rule evaluator reads.
+    sl_spec = importlib.util.spec_from_file_location(
+        "attune_smartlists", os.path.join(HERE, "smartlists.py"))
+    smartlists = importlib.util.module_from_spec(sl_spec)
+    sl_spec.loader.exec_module(smartlists)
+    smartlists.register(app, {"db_path": db_path, "lib": lib})
+
+    # ---- rescan: the existing incremental pipeline behind a button (scanjob.py)
+    sj_spec = importlib.util.spec_from_file_location(
+        "attune_scanjob", os.path.join(HERE, "scanjob.py"))
+    scanjob = importlib.util.module_from_spec(sj_spec)
+    sj_spec.loader.exec_module(scanjob)
+    scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load})
 
     return app
 
@@ -907,24 +974,56 @@ function esc(s) {
 
 def main():
     ap = argparse.ArgumentParser(description="Attune web front-end.")
-    ap.add_argument("--db", required=True,
-                    help="path to an analyzed+CLAP-embedded mixer SQLite DB (see scan.py / embed.py)")
+    ap.add_argument("--db", default=None,
+                    help="path to an analyzed+CLAP-embedded mixer SQLite DB (see scan.py / "
+                         "embed.py). Falls back to ATTUNE_DB, then settings.json.")
     ap.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1; use 0.0.0.0 for LAN)")
     ap.add_argument("--port", type=int, default=8778, help="port (default: 8778)")
-    ap.add_argument("--engine", choices=("musicip", "v2"), default="musicip",
-                    help="mix engine: 'musicip' (default) drives a live MusicIP Mixer "
-                         "(http://localhost:10002) for search/mix; 'v2' uses our own "
-                         "CLAP/librosa HybridEngine with the full weights/refine/mmr/flow UI.")
-    ap.add_argument("--musicip-url", default="http://localhost:10002",
+    ap.add_argument("--engine", choices=("musicip", "v2", "auto"), default=None,
+                    help="mix engine: 'musicip' drives a live MusicIP Mixer for search/mix; "
+                         "'v2' uses our own CLAP/librosa HybridEngine with the full "
+                         "weights/refine/mmr/flow UI; 'auto' probes MusicIP and falls back "
+                         "to v2. Falls back to settings.json (default: auto).")
+    ap.add_argument("--musicip-url", default=None,
                     help="MusicIP Mixer HTTP API base URL (only used with --engine musicip)")
-    ap.add_argument("--playlists", default=os.environ.get("ATTUNE_PLAYLIST_DIR"),
+    ap.add_argument("--playlists", default=None,
                     help="folder of .m3u/.m3u8 playlists to browse, and the ONLY folder "
-                         "'Save to playlist folder' can write into")
+                         "'Save to playlist folder' can write into. Falls back to "
+                         "ATTUNE_PLAYLIST_DIR, then settings.json.")
     args = ap.parse_args()
-    app = create_app(args.db, engine_name=args.engine, musicip_url=args.musicip_url,
-                     playlist_dir=args.playlists)
-    print(f"Serving on http://{args.host}:{args.port} (engine={args.engine})")
-    app.run(host=args.host, port=args.port, debug=False)
+
+    # CLI > env > settings.json > default — the one precedence chain (config.py).
+    cfgmod = _load_config()
+    settings = cfgmod.load()
+    db = cfgmod.effective(args.db, "ATTUNE_DB", "db_path", settings)
+    engine = cfgmod.effective(args.engine, "ATTUNE_ENGINE", "engine", settings) or "auto"
+    musicip_url = cfgmod.effective(args.musicip_url, "ATTUNE_MUSICIP_URL",
+                                   "musicip_url", settings)
+    playlists = cfgmod.effective(args.playlists, "ATTUNE_PLAYLIST_DIR",
+                                 "playlist_dir", settings)
+    if not db:
+        raise SystemExit("No database configured. Pass --db, set ATTUNE_DB, or set "
+                         f"db_path in {cfgmod.settings_path()}")
+    if engine == "auto":
+        # same probe the desktop launcher does: use MusicIP if it's live, else v2.
+        import urllib.request
+        try:
+            with urllib.request.urlopen(musicip_url.rstrip("/") + "/api/version",
+                                        timeout=2.0) as r:
+                engine = "musicip" if b"MusicIP" in r.read(64) else "v2"
+        except Exception:
+            engine = "v2"
+        print(f"engine=auto -> {engine}")
+    app = create_app(db, engine_name=engine, musicip_url=musicip_url,
+                     playlist_dir=playlists or None)
+    print(f"Serving on http://{args.host}:{args.port} (engine={engine})")
+    # threaded=True is REQUIRED for a media player: the default single-threaded dev server
+    # serializes every request, so while the browser fetches a whole track to decode its
+    # waveform (a big transfer over /audio) or computes a mix, the CURRENTLY PLAYING audio's
+    # range requests queue behind it and playback stutters. Safe here: per-request SQLite
+    # connections (check_same_thread satisfied), eng.w patched under weights_lock, writes under
+    # UserData/ArtCache locks, and all other shared state is read-only or GIL-atomic.
+    app.run(host=args.host, port=args.port, debug=False, threaded=True)
 
 
 if __name__ == "__main__":
