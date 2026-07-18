@@ -16,7 +16,7 @@
   </button>
 
   <label class="field">
-    <input id="mixSize" type="number" min="1" max="600" value="25" title="Mix length">
+    <input id="mixSize" type="number" min="20" max="150" value="100" step="5" title="Mix length (20–150 tracks, or minutes)">
     <select id="sizeType" title="Mix length units — Minutes trims a 100-track mix to fit">
       <option value="tracks">Tracks</option>
       <option value="minutes">Minutes</option>
@@ -31,9 +31,28 @@
 
   <label class="search">
     <span class="ico">⌕</span>
-    <input id="q" type="search" placeholder="Search all" autocomplete="off">
+    <input id="q" type="search" placeholder="Search all  ( / )" autocomplete="off">
   </label>
+
+  <button id="btnMini" class="iconbtn" title="Mini player (Ctrl+Shift+M)">▭</button>
+  <button id="btnPrefs" class="iconbtn" title="Preferences (Ctrl+,)">☰</button>
 </header>
+
+<!-- mini player strip (hidden unless body.mini) -->
+<div id="miniBar" hidden>
+  <span class="noart" id="miniArt">♪</span>
+  <div class="mmeta">
+    <div class="t" id="miniTitle">—</div>
+    <div class="a" id="miniArtist"></div>
+  </div>
+  <input id="miniSeek" type="range" min="0" max="1000" value="0">
+  <div class="mbtns">
+    <button id="miniPrev" title="Previous">⏮</button>
+    <button id="miniPlay" title="Play/Pause">▶</button>
+    <button id="miniNext" title="Next">⏭</button>
+    <button id="miniExpand" title="Back to full window">⤢</button>
+  </div>
+</div>
 
 <!-- options popover -->
 <div id="optionsPanel" class="popover" hidden>
@@ -117,7 +136,13 @@
   <li data-act="less">Less Like This</li>
   <li class="sep"></li>
   <li data-act="play">Play</li>
-  <li data-act="queue">Add to Now Playing</li>
+  <li data-act="playnext">Play Next</li>
+  <li data-act="queue">Add to Queue<kbd>Q</kbd></li>
+  <li class="sep"></li>
+  <li data-act="rate"><span>Rate</span><span class="stars" id="ctxStars"
+      >☆☆☆☆☆</span></li>
+  <li data-act="love"><span>♥ Love</span></li>
+  <li data-act="tags">Edit Tags…<kbd>F2</kbd></li>
   <li class="sep"></li>
   <li data-act="artist">Select Artist</li>
   <li data-act="album">Select Album</li>
@@ -127,6 +152,9 @@
   <li data-act="reveal">Open File Location</li>
   <li data-act="copy">Copy Artist — Title</li>
 </ul>
+
+<!-- column chooser (right-click table header) -->
+<ul id="colMenu" hidden></ul>
 
 <main id="grid">
 
@@ -138,6 +166,21 @@
         <li data-view="library" class="on"><span class="ti">▤</span> Library</li>
         <li data-view="nowplaying"><span class="ti">▶</span> Now Playing <b id="npN">0</b></li>
         <li data-view="mix"><span class="ti">✦</span> Mix <b id="mixN">0</b></li>
+        <li class="grouphead">Smart Views</li>
+        <li data-smart="loved"><span class="ti">♥</span> Loved</li>
+        <li data-smart="toprated"><span class="ti">★</span> Top Rated</li>
+        <li data-smart="recent"><span class="ti">✚</span> Recently Added</li>
+        <li data-smart="mostplayed"><span class="ti">↻</span> Most Played</li>
+        <li data-smart="neverplayed"><span class="ti">·</span> Never Played</li>
+        <li class="grouphead" id="foldersHead">Folders <span class="fold" id="foldersTog">▸</span></li>
+      </ul>
+      <ul id="folderTree" class="tree folders" hidden></ul>
+      <ul id="treeMid" class="tree">
+        <li class="grouphead">Auto-Playlists <span class="addbtn" id="slNew"
+            title="New auto-playlist">＋</span></li>
+      </ul>
+      <ul id="slList" class="tree pl"></ul>
+      <ul id="treeTail" class="tree">
         <li class="grouphead">Playlists <b id="plN">0</b></li>
       </ul>
       <ul id="plList" class="tree pl"></ul>
@@ -145,20 +188,47 @@
 
     <div class="pane artpane">
       <div id="art" class="art"><span class="noart">♪</span></div>
-      <div id="npTitle" class="npTitle">—</div>
-      <div id="npArtist" class="npArtist"></div>
-      <audio id="audio" preload="none"></audio>
+      <div class="lcd" id="lcd" title="Attune display">
+        <div class="lcdRow1">
+          <span class="lcdTime" id="lcdTime">0:00</span>
+          <span class="lcdTrackWrap"><span class="lcdTrack" id="lcdTrack">ATTUNE :: ready</span></span>
+        </div>
+        <div class="lcdRow2">
+          <b id="lcdKbps">--- kbps</b>
+          <b id="lcdKhz">-- kHz</b>
+          <b id="lcdFlags"></b>
+          <span class="spacer"></span>
+          <b id="npPlays"></b>
+        </div>
+      </div>
+      <div class="npMeta">
+        <span class="stars" id="npStars" title="Rate">☆☆☆☆☆</span>
+        <span class="heart" id="npHeart" title="Love">♥</span>
+        <span class="spacer"></span>
+        <span class="t" id="npArtistSmall"></span>
+      </div>
+      <canvas id="vis" height="44" title="Visualizer — click to change mode"></canvas>
+      <audio id="audio" preload="auto"></audio>
+      <audio id="audioB" preload="auto"></audio>
       <div class="transport">
-        <button id="tPrev" title="Previous">⏮</button>
-        <button id="tPlay" class="play" title="Play/Pause">▶</button>
-        <button id="tNext" title="Next">⏭</button>
-        <span id="tCur" class="t">0:00</span>
-        <input id="tSeek" class="seek" type="range" min="0" max="1000" value="0">
-        <span id="tDur" class="t">0:00</span>
-        <span class="vol">🔊<input id="tVol" type="range" min="0" max="1" step="0.01" value="0.9"></span>
+        <button id="tShuf" title="Shuffle queue (S)">⤨</button>
+        <button id="tPrev" title="Previous (Z)">⏮</button>
+        <button id="tPlay" class="play" title="Play/Pause (Space)">▶</button>
+        <button id="tNext" title="Next (B)">⏭</button>
+        <button id="tRep" title="Repeat: off / all / one (R)">🔁</button>
+        <button id="tDj" title="Auto-DJ: keep the queue full with similar tracks (D)">∞</button>
+        <button id="tEq" title="Equalizer (E)">EQ</button>
+        <div class="r2">
+          <span id="tCur" class="t">0:00</span>
+          <canvas id="wave" height="22" title="Seek — the waveform draws in as the track decodes"></canvas>
+          <span id="tDur" class="t">0:00</span>
+          <span class="vol">🔊<input id="tVol" type="range" min="0" max="1" step="0.01" value="0.9"></span>
+        </div>
       </div>
     </div>
   </aside>
+
+  <div class="vsplit" id="splitLeft"></div>
 
   <!-- right: facets + tracks -->
   <section id="right">
@@ -177,32 +247,56 @@
       </div>
     </div>
 
+    <div class="hsplit" id="splitFacets"></div>
+
     <div class="pane tablepane">
       <div id="viewBar" class="viewBar">
         <span id="viewLabel">Library</span>
         <span id="viewSub" class="hint"></span>
+        <span id="queueTools" hidden>
+          <button id="qClear" title="Clear the queue">Clear</button>
+          <button id="qShuffle" title="Shuffle the queue">Shuffle</button>
+          <button id="qSave" title="Save queue as playlist">Save…</button>
+        </span>
         <span class="spacer"></span>
+        <span class="viewToggle">
+          <button id="btnViewList" class="on" title="List view">☰ List</button>
+          <button id="btnViewGrid" title="Album grid">▦ Albums</button>
+        </span>
         <button id="btnBackLib" hidden>← Back to Library</button>
       </div>
-      <div class="tableWrap">
+      <div class="tableWrap" id="tableWrap">
         <table id="tbl">
-          <thead><tr>
-            <th data-sort="track" class="c-track">Track</th>
-            <th data-sort="title" class="c-title">Title</th>
-            <th data-sort="length" class="c-len">Length</th>
-            <th data-sort="artist" class="c-artist">Artist</th>
-            <th data-sort="album" class="c-album">Album</th>
-            <th data-sort="year" class="c-year">Year</th>
-            <th data-sort="status" class="c-status">Status</th>
-          </tr></thead>
+          <thead><tr id="thead-row"></tr></thead>
           <tbody id="tbody"></tbody>
         </table>
+        <div id="albumGrid" class="albumgrid" hidden></div>
         <div id="empty" class="empty" hidden>Nothing here.</div>
       </div>
       <div id="pager" class="pager"></div>
     </div>
   </section>
 </main>
+
+<!-- EQ panel -->
+<div id="eqPanel" hidden>
+  <div class="eqHead">
+    <div class="poptitle">Equalizer</div>
+    <label class="chk"><input id="eqOn" type="checkbox"> On</label>
+    <button class="chip" id="eqFlat">Flat</button>
+  </div>
+  <div class="eqBands" id="eqBands"></div>
+  <div class="eqFoot">
+    <span class="k hint">Preset</span>
+    <select id="eqPreset"></select>
+    <span class="spacer"></span>
+    <label class="chk" title="Read ReplayGain tags from files and level volume per track">
+      <input id="rgOn" type="checkbox"> ReplayGain</label>
+    <label class="chk" title="Seconds of overlap between tracks; 0 = gapless start">
+      Crossfade <input id="xfade" type="range" min="0" max="10" step="0.5" value="0"
+        style="width:70px"> <em id="xfadeV" class="t">0s</em></label>
+  </div>
+</div>
 
 <footer id="status">
   <span id="sLib">—</span>
@@ -212,9 +306,179 @@
   <span id="sTot">—</span>
 </footer>
 
+<div id="scanBanner" hidden>
+  <span>⟳ Scanning: <span id="scanStage">—</span></span>
+  <div class="progressbar"><div class="fill" id="scanFill" style="width:0%"></div></div>
+  <span id="scanPct"></span>
+  <span class="spacer"></span>
+  <button class="chip" id="scanShow">Details</button>
+</div>
+
 <div id="toast" class="toast" hidden></div>
 <div id="why" class="why" hidden></div>
 
+<!-- Preferences modal -->
+<div id="prefsWrap" class="modalwrap" hidden>
+  <div class="modal">
+    <div class="modalHead">Preferences
+      <span id="prefsPath" class="hint" style="font-weight:400"></span>
+      <button class="x" data-close="prefsWrap">✕</button></div>
+    <div class="tabs" id="prefTabs">
+      <button data-tab="library" class="on">Library</button>
+      <button data-tab="playback">Playback</button>
+      <button data-tab="appearance">Appearance</button>
+      <button data-tab="advanced">Advanced</button>
+    </div>
+    <div class="modalBody">
+      <div class="tabpage" data-page="library">
+        <div class="prefrow"><span class="k">Music folders</span>
+          <div class="v">
+            <div class="folderlist" id="libFolders"></div>
+            <div class="btnrow"><button id="addFolder">+ Add folder</button>
+              <button id="btnRescan" class="primary">⟳ Rescan library</button></div>
+            <span class="hint">Folders scanned for new/changed music. The scan is
+              incremental — unchanged tracks are skipped.</span>
+          </div></div>
+        <div class="prefrow"><span class="k">Playlist folder</span>
+          <div class="v"><input type="text" id="prefPlaylistDir" placeholder="e.g. M:\Playlists">
+            <span class="hint">Shown in the Playlists tree; the only folder Attune writes
+              playlists into. Needs restart.</span></div></div>
+        <div class="prefrow"><span class="k">Database</span>
+          <div class="v"><input type="text" id="prefDb" placeholder="path\to\mixer.db">
+            <span class="hint">The analyzed library. Needs restart.</span></div></div>
+        <div class="prefrow"><span class="k">On launch</span>
+          <div class="v"><label class="chk"><input type="checkbox" id="prefScanLaunch">
+            Scan library folders when the app starts</label></div></div>
+        <div id="scanDetail" hidden>
+          <div class="progressbar"><div class="fill" id="scanFill2" style="width:0%"></div></div>
+          <div class="scanlog" id="scanLog"></div>
+        </div>
+      </div>
+      <div class="tabpage" data-page="playback" hidden>
+        <div class="prefrow"><span class="k">Crossfade</span>
+          <div class="v"><label class="chk"><input type="range" id="prefXfade" min="0" max="10"
+            step="0.5" style="flex:1"> <em id="prefXfadeV">0s</em></label>
+            <span class="hint">Seconds of overlap between tracks. 0 = start the next track
+              the instant the current one ends (preloaded).</span></div></div>
+        <div class="prefrow"><span class="k">ReplayGain</span>
+          <div class="v"><label class="chk"><input type="checkbox" id="prefRg">
+            Level track volume from ReplayGain tags</label>
+            <span class="hint">Uses gain values already written in your files' tags;
+              tracks without tags play unchanged.</span></div></div>
+        <div class="prefrow"><span class="k">Play counting</span>
+          <div class="v"><span class="hint">A play is counted at 50% listened (or 4 minutes,
+            whichever comes first) — the scrobble standard.</span></div></div>
+      </div>
+      <div class="tabpage" data-page="appearance" hidden>
+        <div class="prefrow"><span class="k">Theme</span>
+          <div class="v"><div class="themegrid" id="themeGrid"></div></div></div>
+        <div class="prefrow"><span class="k">Columns</span>
+          <div class="v"><span class="hint">Right-click any table header to choose visible
+            columns.</span></div></div>
+      </div>
+      <div class="tabpage" data-page="advanced" hidden>
+        <div class="prefrow"><span class="k">Engine</span>
+          <div class="v"><select id="prefEngine">
+              <option value="auto">Auto — probe MusicIP, fall back to V2</option>
+              <option value="v2">Attune V2 (built-in)</option>
+              <option value="musicip">MusicIP Mixer (needs its API running)</option>
+            </select><span class="hint">Needs restart.</span></div></div>
+        <div class="prefrow"><span class="k">MusicIP URL</span>
+          <div class="v"><input type="text" id="prefMipUrl"
+            placeholder="http://localhost:10002"><span class="hint">Needs restart.</span></div></div>
+        <div class="prefrow"><span class="k">ML python</span>
+          <div class="v"><input type="text" id="prefMlPython"
+            placeholder="...\.venv-ml\Scripts\python.exe">
+            <span class="hint">Python of the heavy analyze venv (librosa + torch).
+              Empty = Rescan imports metadata only, no audio analysis.</span></div></div>
+      </div>
+    </div>
+    <div class="modalFoot">
+      <span id="prefsMsg" class="msg"></span>
+      <span class="spacer"></span>
+      <button class="chip" data-close="prefsWrap">Cancel</button>
+      <button class="chip on" id="prefsSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Tag editor modal -->
+<div id="tagWrap" class="modalwrap" hidden>
+  <div class="modal" style="width:520px">
+    <div class="modalHead">Edit Tags
+      <span id="tagFile" class="hint" style="font-weight:400"></span>
+      <button class="x" data-close="tagWrap">✕</button></div>
+    <div class="modalBody">
+      <div class="taggrid">
+        <label>Title</label><input id="tgTitle">
+        <label>Artist</label><input id="tgArtist">
+        <label>Album</label><input id="tgAlbum">
+        <label>Album artist</label><input id="tgAlbumArtist">
+        <label>Genre</label><input id="tgGenre">
+        <label>Year</label><input id="tgDate">
+        <label>Track #</label><input id="tgTrack">
+        <label>Disc #</label><input id="tgDisc">
+        <label>Composer</label><input id="tgComposer">
+        <label>Comment</label><input id="tgComment">
+      </div>
+      <div class="techinfo" id="tagTech"></div>
+    </div>
+    <div class="modalFoot">
+      <span id="tagMsg" class="msg"></span>
+      <span class="spacer"></span>
+      <button class="chip" data-close="tagWrap">Cancel</button>
+      <button class="chip on" id="tagSave">Save to file</button>
+    </div>
+  </div>
+</div>
+
+<!-- Auto-playlist (smart-playlist rules) editor -->
+<div id="slWrap" class="modalwrap" hidden>
+  <div class="modal" style="width:640px">
+    <div class="modalHead">Auto-Playlist
+      <span id="slEditId" class="hint" style="font-weight:400"></span>
+      <button class="x" data-close="slWrap">✕</button></div>
+    <div class="modalBody">
+      <div class="row"><span class="k">Name</span>
+        <input id="slName" type="text" placeholder="e.g. 5-star rock never played"></div>
+      <div class="slmatch">Match
+        <select id="slMatch"><option value="all">all</option><option value="any">any</option></select>
+        of these rules:</div>
+      <div id="slRules" class="slrules"></div>
+      <button class="chip" id="slAddRule">＋ Add rule</button>
+      <div class="row" style="margin-top:6px">
+        <span class="k">Sort by</span>
+        <select id="slSort">
+          <option value="">— none —</option>
+          <option value="artist">Artist</option>
+          <option value="album">Album</option>
+          <option value="title">Title</option>
+          <option value="year">Year</option>
+          <option value="rating">Rating</option>
+          <option value="plays">Plays</option>
+          <option value="added">Date added</option>
+          <option value="length">Length</option>
+        </select>
+        <select id="slDesc"><option value="">ascending</option><option value="1">descending</option></select>
+        <span class="k" style="width:auto">Limit</span>
+        <input id="slLimit" type="number" min="0" max="10000" value="0" style="width:80px" title="0 = no limit">
+      </div>
+      <div id="slPreview" class="hint"></div>
+    </div>
+    <div class="modalFoot">
+      <span id="slMsg" class="msg"></span>
+      <span class="spacer"></span>
+      <button class="chip" id="slDelete" hidden>Delete</button>
+      <button class="chip" id="slPreviewBtn">Preview</button>
+      <button class="chip on" id="slSave">Save</button>
+    </div>
+  </div>
+</div>
+
 <script src="/studio.js"></script>
+<script src="/static/player.js"></script>
+<script src="/static/prefs.js"></script>
+<script src="/static/smartlist.js"></script>
+<script src="/static/boot.js"></script>
 </body>
 </html>

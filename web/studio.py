@@ -150,6 +150,14 @@ class LibraryIndex:
                 v = int(m.group(1))
                 self.fno[i] = v if v <= 999 else 0
 
+        # user columns (ratings / play counts) — zeros until userdata.py loads the
+        # real values from `usermeta` and overwrites these lists in place.
+        self.rating = [0] * self.n
+        self.loved = [False] * self.n
+        self.plays = [0] * self.n
+        self.last_played = [0] * self.n
+        self.date_added = [0] * self.n
+
         self._trackno = {}
         self._trackno_lock = threading.Lock()
         self.total_seconds = sum(self.seconds)
@@ -227,10 +235,36 @@ class LibraryIndex:
         "title": lambda s, i: s.f_title[i],
         "artist": lambda s, i: (s.f_artist[i], s.f_album[i], s.fno[i]),
         "album": lambda s, i: (s.f_album[i], s.fno[i]),
+        "genre": lambda s, i: (_fold(s.genre[i]) or "￿", s.f_artist[i]),
         "length": lambda s, i: s.seconds[i],
         "year": lambda s, i: s.year[i],
+        "rating": lambda s, i: (-s.rating[i], s.f_artist[i], s.f_album[i], s.fno[i]),
+        "plays": lambda s, i: (-s.plays[i], -s.last_played[i]),
+        "added": lambda s, i: -s.date_added[i],
         "status": lambda s, i: (not s.analyzed[i], s.f_artist[i]),
     }
+
+    def update_row(self, i, fields):
+        """Apply edited tag fields to the in-memory index (userdata.write_tags mirrors
+        the same values into `tracks`), keeping folded search/sort keys in step."""
+        last = "￿"
+        if "artist" in fields:
+            self.artist[i] = fields["artist"] or ""
+            self.f_artist[i] = _fold(self.artist[i]) if self.artist[i] else last
+        if "album" in fields:
+            self.album[i] = fields["album"] or ""
+            self.f_album[i] = _fold(self.album[i]) if self.album[i] else last
+        if "title" in fields:
+            self.title[i] = fields["title"] or os.path.splitext(
+                os.path.basename(self.paths[i]))[0]
+            self.f_title[i] = _fold(self.title[i])
+        if "genre" in fields:
+            self.genre[i] = fields["genre"] or ""
+            self.gtags[i] = _split_genres(self.genre[i])
+        if "year" in fields and fields["year"]:
+            self.year[i] = int(fields["year"])
+        self.f_all[i] = f"{self.f_artist[i]} {self.f_album[i]} {self.f_title[i]}"
+        self._trackno.pop(i, None)
 
     def row(self, i, with_trackno=True):
         return {
@@ -243,6 +277,10 @@ class LibraryIndex:
             "year": self.year[i] or None,
             "length": _seconds_to_len(self.seconds[i]),
             "seconds": self.seconds[i],
+            "rating": self.rating[i],
+            "loved": self.loved[i],
+            "plays": self.plays[i],
+            "added": self.date_added[i] or None,
             "status": "Analyzed" if self.analyzed[i] else "Not analyzed",
         }
 
@@ -425,10 +463,25 @@ def register(app, ctx):
         cap = lambda xs: [{"name": n, "n": c} for n, c in xs[:4000]]
         return jsonify(genres=cap(gl), artists=cap(al), albums=cap(bl))
 
+    # Smart views: predicate over the user columns userdata.py fills in. Kept here (not in
+    # LibraryIndex.select) because they read live rating/loved/plays that change at runtime.
+    SMART = {
+        "loved":     lambda i: lib.loved[i],
+        "toprated":  lambda i: lib.rating[i] >= 4,
+        "unrated":   lambda i: lib.rating[i] == 0,
+        "mostplayed": lambda i: lib.plays[i] > 0,
+        "neverplayed": lambda i: lib.plays[i] == 0,
+        "recent":    lambda i: bool(lib.date_added[i]),
+    }
+    # default sort per smart view, so "Recently Added" actually shows newest first etc.
+    SMART_SORT = {"mostplayed": ("plays", False), "recent": ("added", False),
+                  "toprated": ("rating", False)}
+
     @bp.get("/api/lib/tracks")
     def lib_tracks():
         g, a, b = _multi("genre"), _multi("artist"), _multi("album")
         q = request.args.get("q", "")
+        smart = request.args.get("smart") or ""
         sort = request.args.get("sort", "artist")
         if sort not in LibraryIndex.SORTS:
             sort = "artist"
@@ -440,6 +493,12 @@ def register(app, ctx):
             return jsonify(error="bad request"), 400
 
         rows = lib.select(genres=g, artists=a, albums=b, q=q)
+        if smart in SMART:
+            pred = SMART[smart]
+            rows = [i for i in rows if pred(i)]
+            # honour an explicit sort; otherwise use the view's natural order
+            if request.args.get("sort") is None and smart in SMART_SORT:
+                sort, desc = SMART_SORT[smart]
         # `track` and `status` sorts need the tag read; only pay for it on the page we
         # return unless the sort itself needs it library-wide.
         keyf = LibraryIndex.SORTS[sort]
@@ -460,6 +519,74 @@ def register(app, ctx):
             return jsonify(error="bad request"), 400
         ids = [i for i in ids if 0 <= i < lib.n]
         return jsonify(rows=[lib.row(i) for i in ids])
+
+    @bp.get("/api/lib/albums")
+    def lib_albums():
+        """Album-grid data: group the (facet/smart-filtered) selection by album, one card
+        each with an art seed (a representative track index), artist, track count, length.
+        Sorted by album-artist then album so the grid reads like a shelf."""
+        g, a, b = _multi("genre"), _multi("artist"), _multi("album")
+        q = request.args.get("q", "")
+        rows = lib.select(genres=g, artists=a, albums=b, q=q)
+        albums = {}
+        for i in rows:
+            key = (lib.album[i] or "").casefold() + "|" + os.path.dirname(lib.paths[i]).casefold()
+            d = albums.get(key)
+            if d is None:
+                albums[key] = d = {"album": lib.album[i] or "(no album)",
+                                   "artist": lib.artist[i], "seed": i,
+                                   "n": 0, "seconds": 0, "year": lib.year[i] or None,
+                                   "ids": []}
+            d["n"] += 1
+            d["seconds"] += lib.seconds[i]
+            d["ids"].append(i)
+            # prefer a track that actually resolves album art: the one whose folder has art
+            # is unknowable cheaply, so keep the first — good enough, art falls back to embedded.
+        out = sorted(albums.values(),
+                     key=lambda d: (_fold(d["artist"]) or "￿", _fold(d["album"])))
+        for d in out:
+            d["length"] = _seconds_to_len(d["seconds"])
+        return jsonify(total=len(out), albums=out)
+
+    @bp.get("/api/lib/folders")
+    def lib_folders():
+        """One level of the folder tree. `?path=` (empty = roots): returns immediate child
+        folders under it, each with a recursive track count, plus the pool indices of tracks
+        that live DIRECTLY in this folder. Lazy by design — never walks the whole 21k tree."""
+        base = request.args.get("path", "")
+        base_n = base.rstrip("\\/").lower()
+        children = {}          # child-folder-name -> [count, full_child_path]
+        here = []              # indices of tracks directly in `base`
+        for i, p in enumerate(lib.paths):
+            d = os.path.dirname(p)
+            dl = d.lower()
+            if base == "":
+                # roots = the drive/UNC head of each path
+                norm = p.replace("/", "\\")
+                head = norm.split("\\", 1)[0] + "\\" if "\\" in norm else norm
+                c = children.get(head.lower())
+                if c is None:
+                    children[head.lower()] = [1, head]
+                else:
+                    c[0] += 1
+                continue
+            if dl == base_n:
+                here.append(i)
+                continue
+            if dl.startswith(base_n + "\\") or dl.startswith(base_n + "/"):
+                rest = d[len(base):].lstrip("\\/")
+                seg = rest.replace("/", "\\").split("\\", 1)[0]
+                full = os.path.join(base, seg)
+                c = children.get(full.lower())
+                if c is None:
+                    children[full.lower()] = [1, full]
+                else:
+                    c[0] += 1
+        kids = sorted(({"name": os.path.basename(v[1].rstrip("\\/")) or v[1],
+                        "path": v[1], "n": v[0]} for v in children.values()),
+                      key=lambda x: _fold(x["name"]))
+        here.sort(key=lambda i: (lib.fno[i], lib.f_title[i]))
+        return jsonify(path=base, folders=kids, rows=[lib.row(i) for i in here[:500]])
 
     @bp.get("/api/art")
     def art_route():

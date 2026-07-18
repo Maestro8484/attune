@@ -103,6 +103,15 @@ def _load_create_app(base):
     return mod.create_app
 
 
+def _load_config(base):
+    """config.py is the one settings store shared with the web app + analyzer."""
+    path = os.path.join(base, "src", "config.py")
+    spec = importlib.util.spec_from_file_location("attune_config", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _message_html(msg):
     return (
         "<div style='font-family:Segoe UI,system-ui,sans-serif;padding:34px;"
@@ -119,22 +128,41 @@ def _fail(msg, w=680, h=420):
 
 
 def main():
-    db = _find_db()
-    if not db:
-        _fail("No music database found.<br><br>Put your <code>mixer.db</code> next to this "
-              "program, or set the <code>ATTUNE_DB</code> environment variable to its full path.")
-        return
+    cfg = _load_config(_base_dir())
+    settings = cfg.load()
 
-    # Pick the engine that is actually available, don't assume one and crash.
-    engine = "musicip" if _musicip_alive() else "v2"
-    playlists = _find_playlists()
+    # DB: settings.json first (the one source of truth), then ATTUNE_DB, then the legacy
+    # walk-up discovery. Whatever we discover, write it back so the next launch is instant.
+    db = cfg.effective(None, "ATTUNE_DB", "db_path", settings) or _find_db()
+    if not db:
+        _fail("No music database found.<br><br>Open Preferences and set your library "
+              "database, put <code>mixer.db</code> next to this program, or set the "
+              "<code>ATTUNE_DB</code> environment variable to its full path.")
+        return
+    if db and settings.get("db_path") != db:
+        try:
+            cfg.update({"db_path": db})
+        except OSError:
+            pass
+
+    # Engine: settings 'auto' (default) probes MusicIP and falls back to V2; an explicit
+    # 'musicip'/'v2' is honoured as-is.
+    want_engine = cfg.effective(None, "ATTUNE_ENGINE", "engine", settings) or "auto"
+    if want_engine == "auto":
+        engine = "musicip" if _musicip_alive() else "v2"
+    else:
+        engine = want_engine
+    playlists = cfg.effective(None, "ATTUNE_PLAYLIST_DIR", "playlist_dir", settings) \
+        or _find_playlists()
     print(f"Attune desktop — db={db}")
     print(f"  engine={engine}  (MusicIP {'detected' if engine == 'musicip' else 'not running -> built-in V2'})")
     print(f"  playlists={playlists or '(none configured)'}")
 
+    mip_url = cfg.effective(None, "ATTUNE_MUSICIP_URL", "musicip_url", settings) \
+        or "http://localhost:10002"
     try:
         create_app = _load_create_app(_base_dir())
-        app = create_app(db, engine_name=engine, playlist_dir=playlists)
+        app = create_app(db, engine_name=engine, musicip_url=mip_url, playlist_dir=playlists)
     except SystemExit as e:
         # If MusicIP vanished between the probe and load, or the DB is unusable, try one
         # clean fall back to V2 before giving up.

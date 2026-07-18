@@ -18,12 +18,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ATT = os.path.dirname(HERE)                       # .../attune
 
 # (source path relative to attune/, destination dir inside the bundle)
+# EVERY file app.py / studio.py load by importlib-path or serve statically must be here —
+# PyInstaller can't see importlib-by-path loads, and a missing static file 404s at runtime.
 DATA = [
     ("web/app.py",             "attune/web"),
     ("web/studio.py",          "attune/web"),
+    # backend modules app.py pulls in by file path (settings, user data, scan, auto-playlists)
+    ("web/userdata.py",        "attune/web"),
+    ("web/scanjob.py",         "attune/web"),
+    ("web/smartlists.py",      "attune/web"),
+    ("src/config.py",          "attune/src"),
+    # the Studio front-end: studio.html loads all five scripts + the stylesheet
     ("web/static/studio.html", "attune/web/static"),
     ("web/static/studio.css",  "attune/web/static"),
     ("web/static/studio.js",   "attune/web/static"),
+    ("web/static/player.js",   "attune/web/static"),
+    ("web/static/prefs.js",    "attune/web/static"),
+    ("web/static/smartlist.js","attune/web/static"),
+    ("web/static/boot.js",     "attune/web/static"),
     ("src/hybrid.py",          "attune/src"),
     ("src/engine.py",          "attune/src"),
     ("src/musicip_engine.py",  "attune/src"),

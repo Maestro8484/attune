@@ -1,5 +1,6 @@
-/* Attune Studio — client.
-   Views: library | mix | nowplaying | playlist.  One selection model, one table renderer. */
+/* Attune Studio — core client: state, views, table, facets, selection, context menu,
+   export. Playback lives in player.js (Player), preferences/tag-editor in prefs.js
+   (Prefs), boot order in boot.js. Plain scripts sharing globals, loaded in that order. */
 'use strict';
 
 const $ = id => document.getElementById(id);
@@ -12,6 +13,14 @@ const hms = s => {                       // 3:07 · 51:40 · 2:03:02
   const p = n => String(n).padStart(2, '0');
   return h ? `${h}:${p(m)}:${p(sec)}` : `${m}:${p(sec)}`;
 };
+/* persisted UI state (per-browser; server settings live in settings.json) */
+const store = {
+  get(k, dflt) {
+    try { const v = localStorage.getItem('attune.' + k);
+      return v === null ? dflt : JSON.parse(v); } catch { return dflt; }
+  },
+  set(k, v) { try { localStorage.setItem('attune.' + k, JSON.stringify(v)); } catch {} },
+};
 
 const S = {
   stats: null,
@@ -20,19 +29,21 @@ const S = {
   total: 0,
   offset: 0,
   limit: 200,
+  loading: false,      // infinite-scroll fetch in flight
   sort: 'artist',
   desc: false,
   sel: new Set(),      // selected pool indices
   anchor: null,
   seed: null,          // seed of the current mix
   mix: [],
-  np: [],              // now playing queue (pool indices)
-  npAt: -1,
   playlist: null,
   liked: [],
   disliked: [],
   facets: { genre: new Set(), artist: new Set(), album: new Set() },
   q: '',
+  smart: '',           // active Smart View id ('' = normal library)
+  viewMode: store.get('viewMode', 'list'),   // list | grid (album cards)
+  folder: null,        // active folder-tree path ('' none)
 };
 
 /* ------------------------------------------------------------------ net */
@@ -60,9 +71,9 @@ function toast(msg, err) {
 /* ------------------------------------------------------------------ params */
 function mixParams() {
   const p = new URLSearchParams();
-  // /api/mix clamps size to 100 server-side; clamp here too so the number in the box is
-  // never a promise the server won't keep. (Minutes mode overrides this in doMix.)
-  p.set('size', Math.min(Math.max(+$('mixSize').value || 25, 1), 100));
+  // Mix length is 20–150 tracks (the server clamps to the same range); keep the box honest.
+  // (Minutes mode overrides this in doMix.)
+  p.set('size', Math.min(Math.max(+$('mixSize').value || 100, 20), 150));
   if ($('dedupOn').checked) p.set('dedup', $('dedupField').value);
   if (S.stats && S.stats.engine === 'musicip') {
     p.set('style', $('style').value);
@@ -83,29 +94,93 @@ function facetQS() {
   return p;
 }
 
+/* ------------------------------------------------------------------ columns */
+const COLS = [
+  { id: 'track',  label: 'Track',  cls: 'c-track'  },
+  { id: 'title',  label: 'Title',  cls: 'c-title'  },
+  { id: 'length', label: 'Length', cls: 'c-len'    },
+  { id: 'artist', label: 'Artist', cls: 'c-artist' },
+  { id: 'album',  label: 'Album',  cls: 'c-album'  },
+  { id: 'genre',  label: 'Genre',  cls: 'c-genre'  },
+  { id: 'year',   label: 'Year',   cls: 'c-year'   },
+  { id: 'rating', label: 'Rating', cls: 'c-rating' },
+  { id: 'plays',  label: 'Plays',  cls: 'c-plays'  },
+  { id: 'status', label: 'Status', cls: 'c-status' },
+];
+let visCols = new Set(store.get('cols',
+  ['track', 'title', 'length', 'artist', 'album', 'year', 'rating', 'plays', 'status']));
+
+function starsHtml(r, cls = 'stars') {
+  let h = `<span class="${cls}" data-i="${r.i}">`;
+  for (let n = 1; n <= 5; n++)
+    h += `<i data-s="${n}" class="${n <= (r.rating || 0) ? 'on' : ''}">${n <= (r.rating || 0) ? '★' : '☆'}</i>`;
+  return h + '</span>';
+}
+
+function cellHtml(c, r) {
+  switch (c.id) {
+    case 'track':  return r.track || '';
+    case 'title':  return esc(r.title);
+    case 'length': return r.length;
+    case 'artist': return esc(r.artist);
+    case 'album':  return esc(r.album);
+    case 'genre':  return esc(r.genre || '');
+    case 'year':   return r.year || '';
+    case 'rating': return starsHtml(r);
+    case 'plays':  return r.plays || '';
+    case 'status': return esc(r.status);
+  }
+  return '';
+}
+
+function renderHead() {
+  $('thead-row').innerHTML = COLS.filter(c => visCols.has(c.id)).map(c =>
+    `<th data-sort="${c.id}" class="${c.cls}">${c.label}</th>`).join('');
+  setHeaderSort();
+}
+
 /* ------------------------------------------------------------------ table */
 function renderRows(rows, opts = {}) {
   S.rows = rows;
   const tb = $('tbody');
-  const seed = opts.seed ?? null;
-  tb.innerHTML = rows.map(r => {
+  tb.innerHTML = rowsHtml(rows, opts);
+  $('empty').hidden = rows.length > 0;
+  updateSelStatus();
+}
+function rowsHtml(rows, opts = {}) {
+  const seed = opts.seed ?? (S.view === 'mix' ? S.seed : null);
+  const playing = (typeof Player !== 'undefined') ? Player.currentPool() : -1;
+  const cols = COLS.filter(c => visCols.has(c.id));
+  const draggable = S.view === 'nowplaying';
+  return rows.map(r => {
     const cls = [];
     if (S.sel.has(r.i)) cls.push('sel');
-    if (S.np[S.npAt] === r.i) cls.push('playing');
+    if (r.i === playing && r.i >= 0) cls.push('playing');
     if (seed !== null && r.i === seed) cls.push('seed');
     if (r.missing) cls.push('missing');
-    const ok = r.status === 'Analyzed';
-    return `<tr data-i="${r.i}" class="${cls.join(' ')}">
-      <td class="c-track">${r.track || ''}</td>
-      <td class="c-title">${esc(r.title)}</td>
-      <td class="c-len">${r.length}</td>
-      <td class="c-artist">${esc(r.artist)}</td>
-      <td class="c-album">${esc(r.album)}</td>
-      <td class="c-year">${r.year || ''}</td>
-      <td class="c-status${ok ? '' : ' no'}">${esc(r.status)}</td>
-    </tr>`;
+    const tds = cols.map(c => {
+      const extra = (c.id === 'status' && r.status !== 'Analyzed') ? ' no' : '';
+      return `<td class="${c.cls}${extra}">${cellHtml(c, r)}</td>`;
+    }).join('');
+    return `<tr data-i="${r.i}" ${draggable ? 'draggable="true"' : ''} class="${cls.join(' ')}">${tds}</tr>`;
   }).join('');
-  $('empty').hidden = rows.length > 0;
+}
+function appendRows(rows) {
+  const opts = {};
+  $('tbody').insertAdjacentHTML('beforeend', rowsHtml(rows, opts));
+  S.rows = S.rows.concat(rows);
+  updateSelStatus();
+}
+/* re-paint only row classes (selection/playing) without rebuilding cells */
+function repaintRowState() {
+  const playing = (typeof Player !== 'undefined') ? Player.currentPool() : -1;
+  const seed = S.view === 'mix' ? S.seed : null;
+  $('tbody').querySelectorAll('tr').forEach(tr => {
+    const i = +tr.dataset.i;
+    tr.classList.toggle('sel', S.sel.has(i));
+    tr.classList.toggle('playing', i === playing && i >= 0);
+    tr.classList.toggle('seed', seed !== null && i === seed);
+  });
   updateSelStatus();
 }
 
@@ -117,18 +192,41 @@ function setHeaderSort() {
 }
 
 /* ------------------------------------------------------------------ views */
+const SMART_LABELS = { loved: 'Loved', toprated: 'Top Rated', recent: 'Recently Added',
+  mostplayed: 'Most Played', neverplayed: 'Never Played' };
+
+function setTableMode(grid) {
+  $('tableWrap').classList.toggle('gridmode', grid);
+  document.querySelector('#tbl').hidden = grid;
+  $('albumGrid').hidden = !grid;
+  $('btnViewList').classList.toggle('on', !grid);
+  $('btnViewGrid').classList.toggle('on', grid);
+}
+
 async function loadLibrary(resetOffset) {
   if (resetOffset) S.offset = 0;
   S.view = 'library';
-  $('viewLabel').textContent = 'Library';
+  // loadLibrary is never the folder-view renderer (openFolder does its own fetch), so
+  // reaching here means we've navigated away from any folder — clear the stale marker.
+  S.folder = null;
+  document.querySelectorAll('#folderTree li.on, #slList li.on').forEach(l => l.classList.remove('on'));
+  // album-grid mode is a library-only presentation; delegate and stop.
+  if (S.viewMode === 'grid') { setTableMode(true); return loadAlbums(); }
+  setTableMode(false);
+  const smartName = S.smart ? SMART_LABELS[S.smart] : 'Library';
+  $('viewLabel').textContent = smartName;
   $('btnBackLib').hidden = true;
-  markTree('library');
+  $('queueTools').hidden = true;
+  markTree(S.smart ? null : 'library');
   const p = facetQS();
-  p.set('sort', S.sort); if (S.desc) p.set('desc', '1');
+  if (S.smart) p.set('smart', S.smart);
+  // let smart views apply their own natural sort unless the user has clicked a header
+  if (!(S.smart && !S._userSorted)) { p.set('sort', S.sort); if (S.desc) p.set('desc', '1'); }
   p.set('offset', S.offset); p.set('limit', S.limit);
   const j = await jget('/api/lib/tracks?' + p);
   S.total = j.total;
   renderRows(j.rows);
+  $('tableWrap').scrollTop = 0;
   setHeaderSort();
   const hrs = (j.seconds / 3600).toFixed(1);
   $('viewSub').textContent = `${fmt(j.total)} songs · ${hrs} h`;
@@ -136,19 +234,122 @@ async function loadLibrary(resetOffset) {
   loadFacets();
 }
 
+function loadSmart(view) {
+  S.smart = view;
+  S.folder = null;
+  S._userSorted = false;
+  document.querySelectorAll('#tree li[data-smart]').forEach(l =>
+    l.classList.toggle('on', l.dataset.smart === view));
+  document.querySelectorAll('#tree li[data-view]').forEach(l => l.classList.remove('on'));
+  document.querySelectorAll('#folderTree li').forEach(l => l.classList.remove('on'));
+  document.querySelectorAll('#plList li').forEach(l => l.classList.remove('on'));
+  loadLibrary(true);
+}
+
+/* -------- album grid -------- */
+async function loadAlbums() {
+  $('viewLabel').textContent = S.smart ? SMART_LABELS[S.smart] : 'Albums';
+  $('btnBackLib').hidden = true; $('queueTools').hidden = true; $('pager').innerHTML = '';
+  markTree(S.smart ? null : 'library');
+  const p = facetQS();
+  if (S.smart) p.set('smart', S.smart);
+  const j = await jget('/api/lib/albums?' + p);
+  const g = $('albumGrid');
+  g.innerHTML = j.albums.map((a, k) => `
+    <div class="acard" data-k="${k}">
+      <div class="cover">
+        <img loading="lazy" src="/api/art?i=${a.seed}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'noart',textContent:'♪'}))">
+        <button class="play" title="Play album" data-play="${k}">▶</button>
+      </div>
+      <div class="meta">
+        <div class="al" title="${esc(a.album)}">${esc(a.album)}</div>
+        <div class="ar" title="${esc(a.artist)}">${esc(a.artist)}</div>
+        <div class="sub">${a.n} tracks · ${a.length}${a.year ? ' · ' + a.year : ''}</div>
+      </div>
+    </div>`).join('');
+  $('empty').hidden = j.albums.length > 0;
+  $('viewSub').textContent = `${fmt(j.total)} albums`;
+  S._albums = j.albums;
+  g.scrollTop = 0;
+}
+
+/* -------- folder tree (lazy) -------- */
+async function toggleFolderChildren(li) {
+  const path = li.dataset.path;
+  const kids = li._kids;
+  if (kids) {                                   // already expanded — collapse
+    kids.forEach(k => k.remove());
+    li._kids = null;
+    li.querySelector('.tw').textContent = '▸';
+    return;
+  }
+  const j = await jget('/api/lib/folders?path=' + encodeURIComponent(path));
+  li.querySelector('.tw').textContent = '▾';
+  const depth = (+li.dataset.depth || 0) + 1;
+  const frag = j.folders.map(f => folderLi(f, depth));
+  li._kids = frag;
+  let anchor = li;
+  for (const k of frag) { anchor.after(k); anchor = k; }
+}
+function folderLi(f, depth) {
+  const li = document.createElement('li');
+  li.dataset.path = f.path; li.dataset.depth = depth;
+  li.style.paddingLeft = (6 + depth * 12) + 'px';
+  li.innerHTML = `<span class="tw">▸</span><span class="fname">${esc(f.name)}</span>` +
+    `<span class="fn">${fmt(f.n)}</span>`;
+  return li;
+}
+async function loadFolderRoots() {
+  const j = await jget('/api/lib/folders?path=');
+  const ft = $('folderTree');
+  ft.innerHTML = '';
+  j.folders.forEach(f => ft.appendChild(folderLi(f, 0)));
+}
+async function openFolder(path) {
+  S.folder = path; S.smart = '';
+  S.facets = { genre: new Set(), artist: new Set(), album: new Set() };
+  document.querySelectorAll('#folderTree li').forEach(l =>
+    l.classList.toggle('on', l.dataset.path === path));
+  document.querySelectorAll('#tree li[data-view],#tree li[data-smart]').forEach(l => l.classList.remove('on'));
+  S.view = 'library';
+  if (S.viewMode === 'grid') { S.viewMode = 'list'; store.set('viewMode', 'list'); setTableMode(false); }
+  $('viewLabel').textContent = path.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || path;
+  $('btnBackLib').hidden = false; $('queueTools').hidden = true; $('pager').innerHTML = '';
+  try {
+    const j = await jget('/api/lib/folders?path=' + encodeURIComponent(path));
+    renderRows(j.rows);
+    $('tableWrap').scrollTop = 0;
+    const secs = j.rows.reduce((a, r) => a + r.seconds, 0);
+    $('viewSub').textContent = `${j.rows.length} tracks · ${hms(secs)}` +
+      (j.folders.length ? ` · ${j.folders.length} subfolders` : '');
+  } catch (e) { toast(e.message, true); }
+}
+
+/* infinite scroll: pull the next page when the scroller nears the bottom */
+async function maybeLoadMore() {
+  if (S.view !== 'library' || S.viewMode === 'grid' || S.folder || S.loading) return;
+  if (S.rows.length >= S.total) return;
+  const w = $('tableWrap');
+  if (w.scrollTop + w.clientHeight < w.scrollHeight - 600) return;
+  S.loading = true;
+  try {
+    S.offset += S.limit;
+    const p = facetQS();
+    if (S.smart) p.set('smart', S.smart);
+    p.set('sort', S.sort); if (S.desc) p.set('desc', '1');
+    p.set('offset', S.offset); p.set('limit', S.limit);
+    const j = await jget('/api/lib/tracks?' + p);
+    appendRows(j.rows);
+    renderPager();
+  } catch (e) { toast(e.message, true); }
+  finally { S.loading = false; }
+}
+
 function renderPager() {
   const pg = $('pager');
   if (S.view !== 'library' || S.total <= S.limit) { pg.innerHTML = ''; return; }
-  const page = Math.floor(S.offset / S.limit) + 1;
-  const pages = Math.ceil(S.total / S.limit);
-  pg.innerHTML = `
-    <button id="pPrev" ${S.offset === 0 ? 'disabled' : ''}>‹ Prev</button>
-    <span>Page ${page} of ${fmt(pages)}</span>
-    <button id="pNext" ${S.offset + S.limit >= S.total ? 'disabled' : ''}>Next ›</button>
-    <span class="spacer"></span>
-    <span>showing ${fmt(S.offset + 1)}–${fmt(Math.min(S.offset + S.limit, S.total))}</span>`;
-  $('pPrev').onclick = () => { S.offset -= S.limit; loadLibrary(); };
-  $('pNext').onclick = () => { S.offset += S.limit; loadLibrary(); };
+  pg.innerHTML = `<span>showing ${fmt(Math.min(S.rows.length, S.total))} of ${fmt(S.total)}</span>
+    <span class="hint">— scroll for more</span>`;
 }
 
 async function loadFacets() {
@@ -167,17 +368,18 @@ async function loadFacets() {
 async function doMix(seedI) {
   if (seedI == null) return toast('Select a track first', true);
   const byMinutes = $('sizeType').value === 'minutes';
-  const want = Math.max(1, +$('mixSize').value || 25);
+  const want = Math.max(1, +$('mixSize').value || 100);
   const p = mixParams();
   p.set('i', seedI);
-  // /api/mix only speaks track counts (and caps at 100). For a minutes-length mix, ask for
-  // the cap and trim by cumulative duration below -- the control used to do nothing at all.
-  if (byMinutes) p.set('size', 100);
+  // /api/mix speaks track counts (20–150). For a minutes-length mix, ask for the max and
+  // trim by cumulative duration below.
+  if (byMinutes) p.set('size', 150);
   $('btnMix').disabled = true;
   try {
     const j = await jget('/api/mix?' + p);
     let ids = (j.tracks || []).map(x => x.i).filter(i => i !== seedI);
     S.seed = seedI;
+    S.liked = []; S.disliked = [];
     if (byMinutes) {
       const rows = await jget('/api/lib/rows?' + [seedI, ...ids].map(i => `i=${i}`).join('&'));
       const sec = new Map(rows.rows.map(r => [r.i, r.seconds]));
@@ -203,6 +405,7 @@ async function showMix() {
   S.view = 'mix'; markTree('mix');
   $('viewLabel').textContent = 'Mix';
   $('btnBackLib').hidden = false;
+  $('queueTools').hidden = true;
   $('pager').innerHTML = '';
   if (!S.mix.length) { renderRows([]); return; }
   const j = await jget('/api/lib/rows?' + S.mix.map(i => `i=${i}`).join('&'));
@@ -218,11 +421,14 @@ async function showNowPlaying() {
   S.view = 'nowplaying'; markTree('nowplaying');
   $('viewLabel').textContent = 'Now Playing';
   $('btnBackLib').hidden = false; $('pager').innerHTML = '';
-  if (!S.np.length) { renderRows([]); $('viewSub').textContent = 'queue is empty'; return; }
-  const j = await jget('/api/lib/rows?' + S.np.map(i => `i=${i}`).join('&'));
+  $('queueTools').hidden = false;
+  const q = Player.q;
+  if (!q.length) { renderRows([]); $('viewSub').textContent = 'queue is empty'; return; }
+  const j = await jget('/api/lib/rows?' + q.map(i => `i=${i}`).join('&'));
   const byI = new Map(j.rows.map(r => [r.i, r]));
-  renderRows(S.np.map(i => byI.get(i)).filter(Boolean));
-  $('viewSub').textContent = `${S.np.length} queued`;
+  renderRows(q.map(i => byI.get(i)).filter(Boolean));
+  const secs = S.rows.reduce((a, r) => a + r.seconds, 0);
+  $('viewSub').textContent = `${q.length} queued · ${hms(secs)}`;
 }
 
 async function showPlaylist(name) {
@@ -232,6 +438,7 @@ async function showPlaylist(name) {
     l.classList.toggle('on', l.dataset.name === name));
   $('viewLabel').textContent = name;
   $('btnBackLib').hidden = false; $('pager').innerHTML = '';
+  $('queueTools').hidden = true;
   try {
     const j = await jget('/api/playlist?name=' + encodeURIComponent(name));
     const rows = j.rows.slice();
@@ -249,7 +456,7 @@ async function loadPlaylists() {
   $('plN').textContent = j.playlists.length;
   $('plList').innerHTML = j.playlists.map(p =>
     `<li data-name="${esc(p.name)}" title="${esc(p.name)}"><span class="ti">≡</span>${esc(p.name)}</li>`).join('');
-  $('exportDir').textContent = j.dir ? 'Folder: ' + j.dir : 'No playlist folder configured (--playlists)';
+  $('exportDir').textContent = j.dir ? 'Folder: ' + j.dir : 'No playlist folder configured';
   $('btnSaveDir').disabled = !j.dir;
 }
 
@@ -257,6 +464,30 @@ function markTree(v) {
   document.querySelectorAll('#tree li[data-view]').forEach(l =>
     l.classList.toggle('on', l.dataset.view === v));
   document.querySelectorAll('#plList li').forEach(l => l.classList.remove('on'));
+}
+
+function setViewMode(mode) {
+  if (S.viewMode === mode) return;
+  S.viewMode = mode; store.set('viewMode', mode);
+  // grid is a library-only presentation; snap to Library if we're elsewhere
+  if (mode === 'grid' && !['library'].includes(S.view)) { S.smart = ''; S.folder = null; }
+  loadLibrary(true);
+}
+
+let _folderPaneLoaded = false;
+async function toggleFolderPane() {
+  const ft = $('folderTree');
+  const open = ft.hidden;
+  ft.hidden = !open;
+  $('foldersTog').textContent = open ? '▾' : '▸';
+  if (open && !_folderPaneLoaded) { _folderPaneLoaded = true; await loadFolderRoots(); }
+}
+
+function refreshView() {
+  if (S.view === 'library') loadLibrary(false);
+  else if (S.view === 'mix') showMix();
+  else if (S.view === 'nowplaying') showNowPlaying();
+  else if (S.view === 'playlist' && S.playlist) showPlaylist(S.playlist);
 }
 
 /* ------------------------------------------------------------------ selection */
@@ -272,37 +503,38 @@ function updateSelStatus() {
 function currentExportIds() {
   if (S.view === 'mix' && S.mix.length) return S.mix;
   if (S.sel.size) return S.rows.filter(r => S.sel.has(r.i)).map(r => r.i);
+  // A smart/auto-playlist can match more than the 500 rows the table renders; export the
+  // FULL id list (S._slIds) so saving a >500-track auto-playlist isn't silently truncated.
+  if (S.view === 'smartlist' && S._slIds && S._slIds.length) return S._slIds;
   return S.rows.filter(r => r.i >= 0).map(r => r.i);
 }
 function firstSelected() {
   for (const r of S.rows) if (S.sel.has(r.i) && r.i >= 0) return r.i;
   return null;
 }
-
-/* ------------------------------------------------------------------ playback */
-function playIndex(qpos) {
-  if (qpos < 0 || qpos >= S.np.length) return;
-  S.npAt = qpos;
-  const i = S.np[qpos];
-  const a = $('audio');
-  a.src = `/audio?i=${i}`;
-  a.play().catch(() => {});
-  $('tPlay').textContent = '⏸';
-  const img = new Image();
-  img.onload = () => { $('art').innerHTML = ''; $('art').appendChild(img); };
-  img.onerror = () => { $('art').innerHTML = '<span class="noart">♪</span>'; };
-  img.src = `/api/art?i=${i}`;
-  jget('/api/lib/rows?i=' + i).then(j => {
-    const r = j.rows[0]; if (!r) return;
-    $('npTitle').textContent = r.title;
-    $('npArtist').textContent = `${r.artist} — ${r.album}`;
-  }).catch(() => {});
-  renderRows(S.rows, { seed: S.seed });
+function selectedIds() {
+  return S.rows.filter(r => S.sel.has(r.i) && r.i >= 0).map(r => r.i);
 }
-function playTrack(i) {
-  const at = S.np.indexOf(i);
-  if (at >= 0) return playIndex(at);
-  S.np.push(i); $('npN').textContent = S.np.length; playIndex(S.np.length - 1);
+
+/* ------------------------------------------------------------------ ratings */
+async function rateTrack(i, rating) {
+  try {
+    await jpost('/api/track/rate', { i, rating });
+    for (const r of S.rows) if (r.i === i) r.rating = rating;
+    // repaint the one row's stars everywhere it appears
+    $('tbody').querySelectorAll(`tr[data-i="${i}"] .stars`).forEach(el => {
+      el.outerHTML = starsHtml({ i, rating });
+    });
+    if (Player.currentPool() === i) Player.paintNowPlayingMeta({ rating });
+  } catch (e) { toast(e.message, true); }
+}
+async function loveTrack(i, loved) {
+  try {
+    await jpost('/api/track/loved', { i, loved });
+    for (const r of S.rows) if (r.i === i) r.loved = loved;
+    if (Player.currentPool() === i) Player.paintNowPlayingMeta({ loved });
+    toast(loved ? '♥ Loved' : 'Un-loved');
+  } catch (e) { toast(e.message, true); }
 }
 
 /* ------------------------------------------------------------------ export */
@@ -332,7 +564,7 @@ async function exportPlex() {
   try {
     const j = await jpost('/api/export/plex?' + p, {});
     $('exportMsg').className = 'msg ok';
-    $('exportMsg').textContent = `Plex: ${j.added ?? j.count ?? '?'} added` +
+    $('exportMsg').textContent = `Plex: ${j.matched ?? j.count ?? '?'} added` +
       (j.missed && j.missed.length ? `, ${j.missed.length} missed` : '');
   } catch (e) { $('exportMsg').className = 'msg err'; $('exportMsg').textContent = e.message; }
 }
@@ -340,9 +572,8 @@ async function exportPlex() {
 /* ------------------------------------------------------------------ why-this-pick */
 async function showWhy(i, x, y) {
   if (S.seed == null) return toast('Only available inside a mix', true);
-  if (S.stats.engine !== 'v2') return toast('Why-this-pick needs --engine v2', true);
+  if (S.stats.engine !== 'v2') return toast('Why-this-pick needs the V2 engine', true);
   try {
-    // app.py's /api/explain takes seed= and cand=, and returns {seed, cand, ...components}
     const j = await jget(`/api/explain?seed=${S.seed}&cand=${i}`);
     const c = Object.fromEntries(Object.entries(j)
       .filter(([k, v]) => typeof v === 'number'));
@@ -359,6 +590,31 @@ async function showWhy(i, x, y) {
   } catch (e) { toast(e.message, true); }
 }
 
+async function refine() {
+  if (S.seed == null) return toast('Create a mix first', true);
+  if (S.stats.engine !== 'v2') return toast('More/Less Like This needs the V2 engine', true);
+  try {
+    const j = await jpost('/api/refine', {
+      i: S.seed, size: Math.min(Math.max(+$('mixSize').value || 100, 20), 150),
+      liked: S.liked, disliked: S.disliked,
+    });
+    const ids = (j.tracks || []).map(x => x.i);
+    S.mix = [S.seed, ...ids.filter(i => i !== S.seed)];
+    $('mixN').textContent = S.mix.length;
+    showMix(); toast(`Refined (+${S.liked.length} / −${S.disliked.length})`);
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ------------------------------------------------------------------ column chooser */
+function openColMenu(x, y) {
+  const m = $('colMenu');
+  m.innerHTML = COLS.map(c =>
+    `<li data-col="${c.id}"><span class="ck">${visCols.has(c.id) ? '✓' : ''}</span>${c.label}</li>`).join('');
+  m.style.left = Math.min(x, innerWidth - 180) + 'px';
+  m.style.top = Math.min(y, innerHeight - 320) + 'px';
+  m.hidden = false;
+}
+
 /* ------------------------------------------------------------------ wiring */
 function bindSliders() {
   const link = (id, dp) => {
@@ -372,8 +628,17 @@ function bindSliders() {
 }
 
 function bindEvents() {
-  // table rows
+  // table rows: selection, stars, dblclick-to-play
   $('tbody').addEventListener('click', e => {
+    const star = e.target.closest('.stars i');
+    if (star) {
+      const wrap = star.closest('.stars');
+      const i = +wrap.dataset.i;
+      const cur = S.rows.find(r => r.i === i)?.rating || 0;
+      const n = +star.dataset.s;
+      rateTrack(i, n === cur ? 0 : n);       // click the same star again to clear
+      return;
+    }
     const tr = e.target.closest('tr'); if (!tr) return;
     const i = +tr.dataset.i; if (i < 0) return;
     if (e.shiftKey && S.anchor != null) {
@@ -386,23 +651,39 @@ function bindEvents() {
     } else if (e.ctrlKey || e.metaKey) {
       S.sel.has(i) ? S.sel.delete(i) : S.sel.add(i); S.anchor = i;
     } else { S.sel.clear(); S.sel.add(i); S.anchor = i; }
-    renderRows(S.rows, { seed: S.seed });
+    repaintRowState();
   });
   $('tbody').addEventListener('dblclick', e => {
+    if (e.target.closest('.stars')) return;
     const tr = e.target.closest('tr'); if (!tr) return;
-    const i = +tr.dataset.i; if (i >= 0) playTrack(i);
+    const i = +tr.dataset.i; if (i < 0) return;
+    if (S.view === 'nowplaying') {
+      Player.playAt([...$('tbody').children].indexOf(tr));
+    } else {
+      // double-click = play this row now, and queue the rest of the view after it
+      // (the standard player behaviour), not just a bare one-track queue.
+      const rest = S.rows.filter(r => r.i >= 0).map(r => r.i);
+      Player.playList(rest, rest.indexOf(i));
+    }
   });
 
-  // sorting
-  document.querySelectorAll('thead th').forEach(th => th.addEventListener('click', () => {
+  // infinite scroll
+  $('tableWrap').addEventListener('scroll', maybeLoadMore);
+
+  // sorting + column chooser
+  $('thead-row').addEventListener('click', e => {
+    const th = e.target.closest('th'); if (!th) return;
     const s = th.dataset.sort;
     if (S.sort === s) S.desc = !S.desc; else { S.sort = s; S.desc = false; }
-    if (S.view === 'library') loadLibrary(true);
+    if (S.view === 'library') { S._userSorted = true; loadLibrary(true); }
     else {
       const keyf = { track: r => r.track, title: r => r.title.toLowerCase(),
         length: r => r.seconds, artist: r => r.artist.toLowerCase(),
         album: r => r.album.toLowerCase(), year: r => r.year || 0,
+        genre: r => (r.genre || '').toLowerCase(),
+        rating: r => r.rating || 0, plays: r => r.plays || 0,
         status: r => r.status }[s];
+      if (!keyf) return;
       const rows = S.rows.slice().sort((a, b) =>
         keyf(a) < keyf(b) ? -1 : keyf(a) > keyf(b) ? 1 : 0);
       if (S.desc) rows.reverse();
@@ -411,7 +692,21 @@ function bindEvents() {
       if (S.view === 'mix') S.mix = rows.map(r => r.i);
       renderRows(rows, { seed: S.seed }); setHeaderSort();
     }
-  }));
+  });
+  $('thead-row').addEventListener('contextmenu', e => {
+    e.preventDefault();
+    openColMenu(e.clientX, e.clientY);
+  });
+  $('colMenu').addEventListener('click', e => {
+    const li = e.target.closest('li[data-col]'); if (!li) return;
+    const c = li.dataset.col;
+    if (visCols.has(c)) { if (visCols.size > 2) visCols.delete(c); }
+    else visCols.add(c);
+    store.set('cols', [...visCols]);
+    renderHead();
+    renderRows(S.rows, { seed: S.seed });
+    openColMenu(parseInt($('colMenu').style.left), parseInt($('colMenu').style.top));
+  });
 
   // facets
   for (const [elId, kind] of [['fGenre', 'genre'], ['fArtist', 'artist'], ['fAlbum', 'album']]) {
@@ -428,13 +723,84 @@ function bindEvents() {
 
   // tree
   $('tree').addEventListener('click', e => {
+    if (e.target.closest('#foldersHead')) { toggleFolderPane(); return; }
+    const smartLi = e.target.closest('li[data-smart]');
+    if (smartLi) { loadSmart(smartLi.dataset.smart); return; }
     const li = e.target.closest('li[data-view]'); if (!li) return;
+    if (li.dataset.view === 'library') { S.smart = ''; S.folder = null; }
     ({ library: () => loadLibrary(true), mix: showMix, nowplaying: showNowPlaying })[li.dataset.view]();
+  });
+
+  // folder tree: triangle toggles children, name opens the folder in the table
+  $('folderTree').addEventListener('click', e => {
+    const li = e.target.closest('li'); if (!li) return;
+    if (e.target.closest('.tw')) toggleFolderChildren(li);
+    else openFolder(li.dataset.path);
+  });
+
+  // view mode toggle (list ↔ album grid)
+  $('btnViewList').onclick = () => setViewMode('list');
+  $('btnViewGrid').onclick = () => setViewMode('grid');
+
+  // album card: click opens the album in list view; ▶ plays the whole album
+  $('albumGrid').addEventListener('click', async e => {
+    const card = e.target.closest('.acard'); if (!card) return;
+    const a = (S._albums || [])[+card.dataset.k]; if (!a) return;
+    if (e.target.closest('[data-play]')) {
+      Player.playList(a.ids, 0);
+      return;
+    }
+    // open: filter to this album (facet) in list view
+    S.viewMode = 'list'; store.set('viewMode', 'list');
+    S.smart = '';
+    S.facets.album = new Set([a.album]);
+    S.facets.artist = new Set(); S.facets.genre = new Set();
+    await loadLibrary(true);
+    $('viewLabel').textContent = a.album;      // name the album, not just "Library"
   });
   $('plList').addEventListener('click', e => {
     const li = e.target.closest('li'); if (li) showPlaylist(li.dataset.name);
   });
   $('btnBackLib').onclick = () => loadLibrary(false);
+
+  // queue tools
+  $('qClear').onclick = () => { Player.clearQueue(); showNowPlaying(); };
+  $('qShuffle').onclick = () => { Player.shuffleQueue(); showNowPlaying(); };
+  $('qSave').onclick = () => {
+    if (!Player.q.length) return toast('Queue is empty', true);
+    $('exportPanel').hidden = false;
+    $('plName').value = 'Queue ' + new Date().toISOString().slice(0, 10);
+    updateSelStatus();
+  };
+
+  // drag-reorder inside the queue view
+  let dragFrom = null;
+  $('tbody').addEventListener('dragstart', e => {
+    if (S.view !== 'nowplaying') return;
+    const tr = e.target.closest('tr'); if (!tr) return;
+    dragFrom = [...$('tbody').children].indexOf(tr);
+    e.dataTransfer.effectAllowed = 'move';
+  });
+  $('tbody').addEventListener('dragover', e => {
+    if (S.view !== 'nowplaying' || dragFrom === null) return;
+    e.preventDefault();
+    const tr = e.target.closest('tr'); if (!tr) return;
+    $('tbody').querySelectorAll('tr.dragover').forEach(t => t.classList.remove('dragover'));
+    tr.classList.add('dragover');
+  });
+  $('tbody').addEventListener('drop', e => {
+    if (S.view !== 'nowplaying' || dragFrom === null) return;
+    e.preventDefault();
+    const tr = e.target.closest('tr'); if (!tr) return;
+    const to = [...$('tbody').children].indexOf(tr);
+    Player.moveInQueue(dragFrom, to);
+    dragFrom = null;
+    showNowPlaying();
+  });
+  $('tbody').addEventListener('dragend', () => {
+    dragFrom = null;
+    $('tbody').querySelectorAll('tr.dragover').forEach(t => t.classList.remove('dragover'));
+  });
 
   // search (debounced)
   let t; $('q').addEventListener('input', e => {
@@ -460,7 +826,7 @@ function bindEvents() {
   const showRoot = () => {
     const r = (S.stats && S.stats.roots) || {};
     const v = r[$('flavor').value];
-    $('flavorRoot').textContent = v ? 'Paths will read: ' + v + '\…' : 'Not configured in .env';
+    $('flavorRoot').textContent = v ? 'Paths will read: ' + v + '\\…' : 'Not configured in .env';
   };
   $('flavor').addEventListener('change', showRoot);
   showRoot._run = showRoot;
@@ -481,20 +847,41 @@ function bindEvents() {
     const tr = e.target.closest('tr'); if (!tr) return;
     e.preventDefault();
     const i = +tr.dataset.i; if (i < 0) return;
-    if (!S.sel.has(i)) { S.sel.clear(); S.sel.add(i); S.anchor = i; renderRows(S.rows, { seed: S.seed }); }
+    if (!S.sel.has(i)) { S.sel.clear(); S.sel.add(i); S.anchor = i; repaintRowState(); }
     ctx.dataset.i = i;
-    ctx.style.left = Math.min(e.clientX, innerWidth - 230) + 'px';
-    ctx.style.top = Math.min(e.clientY, innerHeight - 320) + 'px';
+    const row = S.rows.find(r => r.i === i) || {};
+    // live rate + love state inside the menu
+    $('ctxStars').dataset.i = i;
+    $('ctxStars').innerHTML = [1, 2, 3, 4, 5].map(n =>
+      `<i data-s="${n}" class="${n <= (row.rating || 0) ? 'on' : ''}">${n <= (row.rating || 0) ? '★' : '☆'}</i>`).join('');
+    ctx.querySelector('[data-act="love"] span').textContent =
+      row.loved ? '♥ Un-love' : '♥ Love';
+    ctx.style.left = Math.min(e.clientX, innerWidth - 240) + 'px';
+    ctx.style.top = Math.min(e.clientY, innerHeight - 430) + 'px';
     ctx.hidden = false;
   });
   ctx.addEventListener('click', async e => {
+    const star = e.target.closest('#ctxStars i');
     const li = e.target.closest('li[data-act]'); if (!li) return;
-    const i = +ctx.dataset.i; ctx.hidden = true;
+    const i = +ctx.dataset.i;
     const row = S.rows.find(r => r.i === i) || {};
+    if (star) {
+      const n = +star.dataset.s;
+      rateTrack(i, n === (row.rating || 0) ? 0 : n);
+      ctx.hidden = true;
+      return;
+    }
+    if (li.dataset.act === 'rate') return;      // only the stars inside act
+    ctx.hidden = true;
     switch (li.dataset.act) {
       case 'mix': doMix(i); break;
-      case 'play': playTrack(i); break;
-      case 'queue': S.np.push(i); $('npN').textContent = S.np.length; toast('Queued'); break;
+      case 'play': Player.playTrack(i); break;
+      case 'playnext': Player.queueAdd(selectedIds().length ? selectedIds() : [i], { next: true });
+        toast('Playing next'); break;
+      case 'queue': Player.queueAdd(selectedIds().length ? selectedIds() : [i]);
+        toast('Queued'); break;
+      case 'love': loveTrack(i, !row.loved); break;
+      case 'tags': Prefs.openTagEditor(i); break;
       case 'more': S.liked.push(i); refine(); break;
       case 'less': S.disliked.push(i); refine(); break;
       case 'artist': S.facets.artist = new Set([row.artist]); loadLibrary(true); break;
@@ -504,69 +891,65 @@ function bindEvents() {
       case 'why': showWhy(i, e.clientX, e.clientY); break;
       case 'copy': navigator.clipboard.writeText(`${row.artist} — ${row.title}`)
         .then(() => toast('Copied')); break;
-      case 'reveal': toast('Open File Location needs the desktop build'); break;
+      case 'reveal': jpost('/api/reveal', { i }).catch(err => toast(err.message, true)); break;
     }
   });
   document.addEventListener('click', e => {
     if (!e.target.closest('.ctxmenu')) $('ctx').hidden = true;
+    if (!e.target.closest('#colMenu') && !e.target.closest('#thead-row')) $('colMenu').hidden = true;
     if (!e.target.closest('.why')) $('why').hidden = true;
     if (!e.target.closest('.popover') && !e.target.closest('#toolbar button'))
       { $('optionsPanel').hidden = true; $('exportPanel').hidden = true; }
+    if (!e.target.closest('#eqPanel') && !e.target.closest('#tEq')) $('eqPanel').hidden = true;
   });
 
-  // keyboard
+  // keyboard — the full map (see also player.js for transport keys it owns)
   document.addEventListener('keydown', e => {
-    if (e.target.matches('input,select,textarea')) return;
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'm') { e.preventDefault(); doMix(firstSelected()); }
-    else if (e.key === ' ') { e.preventDefault(); $('tPlay').click(); }
-    else if (e.key === 'Escape') { $('ctx').hidden = true; $('why').hidden = true; }
+    if (e.target.matches('input,select,textarea')) {
+      if (e.key === 'Escape') e.target.blur();
+      return;
+    }
+    const k = e.key.toLowerCase();
+    if ((e.ctrlKey || e.metaKey) && k === 'm' && !e.shiftKey) { e.preventDefault(); doMix(firstSelected()); }
+    else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'm') { e.preventDefault(); Prefs.toggleMini(); }
+    else if ((e.ctrlKey || e.metaKey) && k === ',') { e.preventDefault(); Prefs.open(); }
+    else if ((e.ctrlKey || e.metaKey) && k === 'a') {
+      e.preventDefault();
+      S.rows.forEach(r => { if (r.i >= 0) S.sel.add(r.i); });
+      repaintRowState();
+    }
+    else if (e.key === '/') { e.preventDefault(); $('q').focus(); $('q').select(); }
+    else if (e.key === ' ') { e.preventDefault(); Player.togglePlay(); }
+    else if (k === 'q') {
+      const ids = selectedIds();
+      if (ids.length) { Player.queueAdd(ids); toast(`Queued ${ids.length}`); }
+    }
+    else if (k === 'z') Player.prev();
+    else if (k === 'b') Player.next();
+    else if (k === 's') Player.toggleShuffle();
+    else if (k === 'r') Player.cycleRepeat();
+    else if (k === 'd') Player.toggleAutoDj();
+    else if (k === 'e') Player.toggleEqPanel();
+    else if (e.key === 'F2') { const i = firstSelected(); if (i != null) Prefs.openTagEditor(i); }
+    else if (e.key === 'Delete' && S.view === 'nowplaying') {
+      const ids = selectedIds();
+      if (ids.length) { Player.removeFromQueue(ids); showNowPlaying(); }
+    }
+    else if (e.key >= '0' && e.key <= '5' && !e.ctrlKey && !e.metaKey) {
+      const i = firstSelected(); if (i != null) rateTrack(i, +e.key);
+    }
+    else if (e.key === 'Escape') { $('ctx').hidden = true; $('why').hidden = true;
+      $('eqPanel').hidden = true; $('colMenu').hidden = true; }
   });
-
-  // transport
-  const a = $('audio');
-  $('tPlay').onclick = () => {
-    if (!a.src) { const i = firstSelected(); if (i != null) return playTrack(i); return; }
-    if (a.paused) { a.play(); $('tPlay').textContent = '⏸'; }
-    else { a.pause(); $('tPlay').textContent = '▶'; }
-  };
-  $('tPrev').onclick = () => playIndex(S.npAt - 1);
-  $('tNext').onclick = () => playIndex(S.npAt + 1);
-  a.addEventListener('ended', () => playIndex(S.npAt + 1));
-  a.addEventListener('timeupdate', () => {
-    if (!a.duration) return;
-    $('tSeek').value = (a.currentTime / a.duration) * 1000;
-    $('tCur').textContent = hms(a.currentTime);
-    $('tDur').textContent = hms(a.duration);
-  });
-  $('tSeek').addEventListener('input', () => {
-    if (a.duration) a.currentTime = ($('tSeek').value / 1000) * a.duration;
-  });
-  $('tVol').addEventListener('input', () => a.volume = +$('tVol').value);
-  a.volume = 0.9;
 }
 
-async function refine() {
-  if (S.seed == null) return toast('Create a mix first', true);
-  if (S.stats.engine !== 'v2') return toast('More/Less Like This needs --engine v2', true);
-  try {
-    // /api/refine is a POST with everything in the JSON body (no query params)
-    const j = await jpost('/api/refine', {
-      i: S.seed, size: Math.min(+$('mixSize').value || 25, 100),
-      liked: S.liked, disliked: S.disliked,
-    });
-    const ids = (j.tracks || []).map(x => x.i);
-    S.mix = [S.seed, ...ids.filter(i => i !== S.seed)];
-    $('mixN').textContent = S.mix.length;
-    showMix(); toast(`Refined (+${S.liked.length} / −${S.disliked.length})`);
-  } catch (e) { toast(e.message, true); }
-}
-
-/* ------------------------------------------------------------------ boot */
-(async function init() {
+/* ------------------------------------------------------------------ boot (called by boot.js) */
+async function initCore() {
+  renderHead();
   bindSliders(); bindEvents();
   try {
     S.stats = await jget('/api/lib/stats');
-  } catch (e) { return toast('Cannot reach server: ' + e.message, true); }
+  } catch (e) { toast('Cannot reach server: ' + e.message, true); throw e; }
   const s = S.stats;
   $('engineName').textContent = s.engine === 'musicip' ? 'MusicIP Mixer (live)' : 'Attune V2';
   $('mipControls').hidden = s.engine !== 'musicip';
@@ -575,7 +958,7 @@ async function refine() {
   $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
   $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
     `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
-  const fr = $('flavor'); fr.dispatchEvent(new Event('change'));
+  $('flavor').dispatchEvent(new Event('change'));
   await loadPlaylists();
   await loadLibrary(true);
-})();
+}
