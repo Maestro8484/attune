@@ -297,7 +297,14 @@ const Player = (() => {
   function removeFromQueue(ids) {
     const set = new Set(ids);
     const curI = currentPool();
-    P.q = P.q.filter((x, k) => !(set.has(x)) || k === P.pos);
+    const removedOnce = new Set();
+    // Queue identity is the pool index, so a track queued twice shares one id. Drop only
+    // ONE occurrence per requested id (never the playing entry) — not every occurrence.
+    P.q = P.q.filter((x, k) => {
+      if (k === P.pos) return true;
+      if (set.has(x) && !removedOnce.has(x)) { removedOnce.add(x); return false; }
+      return true;
+    });
     P.pos = P.q.indexOf(curI);
     paintTransport(); persist();
   }
