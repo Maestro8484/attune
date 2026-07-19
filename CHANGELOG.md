@@ -6,6 +6,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Learned-metric engine** (`--engine learned`, `src/engine.py: LearnedEngine`): the
+  distilled MusicIP metric head as a third selectable engine. ONNX inference only
+  (`onnxruntime`, new `[learned]` extra) — the runtime stays torch-free. Ships with
+  `src/models/metric_head.onnx` (591→4096 GELU→512, opset 17, L2-norm in-graph) and
+  `src/models/learned_norm.json` (the training-pool z-score stats; verified against the
+  training embeddings at min cosine ≥ 0.9999999 over 500 keys). **Selectable, NOT the
+  default**: per LAW 1 it can only become the default after a blind ear test.
+- **Blind A/B ear-test harness** (`eval/abtest.py`): the LAW 1 ship gate. N genre-diverse
+  seeds × one anonymized `.m3u8` per engine (random letter blinding per seed), sealed
+  key file under `eval/`, and an interactive `--score` mode that unseals and appends
+  verdicts to `eval/abtest_results.jsonl` (pool size stamped per engine, LAW 3).
+  Engine-agnostic via the common `src/engine.py` contract.
 - **Attune Studio** (`web/studio.py`, `web/static/studio.*`): a full desktop-style UI at `/`,
   laid out like the original MusicIP Mixer — Filters/Playlists tree, cascading
   Genres | Artists | Albums panes with live counts, a sortable/paged track table

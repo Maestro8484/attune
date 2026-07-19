@@ -204,3 +204,143 @@ class MusicIPAdapter(Engine):
             return []
         mix = self.mip.similar(seed_unc, size=size, style=style, variety=variety)
         return self._resolve(mix)
+
+
+class LearnedEngine(Engine):
+    """The distilled-metric engine: an ONNX-exported projection head (trained to imitate
+    MusicIP's similarity function, see the MusicIP workspace's extracted/distill.py) over
+    the CLAP-512 + librosa-79 features ALREADY in mixer.db. No torch anywhere -- inference
+    is onnxruntime, preprocessing is numpy fed by models/learned_norm.json (the z-score
+    stats the head was trained with; they are the TRAINING pool's stats and must never be
+    recomputed from the live library).
+
+    SELECTABLE, NOT DEFAULT: per LAW 1 this engine may only become the default after a
+    blind ear test (eval/abtest.py). Until then it ships behind --engine learned.
+
+    Pool discipline per the module docstring: results are OUR pool indices (the shared
+    HybridEngine pool). Pool tracks missing either feature are skipped at load (logged),
+    never returned. Ranking is cosine in the projected space; the walk applies the same
+    artist-spacing rule as hybrid.mix() (a spacing-violating candidate is dropped for
+    good, not deferred -- shipped, eared behavior)."""
+    name = "learned"
+    capabilities = frozenset({"search", "similar"})
+    version = "metric_head 2026-07-09 (591->4096 GELU->512, opset 17)"
+
+    def __init__(self, db_path, hybrid_engine=None, models_dir=None,
+                 log: Optional[Callable[[str], None]] = None):
+        import json
+        import sqlite3
+        import numpy as np
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise SystemExit("--engine learned needs onnxruntime in the runtime venv: "
+                             "pip install onnxruntime")
+        self._np = np
+        self._log = log or (lambda msg: None)
+        if hybrid_engine is None:
+            hy = _load("hybrid", os.path.join(HERE, "hybrid.py"))
+            hybrid_engine = hy.HybridEngine(db_path)
+        self.eng = hybrid_engine
+
+        mdir = models_dir or os.path.join(HERE, "models")
+        with open(os.path.join(mdir, "learned_norm.json"), encoding="utf-8") as fh:
+            nj = json.load(fh)
+        mu = np.asarray(nj["mu"], np.float64)
+        sd = np.asarray(nj["sd"], np.float64)
+        clip = float(nj["clip"])
+        if mu.shape != (79,) or sd.shape != (79,):
+            raise SystemExit(f"learned_norm.json malformed: mu/sd shapes {mu.shape}/{sd.shape}")
+        sess = ort.InferenceSession(os.path.join(mdir, "metric_head.onnx"),
+                                    providers=["CPUExecutionProvider"])
+        d_in = sess.get_inputs()[0].shape[1]
+        if d_in != 591:
+            raise SystemExit(f"metric_head.onnx expects d_in={d_in}, not 591 -- wrong model file")
+
+        # raw features straight from the db (read-only): HybridEngine keeps only ITS
+        # z-scored librosa matrix, and this head needs the raw vectors normalized with
+        # the TRAINING stats above -- so read them again here, verifying dims.
+        con = sqlite3.connect("file:" + db_path.replace("\\", "/") + "?mode=ro", uri=True)
+        clap, lib79 = {}, {}
+        for p, dim, blob in con.execute("SELECT path,dim,vec FROM clap WHERE vec IS NOT NULL"):
+            v = np.frombuffer(blob, np.float32)
+            if v.shape[0] == dim == 512:
+                clap[p] = v
+        for p, blob, dim in con.execute(
+                "SELECT path,vec,dim FROM features WHERE vec IS NOT NULL AND error IS NULL"):
+            if dim != 79:
+                continue
+            v = np.frombuffer(blob, np.float32)
+            if v.shape[0] == 79 and np.isfinite(v).all():
+                lib79[p] = v
+        con.close()
+
+        # exactly the training preprocessing (distill.py load_features + zscore):
+        # CLAP row-L2-normalized; librosa z-scored with the persisted mu/sd, clipped.
+        rows, feats = [], []
+        for i, p in enumerate(self.eng.paths):
+            c, l = clap.get(p), lib79.get(p)
+            if c is None or l is None:
+                continue
+            cn = c / max(float(np.linalg.norm(c)), 1e-9)
+            ln = np.clip(((l.astype(np.float64) - mu) / sd), -clip, clip).astype(np.float32)
+            rows.append(i)
+            feats.append(np.concatenate([cn, ln]))
+        skipped = len(self.eng.paths) - len(rows)
+        if skipped:
+            self._log(f"LearnedEngine: skipped {skipped}/{len(self.eng.paths)} pool tracks "
+                      f"missing CLAP-512 or librosa-79")
+        if not rows:
+            raise SystemExit("LearnedEngine: no pool track has both CLAP-512 and librosa-79")
+
+        X = np.vstack(feats).astype(np.float32)
+        E = np.empty((X.shape[0], 512), np.float32)
+        for b in range(0, X.shape[0], 2048):        # project the whole pool once at startup
+            E[b:b + 2048] = sess.run(["embedding"], {"features": X[b:b + 2048]})[0]
+        self.E = E                                   # unit rows (L2-norm is inside the graph)
+        self.rows = rows                             # projected row -> pool index
+        self._row_of = {pi: r for r, pi in enumerate(rows)}
+        self.pool_size = len(rows)                   # LAW 3: the pool THIS engine ranks over
+        # covered-only labels so a search hit is always a usable seed here
+        self._labels = [_label(self.eng, self.eng.paths[pi]) for pi in rows]
+        self._labels_lc = [s.lower() for s in self._labels]
+        self._log(f"LearnedEngine ready: {self.pool_size} tracks projected to 512-d")
+
+    def _ref(self, pool_i):
+        return Ref(pool_i=pool_i, label=self._labels[self._row_of[pool_i]])
+
+    def search(self, q, limit=40):
+        q = (q or "").strip().lower()
+        if not q:
+            return []
+        out = []
+        for r, lab in enumerate(self._labels_lc):
+            if q in lab:
+                out.append(self._ref(self.rows[r]))
+                if len(out) >= limit:
+                    break
+        return out
+
+    def similar(self, seed_ref, size=25, artist_spacing=3, **_ignored):
+        np = self._np
+        i = _as_pool_i(seed_ref)
+        r = self._row_of.get(i)
+        if r is None:
+            self._log("LearnedEngine: seed has no projected embedding (missing features)")
+            return []
+        sim = self.E @ self.E[r]
+        # same walk as hybrid.mix(): best-first, seed skipped, an artist-spacing violator
+        # is dropped for good (see the GOTCHA note there -- shipped behavior, eared).
+        out, recent = [], []
+        for j in np.argsort(-sim):
+            if j == r:
+                continue
+            pool_j = self.rows[j]
+            a = self.eng.artist[pool_j]
+            if a and a in recent[-artist_spacing:]:
+                continue
+            out.append(self._ref(pool_j))
+            recent.append(a)
+            if len(out) >= size:
+                break
+        return out

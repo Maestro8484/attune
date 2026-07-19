@@ -63,3 +63,8 @@ bridge/playlists/
 
 # MAD-loop scratch (adversarial review staging)
 .mad/
+
+# blind ear-test session artifacts (eval/abtest.py): sealed keys + operator verdicts.
+# Per-session, and they carry personal library paths -- local only.
+eval/abtest_key_*.json
+eval/abtest_results.jsonl
