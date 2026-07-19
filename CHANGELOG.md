@@ -6,6 +6,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Frozen Windows app analyzes with no system Python or ffmpeg** (ROADMAP-standalone Phases
+  B/C/E): the PyInstaller build (`desktop/build.py` → `dist/Attune/Attune.exe`) now bundles the
+  torch-free analyzer (librosa/numba/scipy/soundfile/onnxruntime + `clap_music.onnx`) and
+  ffmpeg/ffprobe binaries, so a first-run scan works on a machine with nothing installed. A
+  `--attune-worker` self-reinvocation entry point (`desktop/app_desktop.py`) lets the frozen exe
+  re-launch *itself* headless to run the analyze/embed stages — a frozen build has no system
+  python to subprocess — and `web/scanjob.py`'s frozen routing drives it; the bundled ffmpeg is
+  put ahead of any system copy on PATH for the worker only. **Observed:** frozen import→analyze→embed
+  on 3 tracks under a scrubbed PATH wrote 3 `features`(dim-79) + 3 `clap`(dim-512) rows, 0 errors;
+  the frozen GUI served a V2 mix over the 21k-track library. Bundled ffmpeg is redistributed as a
+  separate program (GPLv3, see `NOTICE.md`), not linked. Measured one-folder install: ~975 MB.
 - **Torch-free CLAP embedder** (`src/embed_onnx.py` + `src/models/clap_music.onnx` +
   `src/models/clap_norm.json`, ROADMAP-standalone Phase A): the `laion/larger_clap_music`
   audio tower exported to ONNX (opset 17, dynamic batch; per-clip L2 + 3-window mean-pool +

@@ -39,6 +39,12 @@ genpuid*
 register.key
 *register.key
 
+# Bundled ffmpeg/ffprobe binaries (GPLv3) staged for the frozen build. Redistributed
+# with the built app as separate programs (see NOTICE.md), NOT committed to this MIT
+# repo — they are large (~282 MB) and license-incompatible with the tree. build.py
+# add-datas them from here if present; a public build fetches its own copy.
+desktop/ffbin/
+
 # --- OS / editor ---
 .DS_Store
 Thumbs.db
