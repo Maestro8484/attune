@@ -17,6 +17,21 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   stored torch-computed rows); the mel front-end is bit-exact vs `ClapFeatureExtractor`.
   `embed.py` stays as the reference/training path. `clap_music.onnx` is tracked via git-LFS
   (275.9 MB > GitHub's 100 MB blob limit).
+- **Self-sufficient analyzer — no second Python environment** (ROADMAP-standalone Phase D):
+  with no ML venv configured, the Rescan pipeline now analyzes audio torch-free using the
+  built-in ONNX CLAP encoder (`embed_onnx.py`) under Attune's *own* interpreter, instead of
+  importing metadata only. The ML-venv path is kept as an optional reference/retrain mode
+  (`embed.py`, torch). Observed end-to-end: a no-ML scan under a torch-free interpreter
+  imported 3 tracks and wrote both a `features` row (librosa-79 + tempo) and a `clap` row
+  (dim-512 ONNX vector, 0 errors) for each, via the real `/api/scan/start` endpoint.
+- **First-run "point at your music" wizard** (`web/static/studio.html`, `prefs.js`, `boot.js`):
+  on a fresh profile (empty `library_folders`) a one-step modal prompts for music folder(s),
+  saves them via `/api/settings`, kicks the scan, and hands off to the existing progress
+  poller. Gated purely on server state — it never reappears once a library is configured.
+- **Honest scan progress** (`prefs.js` `paintScan`): a live ETA (from stage progress + a
+  clearly-labelled rough fallback rate), a "safe to close the lid — the scan resumes where it
+  left off" reassurance while running (the pipeline is mtime-skip resumable), and the
+  restart-to-load note on completion (the engine loads its pool once at startup).
 - **Learned-metric engine** (`--engine learned`, `src/engine.py: LearnedEngine`): the
   distilled MusicIP metric head as a third selectable engine. ONNX inference only
   (`onnxruntime`, new `[learned]` extra) — the runtime stays torch-free. Ships with
@@ -45,6 +60,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - Mix length in **minutes** as well as tracks.
 
 ### Changed
+- **`web/scanjob.py` heavy-stage interpreter routing** now three-way: ML venv set →
+  reference path (`embed.py` under that venv); no ML venv, dev → standalone path
+  (`embed_onnx.py` under the app's own interpreter, torch-free); no ML venv, frozen →
+  honest refusal (scripts not bundled yet, Phase B). The old "no ML venv = import metadata
+  only, skip analyze/embed" behavior is gone. The frozen-never-spawn-the-GUI-exe guard
+  (audit finding D) is preserved. Verified: all four routing cases asserted against the
+  real module (argv per stage), plus the observed end-to-end no-ML scan above.
 - `style` is no longer clamped to 0–100. Measured against the live engine, the eligible pool
   is flat to ~400 while the ordering keeps changing, and only collapses past ~845 (where the
   seed's own artist is all that survives). The dial now runs 0–845; the old cap hid ~88% of it.

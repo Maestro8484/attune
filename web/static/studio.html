@@ -310,6 +310,7 @@
   <span>⟳ Scanning: <span id="scanStage">—</span></span>
   <div class="progressbar"><div class="fill" id="scanFill" style="width:0%"></div></div>
   <span id="scanPct"></span>
+  <span id="scanEta" class="hint"></span>
   <span class="spacer"></span>
   <button class="chip" id="scanShow">Details</button>
 </div>
@@ -351,6 +352,7 @@
             Scan library folders when the app starts</label></div></div>
         <div id="scanDetail" hidden>
           <div class="progressbar"><div class="fill" id="scanFill2" style="width:0%"></div></div>
+          <div id="scanNote" class="hint"></div>
           <div class="scanlog" id="scanLog"></div>
         </div>
       </div>
@@ -389,8 +391,9 @@
         <div class="prefrow"><span class="k">ML python</span>
           <div class="v"><input type="text" id="prefMlPython"
             placeholder="...\.venv-ml\Scripts\python.exe">
-            <span class="hint">Python of the heavy analyze venv (librosa + torch).
-              Empty = Rescan imports metadata only, no audio analysis.</span></div></div>
+            <span class="hint">Optional. Points at a heavy analyze venv (librosa + torch)
+              for the reference encoder. Empty = Rescan analyzes audio torch-free with the
+              built-in ONNX encoder, under Attune's own Python — no second environment.</span></div></div>
       </div>
     </div>
     <div class="modalFoot">
@@ -398,6 +401,28 @@
       <span class="spacer"></span>
       <button class="chip" data-close="prefsWrap">Cancel</button>
       <button class="chip on" id="prefsSave">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- First-run wizard: point Attune at your music (shows only when library_folders is empty) -->
+<div id="wizWrap" class="modalwrap" hidden>
+  <div class="modal" style="width:460px">
+    <div class="modalHead">Welcome to Attune
+      <button class="x" data-close="wizWrap">✕</button></div>
+    <div class="modalBody">
+      <p class="hint" style="font-size:13px;line-height:1.5">
+        Point Attune at your music and it'll build a library you can mix from.
+        Add one or more folders below, then scan — you can add more later in
+        Preferences → Library.</p>
+      <div class="folderlist" id="wizFolders"></div>
+      <div class="btnrow"><button id="wizAddFolder">+ Add folder</button></div>
+    </div>
+    <div class="modalFoot">
+      <span id="wizMsg" class="msg"></span>
+      <span class="spacer"></span>
+      <button class="chip" data-close="wizWrap">Skip for now</button>
+      <button class="chip on" id="wizStart">⟳ Scan my music</button>
     </div>
   </div>
 </div>

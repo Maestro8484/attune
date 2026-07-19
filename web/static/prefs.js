@@ -58,14 +58,14 @@ const Prefs = (() => {
   }
   function close() { $('prefsWrap').hidden = true; }
 
-  function paintFolders(folders) {
-    $('libFolders').innerHTML = folders.map((f, k) => `
+  function paintFolders(folders, containerId = 'libFolders') {
+    $(containerId).innerHTML = folders.map((f, k) => `
       <div class="fr"><input type="text" value="${esc(f)}" data-k="${k}">
         <button data-del="${k}" title="Remove">✕</button></div>`).join('')
       || '<span class="hint">No folders yet — add your music folder(s).</span>';
   }
-  function collectFolders() {
-    return [...$('libFolders').querySelectorAll('input')]
+  function collectFolders(containerId = 'libFolders') {
+    return [...$(containerId).querySelectorAll('input')]
       .map(x => x.value.trim()).filter(Boolean);
   }
 
@@ -93,19 +93,56 @@ const Prefs = (() => {
   }
 
   /* ---------------------------------------------------------------- scan */
+  // Rough prior throughput (CPU ONNX embed, ~500 tracks, one earlier session) — used ONLY
+  // as a fallback before a live rate is measurable this run. Always labelled "rough".
+  const FALLBACK_RATE = 0.83; // tracks/sec
+
+  function fmtDuration(sec) {
+    const m = sec / 60;
+    if (m < 1) return 'under a minute';
+    if (m < 90) return `${Math.round(m)} min`;
+    return `${(m / 60).toFixed(1)} hr`;
+  }
+
+  function scanEta(st) {
+    // Defensive: progress is null early in a stage, and total is never trusted to be >0.
+    if (!st.progress || !st.progress[1]) return null;
+    const [cur, total] = st.progress;
+    const remain = Math.max(0, total - cur);
+    if (remain === 0) return { text: 'finishing…', rough: false };
+    // Elapsed time in the CURRENT stage only: progress resets to null at the start of each
+    // stage (scanjob.py _exec), so subtract seconds already banked by completed stages.
+    const priorStagesSec = (st.stages || []).reduce((a, s) => a + (s.seconds || 0), 0);
+    const stageElapsed = Math.max(0, (Date.now() / 1000) - st.started - priorStagesSec);
+    let rate = null, rough = false;
+    if (stageElapsed > 3 && cur > 0) rate = cur / stageElapsed;   // live rate, this run
+    if (!rate || !isFinite(rate) || rate <= 0) { rate = FALLBACK_RATE; rough = true; }
+    return { text: fmtDuration(remain / rate), rough };
+  }
+
   function paintScan(st) {
-    const pct = st.progress ? Math.round(st.progress[0] / st.progress[1] * 100) : 0;
+    const haveProgress = !!(st.progress && st.progress[1]);
+    const pct = haveProgress ? Math.round(st.progress[0] / st.progress[1] * 100) : 0;
     const running = st.running;
     $('scanBanner').hidden = !running;
     if (running) {
       $('scanStage').textContent = st.stage || '…';
       $('scanFill').style.width = pct + '%';
-      $('scanPct').textContent = st.progress ? `${st.progress[0]}/${st.progress[1]}` : '';
+      $('scanPct').textContent = haveProgress
+        ? `${st.progress[0].toLocaleString()}/${st.progress[1].toLocaleString()}`
+        : '';
+      const eta = scanEta(st);
+      $('scanEta').textContent = eta
+        ? `~${eta.text} left${eta.rough ? ' (rough)' : ''}`
+        : (haveProgress ? '' : 'starting…');
     }
     // details inside Preferences (if open)
     if (!$('prefsWrap').hidden) {
       $('scanDetail').hidden = !running && !st.lines.length;
       $('scanFill2').style.width = pct + '%';
+      $('scanNote').textContent = running
+        ? 'Safe to close the lid — the scan picks up where it left off next time, nothing is lost.'
+        : '';
       const log = $('scanLog');
       log.textContent = st.lines.join('\n');
       log.scrollTop = log.scrollHeight;
@@ -116,7 +153,7 @@ const Prefs = (() => {
       if (st.error) toast('Scan: ' + st.error, true);
       else if (st.cancelled) toast('Scan cancelled');
       else toast(st.new_tracks
-        ? `Scan done — ${st.new_tracks} new tracks. Restart Attune to load them.`
+        ? `Scan done — ${st.new_tracks.toLocaleString()} new track${st.new_tracks === 1 ? '' : 's'}. Restart Attune to load them.`
         : 'Scan done — library is up to date.');
     }
   }
@@ -143,6 +180,34 @@ const Prefs = (() => {
       startScanPoll();
       $('scanDetail').hidden = false;
     } catch (e) { toast(e.message, true); }
+  }
+
+  /* ---------------------------------------------------------------- first-run wizard */
+  async function checkFirstRun() {
+    let j;
+    try { j = await jget('/api/settings'); } catch { return; }  // unreachable — don't nag on a fluke
+    serverSettings = j.settings;
+    if ((serverSettings.library_folders || []).length) return;  // already configured
+    paintFolders([''], 'wizFolders');
+    $('wizMsg').textContent = '';
+    $('wizWrap').hidden = false;
+  }
+  async function wizStart() {
+    const folders = collectFolders('wizFolders');
+    if (!folders.length) {
+      $('wizMsg').className = 'msg err'; $('wizMsg').textContent = 'Add at least one folder.';
+      return;
+    }
+    $('wizMsg').className = 'msg'; $('wizMsg').textContent = 'Saving…';
+    try {
+      const j = await jpost('/api/settings', { library_folders: folders });
+      serverSettings = j.settings;
+      await jpost('/api/scan/start', { folders });
+      startScanPoll();
+      $('wizWrap').hidden = true;
+    } catch (e) {
+      $('wizMsg').className = 'msg err'; $('wizMsg').textContent = e.message;
+    }
   }
 
   /* ---------------------------------------------------------------- tag editor */
@@ -256,6 +321,19 @@ const Prefs = (() => {
       const cur = collectFolders(); cur.splice(+del.dataset.del, 1);
       paintFolders(cur);
     });
+    // first-run wizard folder controls (its own list; Skip/✕ close via generic [data-close])
+    $('wizAddFolder').onclick = () => {
+      const cur = collectFolders('wizFolders'); cur.push('');
+      paintFolders(cur, 'wizFolders');
+      const inputs = $('wizFolders').querySelectorAll('input');
+      inputs[inputs.length - 1].focus();
+    };
+    $('wizFolders').addEventListener('click', e => {
+      const del = e.target.closest('button[data-del]'); if (!del) return;
+      const cur = collectFolders('wizFolders'); cur.splice(+del.dataset.del, 1);
+      paintFolders(cur, 'wizFolders');
+    });
+    $('wizStart').onclick = wizStart;
     // tabs
     $('prefTabs').addEventListener('click', e => {
       const b = e.target.closest('button[data-tab]'); if (!b) return;
@@ -296,5 +374,5 @@ const Prefs = (() => {
     jget('/api/scan/status').then(st => { if (st.running) startScanPoll(); }).catch(() => {});
   }
 
-  return { init, open, applyThemeEarly, openTagEditor, toggleMini };
+  return { init, open, applyThemeEarly, openTagEditor, toggleMini, checkFirstRun };
 })();
