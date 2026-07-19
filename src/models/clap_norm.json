@@ -1,0 +1,43 @@
+{
+  "model": "laion/larger_clap_music",
+  "onnx": "clap_music.onnx",
+  "opset": 17,
+  "graph_input": "mel: float32 (batch, 3, 1, 1001, 64) — 3 log-mel windows per track",
+  "graph_output": "embedding: float32 (batch, 512), L2-normalized",
+  "graph_contains": "CLAP audio tower + projection + per-clip L2 norm + mean over 3 windows + final L2 norm (mirrors ClapModel.get_audio_features + embed.py pooling)",
+  "protocol": {
+    "sample_rate": 48000,
+    "window_seconds": 10.0,
+    "window_fracs": [0.15, 0.5, 0.85],
+    "decode": "librosa.load(path, sr=48000, mono=True); reject < 2 s; zero-pad each window tail to 480000 samples",
+    "pooling": "in-graph: mean of the 3 per-clip unit vectors, then renormalize"
+  },
+  "mel": {
+    "n_fft": 1024,
+    "hop_length": 480,
+    "window": "Hann periodic 1024 = np.hanning(1025)[:-1], float64",
+    "center": true,
+    "pad_mode": "reflect",
+    "power": 2.0,
+    "fft_dtype_roundtrip": "rfft result stored complex64, then |.|^2 in float64 (matches transformers audio_utils.py:947)",
+    "n_mels": 64,
+    "fmin_hz": 50.0,
+    "fmax_hz": 14000.0,
+    "mel_scale": "slaney",
+    "mel_norm": "slaney",
+    "mel_floor": 1e-10,
+    "log": "10*log10(clip(x, 1e-10)), reference 1.0, no db_range/top_db",
+    "frames": 1001,
+    "layout": "(frames, mels) float32 per clip"
+  },
+  "_provenance": {
+    "created": "2026-07-19",
+    "exported_from": "transformers 5.13.0 ClapModel(laion/larger_clap_music) audio tower, torch 2.6.0, torch.onnx.export dynamo=False, CPU float32",
+    "mel_source": "numpy port of transformers 5.13.0 feature_extraction_clap.py (_np_extract_fbank_features, rand_trunc/not-longer branch) + audio_utils.py spectrogram/mel_filter_bank/window_function/power_to_db (Apache-2.0)",
+    "checkpoint_config": "preprocessor_config.json: truncation=rand_trunc, frequency_min=50, frequency_max=14000, feature_size=64, hop=480, fft=1024, sr=48000; config.json audio_config: enable_fusion=false (is_longer unused in forward)",
+    "gate_a0": "torch pipeline vs 3 stored production rows: worst cosine 0.999999997 (2026-07-19)",
+    "gate_a1_mel": "numpy mel vs live ClapFeatureExtractor: bit-exact (max abs diff 0.0) over 14 clips incl. silence/noise/sine edges; filterbank + window arrays elementwise identical (2026-07-19)",
+    "gate_a2_tower": "onnxruntime vs torch on identical mels: max abs diff 1.9e-07, cosine 1.0; dynamic batch verified batch-1 == batch-3 bitwise (2026-07-19)",
+    "gate_a3_parity": "PASS — 500 tracks raw audio -> numpy mel -> onnxruntime (CPU EP) vs stored production clap rows: min cosine 0.999999932, mean 0.999999999, p1 0.999999948, 0 below 0.9999, 0 decode errors (pool seed 42, 2026-07-19)"
+  }
+}

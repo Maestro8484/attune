@@ -26,8 +26,9 @@ dependencies = [
 # Optional feature sets. Core install (above) runs the standalone librosa engine.
 #   pip install attune-mixer[neural]   -> hybrid CLAP engine (embed.py + hybrid.py)
 #   pip install attune-mixer[bridge]   -> LAN web UI over a live MusicIP
-#   pip install attune-mixer[learned]  -> distilled-metric ONNX engine (--engine learned;
-#                                         inference-only, keeps the runtime torch-free)
+#   pip install attune-mixer[learned]  -> ONNX inference: distilled-metric engine
+#                                         (--engine learned) AND the torch-free CLAP
+#                                         embedder (embed_onnx.py); keeps runtime torch-free
 #   pip install attune-mixer[all]
 # torch is intentionally unpinned: install the right CPU/CUDA build from pytorch.org first.
 [project.optional-dependencies]
@@ -39,6 +40,7 @@ all = ["torch", "transformers>=4.40", "flask>=3.0", "mutagen>=1.47", "onnxruntim
 [project.scripts]
 attune-scan   = "scan:main"      # import/analyze a library -> mixer.db
 attune-embed  = "embed:main"     # optional CLAP embeddings (needs [neural])
+attune-embed-onnx = "embed_onnx:main"  # torch-free CLAP embeddings (needs [learned])
 attune-mix    = "mixer:main"     # librosa engine (core, no neural deps)
 attune-hybrid = "hybrid:main"    # hybrid V2 engine (needs [neural] + a clap table)
 
@@ -54,4 +56,4 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-py-modules = ["features", "db", "scan", "mixer", "hybrid", "embed", "validate", "make_validation_set"]
+py-modules = ["features", "db", "scan", "mixer", "hybrid", "embed", "embed_onnx", "validate", "make_validation_set"]

@@ -1,1 +1,2 @@
 * text=auto eol=lf
+src/models/clap_music.onnx filter=lfs diff=lfs merge=lfs -text
