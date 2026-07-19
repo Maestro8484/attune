@@ -40,10 +40,44 @@ DATA = [
     ("src/engine.py",          "attune/src"),
     ("src/musicip_engine.py",  "attune/src"),
     ("src/export.py",          "attune/src"),
+    # torch-free analyzer worker modules — app_desktop.py's --attune-worker sentinel
+    # imports these by bare name (`import scan`, `import embed_onnx`) after inserting
+    # this dir at sys.path[0], so PyInstaller's static analysis can't see them either.
+    ("src/scan.py",            "attune/src"),
+    ("src/features.py",        "attune/src"),
+    ("src/db.py",              "attune/src"),
+    ("src/embed_onnx.py",      "attune/src"),
+    # ONNX CLAP twin + its norm constants (embed_onnx.py resolves MODELS_DIR relative
+    # to its own __file__, which inside the bundle is .../attune/src/embed_onnx.py, so
+    # this dest path makes MODELS_DIR resolve to .../attune/src/models automatically).
+    ("src/models/clap_music.onnx",   "attune/src/models"),
+    ("src/models/clap_norm.json",    "attune/src/models"),
+    ("src/models/metric_head.onnx",  "attune/src/models"),
+    ("src/models/learned_norm.json", "attune/src/models"),
+]
+
+# Bundled ffmpeg/ffprobe (redistributed as separate unmodified programs, not linked —
+# see attune/NOTICE.md). The worker (app_desktop.py:_run_worker) prepends the bundled
+# dir "attune/bin" to PATH, so scan.py's ffprobe tag reads and librosa/audioread's
+# ffmpeg decode fallback resolve to these instead of a system install. Appended only if
+# present (a non-Windows build won't have these Windows .exe's), so the build still runs.
+FFBIN = [
+    ("desktop/ffbin/ffmpeg.exe",  "attune/bin"),
+    ("desktop/ffbin/ffprobe.exe", "attune/bin"),
 ]
 
 # imported dynamically / not statically visible from app_desktop.py's import list
 HIDDEN = ["mutagen", "requests", "numpy"]
+
+# packages with fiddly native/data payloads PyInstaller's default import hooks tend
+# to miss (native DLLs, data files, lazy submodules) — collect everything for each.
+COLLECT_ALL = ["librosa", "numba", "llvmlite", "scipy", "soundfile", "onnxruntime",
+               "pooch", "audioread", "lazy_loader"]
+
+# torch/transformers are the reference/training-path encoder (embed.py) and must
+# NEVER end up in the frozen bundle — the whole point of the ONNX twin is to not
+# need them. Exclude explicitly so a transitive import can't sneak them in.
+EXCLUDE = ["torch", "transformers"]
 
 
 def main():
@@ -53,17 +87,28 @@ def main():
             raise SystemExit(f"[build] missing source file: {full}")
 
     args = [sys.executable, "-m", "PyInstaller", "--name", "Attune", "--windowed",
-            "--noconfirm", "--clean",
+            "--noconfirm", "--clean", "--noupx",
             "--distpath", os.path.join(ATT, "dist"),
             "--workpath", os.path.join(ATT, "build"),
             "--specpath", HERE,
             "--collect-all", "webview"]
     for m in HIDDEN:
         args += ["--collect-submodules", m]
+    for m in COLLECT_ALL:
+        args += ["--collect-all", m]
+    for m in EXCLUDE:
+        args += ["--exclude-module", m]
     if "--onefile" in sys.argv:
         args.append("--onefile")
     for src, dest in DATA:
         args += ["--add-data", f"{os.path.join(ATT, src)}{os.pathsep}{dest}"]
+    for src, dest in FFBIN:
+        full = os.path.join(ATT, src)
+        if os.path.exists(full):
+            args += ["--add-data", f"{full}{os.pathsep}{dest}"]
+        else:
+            print(f"[build] NOTE: {full} not found — building WITHOUT bundled ffmpeg "
+                  f"(scan will rely on a system ffmpeg/ffprobe on PATH)")
     args.append(os.path.join(HERE, "app_desktop.py"))
 
     print("running:", " ".join(args))

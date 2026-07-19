@@ -131,33 +131,41 @@ class ScanJob:
             #   no ml_python, dev    -> standalone path: the app's OWN interpreter +
             #                           embed_onnx.py (numpy+librosa+onnxruntime), so
             #                           there is no second Python environment to set up.
-            #   no ml_python, frozen -> can't yet: sys.executable is the GUI exe and
-            #                           scan.py/embed_onnx.py aren't bundled (Phase B).
+            #   no ml_python, frozen -> worker path: sys.executable is the packaged
+            #                           Attune.exe, not a Python, but scan.py/embed_onnx.py
+            #                           ARE bundled (attune/src) and app_desktop.py's
+            #                           `--attune-worker` sentinel re-enters the exe as a
+            #                           headless analyzer, so this re-invokes itself instead
+            #                           of shelling out to a system python.
             frozen = getattr(sys, "frozen", False)
+            worker_mode = frozen and not ml_python
             if ml_python:
                 heavy_python = ml_python
                 embed_script = os.path.join(SRC, "embed.py")
                 embed_label = "embed"
-            elif frozen:
-                heavy_python = None
+            elif worker_mode:
+                heavy_python = None     # unused: _scan_argv/_embed_argv route via worker_mode
                 embed_script = None
-                embed_label = "embed"
+                embed_label = "embed (onnx)"
             else:
                 heavy_python = sys.executable
                 embed_script = os.path.join(SRC, "embed_onnx.py")
                 embed_label = "embed (onnx)"
-
-            # The import stage must never spawn the packaged GUI exe (Finding D):
-            # frozen sys.executable is Attune.exe, not a Python, and scan.py isn't in
-            # the bundle. Frozen with no ML venv can do nothing heavy, so refuse up
-            # front rather than relaunch the app silently. Non-frozen sys.executable
-            # IS a real python, so it drives every stage in the standalone path.
-            if frozen and not ml_python:
-                self.error = ("This packaged build can't analyze on its own yet — it has "
-                              "no bundled Python for the analyze/embed stages. Configure "
-                              "an ML venv (Preferences → Advanced), or use a dev build.")
-                return
             imp_python = ml_python or sys.executable
+
+            def _scan_argv(python_exe, *scan_args):
+                """argv for a scan.py invocation. In worker_mode, route through the
+                frozen exe's own --attune-worker re-entry point (sys.executable IS
+                Attune.exe there); otherwise run scan.py directly under python_exe."""
+                if worker_mode:
+                    return [sys.executable, "--attune-worker", "scan", *scan_args]
+                return [python_exe, os.path.join(SRC, "scan.py"), *scan_args]
+
+            def _embed_argv():
+                if worker_mode:
+                    return [sys.executable, "--attune-worker", "embed_onnx",
+                            "--db", self.db_path]
+                return [heavy_python, embed_script, "--db", self.db_path]
 
             for d in folders:
                 if self.cancelled:
@@ -166,22 +174,21 @@ class ScanJob:
                     self.lines.append(f"skipping missing folder: {d}")
                     continue
                 rc = self._exec(f"import {os.path.basename(d) or d}",
-                                [imp_python, os.path.join(SRC, "scan.py"),
-                                 "import-folder", d, "--db", self.db_path])
+                                _scan_argv(imp_python, "import-folder", d,
+                                           "--db", self.db_path))
                 if rc != 0:
                     self.error = f"import failed (rc={rc}) — see log tail"
                     return
             if self.cancelled:
                 return
-            rc = self._exec("analyze", [heavy_python, os.path.join(SRC, "scan.py"),
-                                        "analyze", "--db", self.db_path])
+            rc = self._exec("analyze", _scan_argv(heavy_python, "analyze",
+                                                   "--db", self.db_path))
             if rc != 0:
                 self.error = f"analyze failed (rc={rc}) — see log tail"
                 return
             if self.cancelled:
                 return
-            rc = self._exec(embed_label, [heavy_python, embed_script,
-                                          "--db", self.db_path])
+            rc = self._exec(embed_label, _embed_argv())
             if rc != 0:
                 self.error = f"embed failed (rc={rc}) — see log tail"
         finally:
