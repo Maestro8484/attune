@@ -115,7 +115,23 @@ class ScanJob:
 
     def _run(self, folders, ml_python):
         try:
-            imp_python = ml_python or sys.executable
+            # Import-stage interpreter resolution. Dev (non-frozen): fall back to
+            # sys.executable as before — it IS a real python. Frozen (PyInstaller
+            # .exe): sys.executable is Attune.exe itself, not an interpreter, and
+            # scan.py isn't even bundled (see Attune.spec datas) — so
+            # [Attune.exe, "scan.py", ...] would just relaunch the GUI silently.
+            # Never fall back to sys.executable when frozen; if no ml_python is
+            # configured, refuse honestly instead of spawning the app exe.
+            frozen = getattr(sys, "frozen", False)
+            if frozen:
+                if not ml_python:
+                    self.error = ("Can't import without an ML venv configured "
+                                  "(Preferences → Advanced) — the packaged app has no "
+                                  "bundled Python to run the import stage.")
+                    return
+                imp_python = ml_python
+            else:
+                imp_python = ml_python or sys.executable
             heavy = bool(ml_python)
             for d in folders:
                 if self.cancelled:
