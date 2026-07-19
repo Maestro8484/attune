@@ -6,6 +6,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Torch-free CLAP embedder** (`src/embed_onnx.py` + `src/models/clap_music.onnx` +
+  `src/models/clap_norm.json`, ROADMAP-standalone Phase A): the `laion/larger_clap_music`
+  audio tower exported to ONNX (opset 17, dynamic batch; per-clip L2 + 3-window mean-pool +
+  final L2 inside the graph) with the log-mel front-end ported to pure numpy from
+  transformers' exact numeric path. Same protocol, same `clap` table, same resume/err
+  semantics as `embed.py` — but deps are numpy + librosa + onnxruntime only (covered by the
+  existing `[learned]` extra; new `attune-embed-onnx` script). **Parity gate: min cosine
+  0.999999932 over 500 production tracks** (raw audio → numpy mel → onnxruntime vs the
+  stored torch-computed rows); the mel front-end is bit-exact vs `ClapFeatureExtractor`.
+  `embed.py` stays as the reference/training path. `clap_music.onnx` is tracked via git-LFS
+  (275.9 MB > GitHub's 100 MB blob limit).
 - **Learned-metric engine** (`--engine learned`, `src/engine.py: LearnedEngine`): the
   distilled MusicIP metric head as a third selectable engine. ONNX inference only
   (`onnxruntime`, new `[learned]` extra) — the runtime stays torch-free. Ships with
