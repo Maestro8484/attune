@@ -159,6 +159,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 f"--engine musicip requires a live MusicIP Mixer at {musicip_url}; "
                 f"it did not respond. Start MusicIP Mixer's web API, or run with --engine v2.")
         print(f"MusicIP engine ready at {musicip_url}.")
+    elif engine_name == "learned":
+        # the distilled-metric head (onnxruntime, still torch-free). SELECTABLE ONLY --
+        # per LAW 1 it cannot become the default before a blind ear test (eval/abtest.py).
+        active = eng_iface.LearnedEngine(db_path, hybrid_engine=eng, log=print)
     else:
         active = eng_iface.V2Engine(hybrid_engine=eng)
     is_musicip = engine_name == "musicip"
@@ -979,10 +983,12 @@ def main():
                          "embed.py). Falls back to ATTUNE_DB, then settings.json.")
     ap.add_argument("--host", default="127.0.0.1", help="bind host (default: 127.0.0.1; use 0.0.0.0 for LAN)")
     ap.add_argument("--port", type=int, default=8778, help="port (default: 8778)")
-    ap.add_argument("--engine", choices=("musicip", "v2", "auto"), default=None,
+    ap.add_argument("--engine", choices=("musicip", "v2", "learned", "auto"), default=None,
                     help="mix engine: 'musicip' drives a live MusicIP Mixer for search/mix; "
                          "'v2' uses our own CLAP/librosa HybridEngine with the full "
-                         "weights/refine/mmr/flow UI; 'auto' probes MusicIP and falls back "
+                         "weights/refine/mmr/flow UI; 'learned' uses the distilled-metric "
+                         "ONNX head (selectable only -- not default until it wins a blind "
+                         "ear test); 'auto' probes MusicIP and falls back "
                          "to v2. Falls back to settings.json (default: auto).")
     ap.add_argument("--musicip-url", default=None,
                     help="MusicIP Mixer HTTP API base URL (only used with --engine musicip)")

@@ -24,7 +24,7 @@ DEFAULTS = {
     "settings_version": SETTINGS_VERSION,
     "db_path": "",                 # analyzed+embedded mixer.db
     "playlist_dir": "",            # folder of .m3u/.m3u8 playlists (browse + save target)
-    "engine": "auto",              # auto | v2 | musicip  (auto = probe MusicIP, fall back v2)
+    "engine": "auto",              # auto | v2 | musicip | learned  (auto = probe MusicIP, fall back v2)
     "musicip_url": "http://localhost:10002",
     "library_folders": [],         # watched/scanned music roots
     "ml_venv_python": "",          # python.exe of the heavy analyze venv ('' = analysis off)
