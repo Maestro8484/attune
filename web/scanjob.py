@@ -9,9 +9,19 @@ nothing because the NEXT run picks up where it died.
 
 Stages:  import (per library folder)  ->  analyze (librosa)  ->  embed (CLAP)
 
-The import stage can run under the app's own interpreter (mutagen/ffprobe only);
-analyze and embed genuinely need the heavy venv (librosa / torch). If
-ml_venv_python is not configured, we run import-only and say so honestly.
+Interpreter routing for the heavy (analyze/embed) stages:
+  - ml_venv_python configured  -> reference/retrain path: that venv runs scan.py
+    analyze + embed.py (the original torch/transformers CLAP encoder).
+  - no ml_venv_python (dev)     -> standalone path: the app's OWN interpreter runs
+    scan.py analyze + embed_onnx.py (numpy + librosa + onnxruntime, torch-free —
+    the ONNX CLAP twin proven bit-faithful in ROADMAP_STANDALONE Phase A). No
+    second Python environment to install or configure.
+  - no ml_venv_python (frozen)  -> refuse honestly: sys.executable is the packaged
+    GUI exe, not a Python, and scan.py/embed_onnx.py aren't in the bundle yet
+    (ROADMAP_STANDALONE Phase B). Configure an ML venv or use a dev build.
+
+The standalone path needs librosa + onnxruntime importable by the app's own
+interpreter; embed_onnx.py exits with an honest message if librosa is absent.
 
 Engine note (stated, not hidden): the running engine loads its pool ONCE at
 startup, so tracks this job adds only become mixable after an app restart. The
@@ -115,24 +125,40 @@ class ScanJob:
 
     def _run(self, folders, ml_python):
         try:
-            # Import-stage interpreter resolution. Dev (non-frozen): fall back to
-            # sys.executable as before — it IS a real python. Frozen (PyInstaller
-            # .exe): sys.executable is Attune.exe itself, not an interpreter, and
-            # scan.py isn't even bundled (see Attune.spec datas) — so
-            # [Attune.exe, "scan.py", ...] would just relaunch the GUI silently.
-            # Never fall back to sys.executable when frozen; if no ml_python is
-            # configured, refuse honestly instead of spawning the app exe.
+            # Interpreter + embed script for the heavy (analyze/embed) stages.
+            #   ml_python set        -> reference/retrain path: ML venv + embed.py
+            #                           (torch/transformers, the original encoder).
+            #   no ml_python, dev    -> standalone path: the app's OWN interpreter +
+            #                           embed_onnx.py (numpy+librosa+onnxruntime), so
+            #                           there is no second Python environment to set up.
+            #   no ml_python, frozen -> can't yet: sys.executable is the GUI exe and
+            #                           scan.py/embed_onnx.py aren't bundled (Phase B).
             frozen = getattr(sys, "frozen", False)
-            if frozen:
-                if not ml_python:
-                    self.error = ("Can't import without an ML venv configured "
-                                  "(Preferences → Advanced) — the packaged app has no "
-                                  "bundled Python to run the import stage.")
-                    return
-                imp_python = ml_python
+            if ml_python:
+                heavy_python = ml_python
+                embed_script = os.path.join(SRC, "embed.py")
+                embed_label = "embed"
+            elif frozen:
+                heavy_python = None
+                embed_script = None
+                embed_label = "embed"
             else:
-                imp_python = ml_python or sys.executable
-            heavy = bool(ml_python)
+                heavy_python = sys.executable
+                embed_script = os.path.join(SRC, "embed_onnx.py")
+                embed_label = "embed (onnx)"
+
+            # The import stage must never spawn the packaged GUI exe (Finding D):
+            # frozen sys.executable is Attune.exe, not a Python, and scan.py isn't in
+            # the bundle. Frozen with no ML venv can do nothing heavy, so refuse up
+            # front rather than relaunch the app silently. Non-frozen sys.executable
+            # IS a real python, so it drives every stage in the standalone path.
+            if frozen and not ml_python:
+                self.error = ("This packaged build can't analyze on its own yet — it has "
+                              "no bundled Python for the analyze/embed stages. Configure "
+                              "an ML venv (Preferences → Advanced), or use a dev build.")
+                return
+            imp_python = ml_python or sys.executable
+
             for d in folders:
                 if self.cancelled:
                     return
@@ -145,21 +171,17 @@ class ScanJob:
                 if rc != 0:
                     self.error = f"import failed (rc={rc}) — see log tail"
                     return
-            if not heavy:
-                self.lines.append("No ML venv configured (Preferences → Advanced): "
-                                  "imported metadata only; analyze/embed skipped.")
-                return
             if self.cancelled:
                 return
-            rc = self._exec("analyze", [ml_python, os.path.join(SRC, "scan.py"),
+            rc = self._exec("analyze", [heavy_python, os.path.join(SRC, "scan.py"),
                                         "analyze", "--db", self.db_path])
             if rc != 0:
                 self.error = f"analyze failed (rc={rc}) — see log tail"
                 return
             if self.cancelled:
                 return
-            rc = self._exec("embed", [ml_python, os.path.join(SRC, "embed.py"),
-                                      "--db", self.db_path])
+            rc = self._exec(embed_label, [heavy_python, embed_script,
+                                          "--db", self.db_path])
             if rc != 0:
                 self.error = f"embed failed (rc={rc}) — see log tail"
         finally:

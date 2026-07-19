@@ -11,5 +11,6 @@
   }
   Player.init();               // player.js — transport, queue restore, EQ panel
   Prefs.init();                // prefs.js — modal, splitters, mini mode, scan poll
+  Prefs.checkFirstRun();       // prefs.js — first-run "point at your music" wizard
   Smart.init();                // smartlist.js — auto-playlists tree + rules editor
 })();
