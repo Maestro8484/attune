@@ -142,10 +142,21 @@ function renderHead() {
 /* ------------------------------------------------------------------ table */
 function renderRows(rows, opts = {}) {
   S.rows = rows;
+  // mix view shows the inline More/Less Like This (tune) buttons; every other view hides them
+  document.querySelector('#tbl').classList.toggle('mixview', S.view === 'mix');
   const tb = $('tbody');
   tb.innerHTML = rowsHtml(rows, opts);
   $('empty').hidden = rows.length > 0;
   updateSelStatus();
+}
+
+/* inline thumbs for a mix row — same S.liked/S.disliked + refine() path as the
+   context menu's More/Less Like This, just visible on the row itself */
+function tuneHtml(i) {
+  const lk = S.liked.includes(i), dk = S.disliked.includes(i);
+  return `<span class="tune${lk || dk ? ' voted' : ''}" data-i="${i}">` +
+    `<button class="tb more${lk ? ' on' : ''}" title="More Like This">+</button>` +
+    `<button class="tb less${dk ? ' on' : ''}" title="Less Like This">−</button></span>`;
 }
 function rowsHtml(rows, opts = {}) {
   const seed = opts.seed ?? (S.view === 'mix' ? S.seed : null);
@@ -158,9 +169,12 @@ function rowsHtml(rows, opts = {}) {
     if (r.i === playing && r.i >= 0) cls.push('playing');
     if (seed !== null && r.i === seed) cls.push('seed');
     if (r.missing) cls.push('missing');
+    const tune = S.view === 'mix' && S.stats.engine === 'v2' &&
+                 r.i >= 0 && r.i !== seed;
     const tds = cols.map(c => {
       const extra = (c.id === 'status' && r.status !== 'Analyzed') ? ' no' : '';
-      return `<td class="${c.cls}${extra}">${cellHtml(c, r)}</td>`;
+      const cell = cellHtml(c, r) + (tune && c.id === 'title' ? tuneHtml(r.i) : '');
+      return `<td class="${c.cls}${extra}">${cell}</td>`;
     }).join('');
     return `<tr data-i="${r.i}" ${draggable ? 'draggable="true"' : ''} class="${cls.join(' ')}">${tds}</tr>`;
   }).join('');
@@ -590,6 +604,21 @@ async function showWhy(i, x, y) {
   } catch (e) { toast(e.message, true); }
 }
 
+function tuneTrack(i, dir) {
+  // toggle semantics: clicking the same vote again withdraws it; More and Less
+  // are mutually exclusive per track. Then re-rank through the same refine() path.
+  const add = dir === 'more' ? S.liked : S.disliked;
+  const other = dir === 'more' ? S.disliked : S.liked;
+  const at = add.indexOf(i);
+  if (at >= 0) add.splice(at, 1);
+  else {
+    add.push(i);
+    const o = other.indexOf(i);
+    if (o >= 0) other.splice(o, 1);
+  }
+  refine();
+}
+
 async function refine() {
   if (S.seed == null) return toast('Create a mix first', true);
   if (S.stats.engine !== 'v2') return toast('More/Less Like This needs the V2 engine', true);
@@ -630,6 +659,12 @@ function bindSliders() {
 function bindEvents() {
   // table rows: selection, stars, dblclick-to-play
   $('tbody').addEventListener('click', e => {
+    const tb = e.target.closest('.tb');
+    if (tb) {
+      const wrap = tb.closest('.tune');
+      tuneTrack(+wrap.dataset.i, tb.classList.contains('more') ? 'more' : 'less');
+      return;
+    }
     const star = e.target.closest('.stars i');
     if (star) {
       const wrap = star.closest('.stars');
@@ -882,8 +917,8 @@ function bindEvents() {
         toast('Queued'); break;
       case 'love': loveTrack(i, !row.loved); break;
       case 'tags': Prefs.openTagEditor(i); break;
-      case 'more': S.liked.push(i); refine(); break;
-      case 'less': S.disliked.push(i); refine(); break;
+      case 'more': tuneTrack(i, 'more'); break;
+      case 'less': tuneTrack(i, 'less'); break;
       case 'artist': S.facets.artist = new Set([row.artist]); loadLibrary(true); break;
       case 'album': S.facets.album = new Set([row.album]); loadLibrary(true); break;
       case 'genre': S.facets.genre = new Set([(row.genre || '').split(/[;,]/)[0].trim()]);
