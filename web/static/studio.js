@@ -257,6 +257,7 @@ async function initRecipes() {
   const isMip = S.stats && S.stats.engine === 'musicip';
   $('recipeSel').hidden = isMip;
   $('recipeControls').hidden = isMip;
+  $('btnGenius').hidden = isMip;         // genius applies recipes, which are v2-param shaped
   if (isMip) return;           // recipes are v2-param shaped; nothing to do under musicip
   await loadRecipes();
   const stored = store.get('recipe', null);
@@ -590,6 +591,31 @@ async function doMix(seedI) {
     await showMix();
   } catch (e) { toast(e.message, true); }
   finally { $('btnMix').disabled = false; }
+}
+
+/* Genius: one click, zero dialogs, from app-open to music playing.
+   1. apply a recipe to the dials (default recipe wins; otherwise leave whatever's
+      already selected; otherwise fall back to "Classic Journey" if it exists)
+   2. ask the server for a seed (tiered: loved+rested -> rating>=4 -> any analyzed)
+   3. run it through the exact same doMix() path a manual "Create Mix" click takes
+   4. hand the resulting S.mix straight to the player, starting at the seed --
+      the same Player.playList() call the dblclick-to-play and album-play-button
+      paths already use, so this never reimplements queueing.
+   S.seed === i (only set by doMix on success) guards against playing a stale
+   leftover mix if the mix request itself failed. */
+async function geniusMix() {
+  if (RECIPE_DEFAULT && findRecipe(RECIPE_DEFAULT)) {
+    selectRecipe(RECIPE_DEFAULT, { persist: false });
+  } else if (!curRecipe && findRecipe('Classic Journey')) {
+    selectRecipe('Classic Journey', { persist: false });
+  }
+  $('btnGenius').disabled = true;
+  try {
+    const { i } = await jget('/api/recipe/genius_seed');
+    await doMix(i);
+    if (S.seed === i && S.mix.length) Player.playList(S.mix, 0);
+  } catch (e) { toast(e.message, true); }
+  finally { $('btnGenius').disabled = false; }
 }
 
 async function showMix() {
@@ -1025,6 +1051,7 @@ function bindEvents() {
 
   // toolbar
   $('btnMix').onclick = () => doMix(firstSelected());
+  $('btnGenius').onclick = geniusMix;
   $('btnShuffle').onclick = () => {
     const rows = S.rows.slice();
     for (let i = rows.length - 1; i > 0; i--) {
@@ -1127,6 +1154,7 @@ function bindEvents() {
     }
     const k = e.key.toLowerCase();
     if ((e.ctrlKey || e.metaKey) && k === 'm' && !e.shiftKey) { e.preventDefault(); doMix(firstSelected()); }
+    else if ((e.ctrlKey || e.metaKey) && k === 'g' && !e.shiftKey) { e.preventDefault(); geniusMix(); }
     else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'm') { e.preventDefault(); Prefs.toggleMini(); }
     else if ((e.ctrlKey || e.metaKey) && k === ',') { e.preventDefault(); Prefs.open(); }
     else if ((e.ctrlKey || e.metaKey) && k === 'a') {

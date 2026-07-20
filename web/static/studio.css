@@ -110,6 +110,13 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
   border-color:transparent; color:#fff; font-weight:600;
 }
 #toolbar button.primary:hover { filter:brightness(1.1); }
+/* Genius: same shape as .primary but on --accent2, so the one-click path reads as a
+   distinct action from the manual "Create Mix" flow rather than a duplicate button. */
+#toolbar button.genius {
+  background:linear-gradient(180deg,var(--accent2),color-mix(in srgb,var(--accent2) 70%,#000));
+  border-color:transparent; color:#fff; font-weight:600;
+}
+#toolbar button.genius:hover { filter:brightness(1.1); }
 #toolbar button:disabled { opacity:.4; cursor:default; }
 #toolbar button.iconbtn { padding:6px 9px; }
 .field { display:flex; gap:0; }
@@ -506,6 +513,11 @@ html[data-theme="attune"] #toolbar button.primary {
   background:linear-gradient(180deg,#f7bd52,#d98f16); color:#1a1204; font-weight:700;
   text-shadow:1px 1px 0 #ffffff55;
   border-color:#ffd98a #7a5008 #7a5008 #ffd98a;
+}
+html[data-theme="attune"] #toolbar button.genius {
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent2) 80%,#fff),var(--accent2));
+  color:#062406; font-weight:700; text-shadow:1px 1px 0 #ffffff55;
+  border-color:#8dffb0 #075a07 #075a07 #8dffb0;
 }
 html[data-theme="attune"] .chip.on { color:var(--accent2); border-color:var(--bev-d) var(--bev-l) var(--bev-l) var(--bev-d); background:#1c2018; }
 
