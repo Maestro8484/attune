@@ -94,6 +94,183 @@ function facetQS() {
   return p;
 }
 
+/* ------------------------------------------------------------------ recipes
+   A recipe is a named preset for the mix dials -- the five weight sliders, MMR
+   variety, flow ordering, dedup, and mix size -- stored server-side (recipes.py).
+   Choosing one WRITES its params into the existing dial UI; mixParams() then keeps
+   reading the DOM exactly as it always has, so a recipe is a shortcut for setting
+   sliders by hand, never a second request-building path. */
+let RECIPES = [];             // [{id,name,params,builtin}], server order (builtins first)
+let RECIPE_DEFAULT = '';      // name of the server-configured default recipe, '' = none
+let curRecipe = '';           // name of the currently applied recipe, '' = Dials (manual)
+let ENGINE_DEFAULTS = null;   // {clap,lib,genre,bpm,era} captured from the DOM at boot --
+                               // BEFORE any recipe ever touches the sliders. The HTML's
+                               // slider value= attributes already mirror hybrid.py's
+                               // DEFAULT_WEIGHTS (verified against recipes.py's own
+                               // BUILTINS comment, web/recipes.py:103-106); reading them
+                               // from the DOM instead of re-typing the numbers here means
+                               // this file never hardcodes an engine weight.
+
+function captureEngineDefaults() {
+  ENGINE_DEFAULTS = {};
+  for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) ENGINE_DEFAULTS[k] = $(k).value;
+}
+
+function findRecipe(name) {
+  return RECIPES.find(r => r.name === name) || null;
+}
+
+/* Full current dial state, in the shape /api/recipe/save expects. Deliberately NOT
+   mixParams() (that builds a GET querystring shaped for /api/mix and branches on
+   the musicip engine); this is its own small reader so mixParams() stays untouched. */
+function currentDialParams() {
+  const p = {};
+  for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) p[k] = +$(k).value;
+  p.variety = $('mmr').checked ? 1 : 0;
+  p.flow = $('flow').checked ? 1 : 0;
+  if ($('dedupOn').checked) p.dedup = $('dedupField').value;
+  p.size = Math.min(Math.max(+$('mixSize').value || 100, 20), 150);
+  return p;
+}
+
+/* Write `params` (or nothing, for "Dials (manual)") into the dial UI.
+   - weights: written if present, else reset to ENGINE_DEFAULTS (never left stale
+     from whatever recipe was applied before).
+   - variety/flow: written if present, else OFF -- there is no "leave alone" state
+     for a checkbox the way there is for size/dedup below.
+   - size/dedup: written ONLY when params actually specifies them; omitted means
+     "no opinion", so whatever the user last set stays put. This is the one place
+     this function does NOT reset to a default. */
+function applyRecipe(params) {
+  const p = params || {};
+  for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) {
+    $(k).value = (p[k] != null) ? p[k] : ENGINE_DEFAULTS[k];
+    $(k).dispatchEvent(new Event('input'));
+  }
+  $('mmr').checked = !!p.variety;
+  $('flow').checked = !!p.flow;
+  if (p.size != null) $('mixSize').value = p.size;
+  if (p.dedup != null) { $('dedupOn').checked = true; $('dedupField').value = p.dedup; }
+}
+
+function paintRecipeActions() {
+  $('recipeActions').hidden = !curRecipe;
+}
+
+function paintRecipeOptions() {
+  const sel = $('recipeSel');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">Dials (manual)</option>' + RECIPES.map(r =>
+    `<option value="${esc(r.name)}">${r.name === RECIPE_DEFAULT ? '★ ' : ''}${esc(r.name)}</option>`
+  ).join('');
+  sel.value = RECIPES.some(r => r.name === cur) ? cur : '';
+}
+
+async function loadRecipes() {
+  try {
+    const j = await jget('/api/recipe/list');
+    RECIPES = j.recipes || [];
+    RECIPE_DEFAULT = j.default || '';
+  } catch (e) { RECIPES = []; RECIPE_DEFAULT = ''; }
+  paintRecipeOptions();
+}
+
+function selectRecipe(name, { persist = true } = {}) {
+  curRecipe = name || '';
+  applyRecipe(curRecipe ? (findRecipe(curRecipe) || {}).params : null);
+  $('recipeSel').value = curRecipe;
+  if (persist) store.set('recipe', curRecipe);
+  paintRecipeActions();
+}
+
+async function saveAsRecipe() {
+  const name = (prompt('Save current dials as a new recipe:', '') || '').trim();
+  if (!name) return;
+  try {
+    await jpost('/api/recipe/save', { name, params: currentDialParams() });
+    await loadRecipes();
+    selectRecipe(name);
+    toast(`Saved recipe "${name}"`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function updateRecipe() {
+  const rec = findRecipe(curRecipe); if (!rec) return;
+  try {
+    await jpost('/api/recipe/save', { id: rec.id, name: rec.name, params: currentDialParams() });
+    await loadRecipes();
+    selectRecipe(rec.name);
+    toast(`Updated "${rec.name}"`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function renameRecipe() {
+  const rec = findRecipe(curRecipe); if (!rec) return;
+  const name = (prompt('Rename recipe:', rec.name) || '').trim();
+  if (!name || name === rec.name) return;
+  try {
+    await jpost('/api/recipe/save', { id: rec.id, name, params: rec.params });
+    await loadRecipes();
+    selectRecipe(name);
+    toast(`Renamed to "${name}"`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteRecipe() {
+  const rec = findRecipe(curRecipe); if (!rec) return;
+  if (!confirm(`Delete recipe "${rec.name}"? This cannot be undone.`)) return;
+  try {
+    await jpost('/api/recipe/delete', { id: rec.id });
+    await loadRecipes();
+    selectRecipe('');           // Dials (manual) -- restores engine-default weights
+    toast(`Deleted "${rec.name}"`);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function setDefaultRecipe() {
+  const rec = findRecipe(curRecipe); if (!rec) return;
+  try {
+    await jpost('/api/settings', { default_recipe: rec.name });
+    RECIPE_DEFAULT = rec.name;
+    paintRecipeOptions();
+    toast(`"${rec.name}" set as default`);
+  } catch (e) { toast(e.message, true); }
+}
+
+function bindRecipeEvents() {
+  $('recipeSel').addEventListener('change', () => selectRecipe($('recipeSel').value));
+  $('btnRecipeSave').onclick = saveAsRecipe;
+  $('btnRecipeUpdate').onclick = updateRecipe;
+  $('btnRecipeRename').onclick = renameRecipe;
+  $('btnRecipeDelete').onclick = deleteRecipe;
+  $('btnRecipeSetDefault').onclick = setDefaultRecipe;
+}
+
+/* Boot-time recipe setup. Order per spec: a stored selection wins, then the
+   server's configured default, then "Dials (manual)" untouched -- with NO stored
+   selection and NO server default, this function must not write a single slider
+   value, so a fresh boot's /api/mix and /api/export/m3u requests stay byte-identical
+   to pre-recipe behaviour. Must run AFTER S.stats is loaded (engine check), and
+   captures ENGINE_DEFAULTS from the DOM before any of that. */
+async function initRecipes() {
+  captureEngineDefaults();
+  const isMip = S.stats && S.stats.engine === 'musicip';
+  $('recipeSel').hidden = isMip;
+  $('recipeControls').hidden = isMip;
+  if (isMip) return;           // recipes are v2-param shaped; nothing to do under musicip
+  await loadRecipes();
+  const stored = store.get('recipe', null);
+  if (stored && RECIPES.some(r => r.name === stored)) {
+    selectRecipe(stored, { persist: false });
+  } else if (!stored && RECIPE_DEFAULT && RECIPES.some(r => r.name === RECIPE_DEFAULT)) {
+    selectRecipe(RECIPE_DEFAULT, { persist: false });
+  } else {
+    curRecipe = '';
+    $('recipeSel').value = '';
+    paintRecipeActions();      // no DOM write beyond this -- dials stay exactly as authored
+  }
+}
+
 /* ------------------------------------------------------------------ columns */
 const COLS = [
   { id: 'track',  label: 'Track',  cls: 'c-track'  },
@@ -421,6 +598,10 @@ async function showMix() {
   $('btnBackLib').hidden = false;
   $('queueTools').hidden = true;
   $('pager').innerHTML = '';
+  // recipe name badge next to the mix header, when a saved recipe (not manual dials) is active
+  const recipeTag = $('mixRecipeTag');
+  if (curRecipe) { recipeTag.textContent = '✦ ' + curRecipe; recipeTag.hidden = false; }
+  else recipeTag.hidden = true;
   if (!S.mix.length) { renderRows([]); return; }
   const j = await jget('/api/lib/rows?' + S.mix.map(i => `i=${i}`).join('&'));
   const byI = new Map(j.rows.map(r => [r.i, r]));
@@ -981,7 +1162,7 @@ function bindEvents() {
 /* ------------------------------------------------------------------ boot (called by boot.js) */
 async function initCore() {
   renderHead();
-  bindSliders(); bindEvents();
+  bindSliders(); bindEvents(); bindRecipeEvents();
   try {
     S.stats = await jget('/api/lib/stats');
   } catch (e) { toast('Cannot reach server: ' + e.message, true); throw e; }
@@ -993,6 +1174,7 @@ async function initCore() {
   $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
   $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
     `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
+  await initRecipes();
   $('flavor').dispatchEvent(new Event('change'));
   await loadPlaylists();
   await loadLibrary(true);

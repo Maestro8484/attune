@@ -119,6 +119,11 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 }
 .field input { border-radius:7px 0 0 7px; border-right:0; }
 .field select { border-radius:0 7px 7px 0; }
+/* recipe select: a lone toolbar dropdown (not paired like .field), so it gets the
+   same input chrome directly rather than through the .field/.search wrappers. */
+#recipeSel { background:var(--panel); border:1px solid var(--line); border-radius:7px;
+  padding:6px 8px; cursor:pointer; }
+#recipeSel:focus { outline:none; }
 .search { display:flex; align-items:center; gap:6px; background:var(--panel);
   border:1px solid var(--line); border-radius:7px; padding:0 8px; }
 .search .ico { color:var(--dim); }
@@ -134,7 +139,8 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 }
 .popover[hidden], .ctxmenu[hidden], .toast[hidden], .why[hidden], #v2Controls[hidden],
 #mipControls[hidden], .modalwrap[hidden], #eqPanel[hidden], #miniBar[hidden],
-#scanBanner[hidden], #colMenu[hidden] { display:none; }
+#scanBanner[hidden], #colMenu[hidden], #recipeControls[hidden], #recipeActions[hidden]
+  { display:none; }
 #optionsPanel { left:300px; } #exportPanel { left:440px; }
 .poptitle { font-weight:600; display:flex; justify-content:space-between; align-items:center; }
 .pill { background:var(--panel2); border:1px solid var(--line); border-radius:99px;
@@ -261,6 +267,7 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .viewBar { display:flex; align-items:center; gap:10px; padding:6px 10px;
   border-bottom:1px solid var(--line); background:var(--panel2); flex:0 0 auto; }
 #viewLabel { font-weight:600; }
+#mixRecipeTag { color:var(--accent); }
 .viewBar button { background:var(--panel); border:1px solid var(--line); border-radius:6px;
   padding:3px 8px; cursor:pointer; font-size:12px; }
 .viewBar button:hover { border-color:var(--accent); }
