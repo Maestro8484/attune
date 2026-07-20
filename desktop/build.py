@@ -28,6 +28,7 @@ DATA = [
     ("web/scanjob.py",         "attune/web"),
     ("web/autoscan.py",        "attune/web"),
     ("web/smartlists.py",      "attune/web"),
+    ("web/recipes.py",         "attune/web"),
     ("src/config.py",          "attune/src"),
     # the Studio front-end: studio.html loads all five scripts + the stylesheet
     ("web/static/studio.html", "attune/web/static"),
