@@ -298,6 +298,16 @@ tbody tr.dragover td { border-top:2px solid var(--accent); }
 .stars:hover { filter:brightness(1.2); }
 .heart { cursor:pointer; user-select:none; color:var(--dim); }
 .heart.on { color:var(--heart); }
+/* mix-view inline More/Less Like This buttons: hidden until row hover (or once voted) */
+td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
+#tbl.mixview tbody tr:hover td.c-title .tune,
+#tbl.mixview td.c-title .tune.voted { display:inline-flex; }
+.tb { width:17px; height:17px; padding:0; line-height:1; font-size:12px; cursor:pointer;
+  color:var(--muted); background:var(--panel2); border:1px solid var(--line);
+  border-radius:4px; user-select:none; }
+.tb:hover { color:var(--fg); border-color:var(--muted); }
+.tb.more.on { color:var(--accent); border-color:var(--accent); }
+.tb.less.on { color:var(--err); border-color:var(--err); }
 .empty { padding:32px; text-align:center; color:var(--dim); }
 .pager { display:flex; gap:6px; align-items:center; padding:5px 10px;
   border-top:1px solid var(--line); background:var(--panel2); color:var(--muted);
