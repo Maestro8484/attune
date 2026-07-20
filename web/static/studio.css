@@ -380,6 +380,18 @@ tbody tr.dragover td { border-top:2px solid var(--accent); }
 .folderlist .fr input { flex:1; }
 .folderlist .fr button { background:var(--panel2); border:1px solid var(--line);
   border-radius:6px; cursor:pointer; padding:2px 8px; }
+/* folder picker (server-side directory browser) */
+.fsbar { display:flex; align-items:center; gap:8px; }
+.fsbar #fsUp { background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  cursor:pointer; padding:3px 10px; white-space:nowrap; }
+.fsbar #fsUp:disabled { opacity:.4; cursor:default; }
+.fspath { flex:1; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; direction:rtl; text-align:left; }
+.fslist { height:300px; overflow:auto; border:1px solid var(--line); border-radius:8px;
+  background:var(--panel2); padding:4px; display:flex; flex-direction:column; gap:1px; }
+.fsrow { padding:5px 9px; border-radius:6px; cursor:pointer; white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+.fsrow:hover { background:var(--panel); }
 .themegrid { display:flex; gap:8px; flex-wrap:wrap; }
 .themecard { width:120px; border:2px solid var(--line); border-radius:10px; overflow:hidden;
   cursor:pointer; background:var(--panel2); }

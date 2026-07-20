@@ -6,6 +6,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Folder picker in the first-run wizard and Preferences** (`web/app.py` `/api/fs/dirs`,
+  `web/static/{studio.html,studio.css,prefs.js}`): a "Browse…" button opens a server-side
+  directory browser (drive list → folders, with Up-navigation) so you can point Attune at
+  your music by clicking instead of typing a path. One code path works identically in the
+  browser and the desktop (pywebview) window — the listing comes from the server's own
+  filesystem, returning absolute paths the analyzer can use, with no native-dialog bridge.
+  Read-only, directories only. **Observed:** in the wizard, Browse → navigate `L:\` →
+  `L:\_MUSIC` → Choose lands the absolute path in the folder field; the endpoint returns
+  drives at the top level and correct parent links.
+- **Attune analyzes new music by itself** (`web/autoscan.py`, NEW): two triggers wired onto
+  the existing incremental scan pipeline — the `scan_on_launch` setting (present since the
+  config spine but previously read by nothing) now fires an incremental scan ~10 s after
+  boot, and a new `watch_folders` setting live-watches `library_folders` via `watchdog`
+  6.0.0 so dropped-in audio is imported/analyzed/embedded without a Rescan click. Design:
+  per-root observer choice (native ReadDirectoryChangesW for local drives, PollingObserver
+  for SMB/UNC roots where the native API silently drops events — watchdog's own documented
+  guidance), a supervisor thread that recreates silently-dead observers, a 20 s quiet-period
+  debounce that leans on the pipeline's verified safe-to-re-run property instead of
+  file-readiness heuristics, and changed-directories-only import (a one-track drop no longer
+  ffprobes the whole library; analyze/embed stay DB-wide but incremental). `ScanJob.start`
+  gained a module-level start lock so background triggers and the HTTP endpoint can't race.
+  New `GET /api/watch/status`; "Live watch" checkbox in Preferences → Library; `watchdog>=6`
+  added to the `bridge`/`all` extras (graceful degraded mode without it: launch-scan still
+  works, watcher reports unavailable). **Observed end-to-end:** 3 files dropped into a
+  watched folder auto-triggered import(rc0)/analyze(rc0)/embed-onnx(rc0) ~25 s later, all 3
+  rows written with `features`(dim-79 + tempo) and `clap`(dim-512), 0 errors, UI responsive
+  mid-scan (stats 147 ms, 20-track mix 16 ms); a follow-up event-noise trigger and the
+  launch scan each completed as sub-second no-ops (incremental skip).
 - **Frozen Windows app analyzes with no system Python or ffmpeg** (ROADMAP-standalone Phases
   B/C/E): the PyInstaller build (`desktop/build.py` → `dist/Attune/Attune.exe`) now bundles the
   torch-free analyzer (librosa/numba/scipy/soundfile/onnxruntime + `clap_music.onnx`) and
@@ -83,6 +111,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   seed's own artist is all that survives). The dial now runs 0–845; the old cap hid ~88% of it.
 
 ### Fixed
+- **First-run wizard "+ Add folder" did nothing on an empty list** (`web/static/prefs.js`):
+  the add-row handler used `collectFolders()`, which filters out empty entries, so clicking
+  it while the single starter row was blank dropped that row and re-added one — a net no-op
+  that made the wizard feel broken (no way to enter a folder, no feedback). Add-row now reads
+  raw input values with empties preserved (`readFolderInputs()`); the button (renamed
+  "+ Add another") reliably appends a row. Same fix applied to Preferences → Library.
+  **Observed:** one-empty-row → click → two rows (1→2); browse-choose fills the field.
 - **Rescan under a frozen (PyInstaller) build** (`web/scanjob.py`, audit finding D): the
   import stage resolved its interpreter as `ml_venv_python or sys.executable`. In a frozen
   build `sys.executable` is `Attune.exe`, not a Python interpreter (and `scan.py` isn't

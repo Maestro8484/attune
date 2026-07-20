@@ -50,6 +50,13 @@ SRC = os.path.join(os.path.dirname(HERE), "src")
 
 _PROG_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 
+# Module-level (NOT an instance attribute — start() calls self.__init__, which would
+# wipe an instance-level lock along with everything else it resets). Guards the whole
+# check-then-reset-then-launch body of start(): with autoscan.py now able to trigger
+# a scan from its own background thread alongside the HTTP /api/scan/start endpoint,
+# two callers could both pass the `if self.running` check before either set it True.
+_START_LOCK = threading.Lock()
+
 
 def _db_counts(db_path):
     try:
@@ -84,15 +91,16 @@ class ScanJob:
 
     # ---------------------------------------------------------------- run
     def start(self, folders, ml_python):
-        if self.running:
-            raise RuntimeError("a scan is already running")
-        self.__init__(self.db_path)     # reset state
-        self.running = True
-        self.started = int(time.time())
-        self.before = _db_counts(self.db_path)
-        self.thread = threading.Thread(
-            target=self._run, args=(list(folders), ml_python), daemon=True)
-        self.thread.start()
+        with _START_LOCK:
+            if self.running:
+                raise RuntimeError("a scan is already running")
+            self.__init__(self.db_path)     # reset state
+            self.running = True
+            self.started = int(time.time())
+            self.before = _db_counts(self.db_path)
+            self.thread = threading.Thread(
+                target=self._run, args=(list(folders), ml_python), daemon=True)
+            self.thread.start()
 
     def _exec(self, name, argv):
         """Run one stage, streaming stdout into the tail buffer. Returns rc."""
