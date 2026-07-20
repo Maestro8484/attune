@@ -127,6 +127,22 @@
   </div>
   <div id="exportDir" class="hint"></div>
   <div id="exportMsg" class="msg"></div>
+
+  <div class="expsep">Take it with you — copy the actual files</div>
+  <label class="row"><span class="k">Folder / USB</span>
+    <input id="copyDest" type="text" placeholder="Pick a folder or USB drive…" readonly>
+    <button id="copyBrowse" type="button" class="rowbtn">Browse…</button></label>
+  <label class="row"><span class="k">Layout</span>
+    <select id="copyLayout">
+      <option value="flat">Flat — plays in mix order</option>
+      <option value="tree">Folders — Artist / Album</option>
+    </select></label>
+  <div class="btnrow">
+    <button id="btnCopy" class="primary">Copy to folder / USB</button>
+    <button id="btnCopyCancel" hidden>⏹ Cancel</button>
+  </div>
+  <div id="copyBar" class="progressbar" hidden><div id="copyFill" class="fill"></div></div>
+  <div id="copyMsg" class="msg"></div>
 </div>
 
 <!-- context menu -->

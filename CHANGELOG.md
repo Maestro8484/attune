@@ -6,6 +6,33 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **"Take It With You" — copy a mix's actual audio files to a folder / USB**
+  (`web/exportjob.py` NEW, `web/app.py`, `desktop/build.py`,
+  `web/static/{studio.html,studio.js,studio.css,prefs.js}`): a third export destination,
+  folded into the same Export popover beside the playlist-file and Plex paths. Pick a
+  folder or USB drive (reusing the wizard's server-side folder picker) and Attune copies
+  the ACTUAL audio files of the current on-screen mix — in mix order, with FAT32/exFAT-safe
+  names — plus a self-contained relative-path `.m3u8`, so the folder plays in order on a
+  dumb car head unit or phone that can't reach the library share. Flat layout
+  (`NN Artist - Title.ext`, default) or an `Artist/Album/` tree. A background job (cloned
+  from the scan-job pattern) with a progress bar + cancel; a `shutil.disk_usage` preflight
+  refuses with numbers if it won't fit; filename collisions get a ` (2)` suffix and never
+  overwrite; an unreadable source is skipped-and-reported, never aborting the copy. Sources
+  are opened READ-ONLY (`shutil.copy2`, mtime preserved) and the destination is
+  realpath-contained to the picked folder; the three copy endpoints are loopback-only like
+  `/api/fs/dirs`. Consumes the same `_active_mix_tracks` list every other export uses, so
+  it never changes what a mix is. **Observed:** journey mix (variety+flow) of 26 → 26 files
+  + ordered relative-path m3u8 (seed first); re-copy → 26 ` (2)` files, zero overwrites;
+  cancel mid-job → honest 1/26 partial + partial m3u8; no-space (size-lie) → clear refusal,
+  nothing written, dest dir not even created; `Artist/Album/NN` tree layout; a full copy
+  driven through the real Studio UI (progress → "Copied 6 tracks"); all 16
+  journey-checkpoint exports byte-identical before/after (regression gate 16/16).
+  A pre-merge MAD (Codex) round hardened it: write-time realpath containment on *every*
+  output path (plus `lexists` so a dangling symlink at a destination name is never copied
+  through), collision-safe `.m3u8` naming (a re-copy leaves `Mix.m3u8` and `Mix (2).m3u8`,
+  never a silent overwrite), surfaced playlist-write failures, filename truncation that
+  can't leave a trailing dot/space, and a lock around the status snapshot — all re-verified
+  live (happy/collision/cancel/tree) with the gate still 16/16.
 - **Inline More/Less Like This on mix rows** (`web/static/{studio.js,studio.css}`): every
   non-seed row of a mix shows hover-revealed +/− buttons in the title cell, wired to the
   same thumbs → `/api/refine` (Rocchio) path as the right-click menu. Votes toggle (a
