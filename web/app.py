@@ -622,6 +622,15 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     sl_spec.loader.exec_module(smartlists)
     smartlists.register(app, {"db_path": db_path, "lib": lib})
 
+    # ---- mix recipes: named, saved mix-param bundles for Studio/Genius (recipes.py).
+    # Registered after smartlists, before scanjob -- no ordering dependency on either,
+    # just keeping the additive-table modules grouped together.
+    rc_spec = importlib.util.spec_from_file_location(
+        "attune_recipes", os.path.join(HERE, "recipes.py"))
+    recipes = importlib.util.module_from_spec(rc_spec)
+    rc_spec.loader.exec_module(recipes)
+    recipes.register(app, {"db_path": db_path, "lib": lib, "cfg": cfgmod})
+
     # ---- rescan: the existing incremental pipeline behind a button (scanjob.py)
     sj_spec = importlib.util.spec_from_file_location(
         "attune_scanjob", os.path.join(HERE, "scanjob.py"))

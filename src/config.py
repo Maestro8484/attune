@@ -31,6 +31,7 @@ DEFAULTS = {
     "scan_on_launch": False,       # run an incremental rescan when the app starts
     "watch_folders": False,        # live-watch library_folders; new/changed audio triggers an incremental scan
     "theme": "attune",             # UI theme id — the Winamp-throwback house identity
+    "default_recipe": "",          # name of the recipe applied by Genius / preselected in Studio ('' = engine defaults)
 }
 
 # keys that only take effect after the server process restarts
