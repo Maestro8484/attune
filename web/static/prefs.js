@@ -449,5 +449,7 @@ const Prefs = (() => {
     jget('/api/scan/status').then(st => { if (st.running) startScanPoll(); }).catch(() => {});
   }
 
-  return { init, open, applyThemeEarly, openTagEditor, toggleMini, checkFirstRun };
+  // pickFolder is exposed so studio.js's "Copy to folder/USB" export can reuse the
+  // exact same server-side directory browser (GET /api/fs/dirs) the wizard/Library use.
+  return { init, open, applyThemeEarly, openTagEditor, toggleMini, checkFirstRun, pickFolder };
 })();

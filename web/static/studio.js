@@ -583,6 +583,57 @@ async function exportPlex() {
   } catch (e) { $('exportMsg').className = 'msg err'; $('exportMsg').textContent = e.message; }
 }
 
+/* -- Take It With You: copy the actual audio files (+ relative m3u8) to a folder/USB.
+   Reuses the server-side folder picker (Prefs.pickFolder) and the same on-screen track
+   list every other export uses (currentExportIds). Backend job = exportjob.py. */
+let copyDest = '';
+let copyTimer = 0;
+function copyErr(m) { $('copyMsg').className = 'msg err'; $('copyMsg').textContent = m; }
+async function copyBrowse() {
+  const picked = await Prefs.pickFolder(copyDest || '');
+  if (picked) { copyDest = picked; $('copyDest').value = picked; }
+}
+async function startCopy() {
+  const ids = currentExportIds();
+  if (!ids.length) return copyErr('Nothing to export');
+  if (!copyDest) return copyErr('Pick a destination folder first');
+  const folder = $('plName').value.trim() || 'Attune mix';
+  const layout = $('copyLayout').value;
+  $('copyMsg').className = 'msg'; $('copyMsg').textContent = 'Starting…';
+  try {
+    await jpost('/api/export/copy', { ids, dest: copyDest, folder, layout });
+    startCopyPoll();
+  } catch (e) { copyErr(e.message); }
+}
+async function cancelCopy() { try { await jpost('/api/export/copy/cancel'); } catch (e) { copyErr(e.message); } }
+function paintCopy(st) {
+  const pct = st.total ? Math.round(st.copied / st.total * 100) : 0;
+  $('copyBar').hidden = !(st.running || st.copied);
+  $('copyFill').style.width = pct + '%';
+  $('btnCopy').hidden = st.running;
+  $('btnCopyCancel').hidden = !st.running;
+  if (st.running) {
+    $('copyMsg').className = 'msg';
+    $('copyMsg').textContent = `Copying ${st.copied}/${st.total}… ${st.current || ''}`.trim();
+  } else if (copyTimer && st.done) {
+    stopCopyPoll();
+    if (st.error) return copyErr(st.error);
+    const skip = st.skipped && st.skipped.length ? `, ${st.skipped.length} skipped` : '';
+    if (st.cancelled) {
+      $('copyMsg').className = 'msg';
+      $('copyMsg').textContent = `Cancelled — ${st.copied} copied${skip}`;
+    } else {
+      $('copyMsg').className = 'msg ok';
+      $('copyMsg').textContent = `Copied ${st.copied} track${st.copied === 1 ? '' : 's'}${skip} → ${st.dest}`;
+    }
+  }
+}
+async function pollCopy() {
+  try { paintCopy(await jget('/api/export/copy/status')); } catch { /* transient */ }
+}
+function startCopyPoll() { if (copyTimer) return; copyTimer = setInterval(pollCopy, 800); pollCopy(); }
+function stopCopyPoll() { clearInterval(copyTimer); copyTimer = 0; }
+
 /* ------------------------------------------------------------------ why-this-pick */
 async function showWhy(i, x, y) {
   if (S.seed == null) return toast('Only available inside a mix', true);
@@ -868,6 +919,11 @@ function bindEvents() {
   $('btnSaveDir').onclick = exportSaveDir;
   $('btnDownload').onclick = exportDownload;
   $('btnPlex').onclick = exportPlex;
+  $('copyBrowse').onclick = copyBrowse;
+  $('btnCopy').onclick = startCopy;
+  $('btnCopyCancel').onclick = cancelCopy;
+  // if a copy is already running (started before this page loaded), surface it
+  jget('/api/export/copy/status').then(st => { if (st.running) startCopyPoll(); }).catch(() => {});
 
   document.querySelectorAll('.chip[data-preset]').forEach(b => b.onclick = () => {
     const w = b.dataset.preset === 'nobpm'

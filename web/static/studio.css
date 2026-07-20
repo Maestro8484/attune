@@ -166,6 +166,11 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .btnrow button:disabled { opacity:.4; cursor:default; filter:none; }
 .msg { font-size:12px; min-height:16px; }
 .msg.ok { color:var(--ok); } .msg.err { color:var(--err); }
+.expsep { margin:12px 0 6px; padding-top:9px; border-top:1px solid var(--line);
+  color:var(--muted); font-size:11px; font-weight:600; letter-spacing:.02em; }
+.row button.rowbtn { flex:0 0 auto; background:var(--panel2); border:1px solid var(--line);
+  border-radius:7px; color:var(--fg); padding:5px 10px; cursor:pointer; font-size:12px; }
+.row button.rowbtn:hover { filter:brightness(1.12); }
 
 /* ---------- layout + splitters ---------- */
 #grid { flex:1; display:grid; grid-template-columns:var(--leftw,270px) 6px 1fr;

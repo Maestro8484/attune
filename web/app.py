@@ -638,6 +638,15 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     as_spec.loader.exec_module(autoscan)
     autoscan.register(app, {"job": scan_job, "load_settings": cfgmod.load})
 
+    # ---- export-copy: "Take It With You" — copies the mix's ACTUAL audio files +
+    # a relative-path m3u8 into a folder/USB so it plays on a dumb device (exportjob.py).
+    # Consumes _active_mix_tracks (never alters mix selection); loopback-guarded.
+    ej_spec = importlib.util.spec_from_file_location(
+        "attune_exportjob", os.path.join(HERE, "exportjob.py"))
+    exportjob = importlib.util.module_from_spec(ej_spec)
+    ej_spec.loader.exec_module(exportjob)
+    exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks})
+
     return app
 
 
