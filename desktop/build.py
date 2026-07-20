@@ -26,6 +26,7 @@ DATA = [
     # backend modules app.py pulls in by file path (settings, user data, scan, auto-playlists)
     ("web/userdata.py",        "attune/web"),
     ("web/scanjob.py",         "attune/web"),
+    ("web/autoscan.py",        "attune/web"),
     ("web/smartlists.py",      "attune/web"),
     ("src/config.py",          "attune/src"),
     # the Studio front-end: studio.html loads all five scripts + the stylesheet
@@ -67,7 +68,9 @@ FFBIN = [
 ]
 
 # imported dynamically / not statically visible from app_desktop.py's import list
-HIDDEN = ["mutagen", "requests", "numpy"]
+# (watchdog: autoscan.py is loaded by file path, and watchdog.observers picks its
+# platform backend via conditional imports — both invisible to static analysis)
+HIDDEN = ["mutagen", "requests", "numpy", "watchdog"]
 
 # packages with fiddly native/data payloads PyInstaller's default import hooks tend
 # to miss (native DLLs, data files, lazy submodules) — collect everything for each.

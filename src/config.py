@@ -29,6 +29,7 @@ DEFAULTS = {
     "library_folders": [],         # watched/scanned music roots
     "ml_venv_python": "",          # python.exe of the heavy analyze venv ('' = analysis off)
     "scan_on_launch": False,       # run an incremental rescan when the app starts
+    "watch_folders": False,        # live-watch library_folders; new/changed audio triggers an incremental scan
     "theme": "attune",             # UI theme id — the Winamp-throwback house identity
 }
 

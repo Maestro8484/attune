@@ -33,9 +33,9 @@ dependencies = [
 # torch is intentionally unpinned: install the right CPU/CUDA build from pytorch.org first.
 [project.optional-dependencies]
 neural = ["torch", "transformers>=4.40"]
-bridge = ["flask>=3.0", "mutagen>=1.47"]
+bridge = ["flask>=3.0", "mutagen>=1.47", "watchdog>=6"]
 learned = ["onnxruntime>=1.20"]
-all = ["torch", "transformers>=4.40", "flask>=3.0", "mutagen>=1.47", "onnxruntime>=1.20"]
+all = ["torch", "transformers>=4.40", "flask>=3.0", "mutagen>=1.47", "onnxruntime>=1.20", "watchdog>=6"]
 
 [project.scripts]
 attune-scan   = "scan:main"      # import/analyze a library -> mixer.db

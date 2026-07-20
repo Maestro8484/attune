@@ -536,6 +536,46 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         s, needs_restart = cfgmod.update(patch)
         return jsonify(ok=True, settings=s, needs_restart=needs_restart)
 
+    # ---- Folder picker: a read-only local directory browser for the first-run wizard
+    # and Preferences -> Library. Attune is local-first — the server already reads audio
+    # from arbitrary on-disk paths and streams files by absolute path — so listing folder
+    # NAMES adds no new exposure. Dirs only, never file contents. This one endpoint gives a
+    # real folder picker in BOTH the browser and the desktop (pywebview) window, with no
+    # native-dialog bridge, and it returns absolute paths the analyzer can actually use.
+    @app.get("/api/fs/dirs")
+    def fs_dirs():
+        raw = (request.args.get("path") or "").strip()
+        # Empty path = the top level. On Windows that's the set of existing drive roots;
+        # on POSIX it's "/". Choosing this top level itself is disallowed client-side.
+        if not raw:
+            if os.name == "nt":
+                drives = [{"name": f"{c}:\\", "path": f"{c}:\\"}
+                          for c in "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+                          if os.path.exists(f"{c}:\\")]
+                return jsonify(path="", parent=None, dirs=drives)
+            raw = "/"
+        path = os.path.abspath(raw)
+        if not os.path.isdir(path):
+            return jsonify(error=f"not a folder: {path}"), 404
+        dirs = []
+        try:
+            with os.scandir(path) as it:
+                for e in it:
+                    try:
+                        if e.is_dir(follow_symlinks=False):
+                            dirs.append({"name": e.name, "path": e.path})
+                    except OSError:
+                        pass          # unreadable entry — skip, don't fail the whole listing
+        except OSError as ex:
+            return jsonify(error=f"cannot read folder: {ex}"), 403
+        dirs.sort(key=lambda d: d["name"].lower())
+        parent = os.path.dirname(path)
+        # A drive root ("C:\") is its own dirname on Windows — send the user back to the
+        # drive list ("") rather than looping; "/" on POSIX has no parent (None).
+        if parent == path:
+            parent = "" if os.name == "nt" else None
+        return jsonify(path=path, parent=parent, dirs=dirs)
+
     # ---- Attune Studio: the MusicIP-shaped desktop view. Adds library facets, the
     # playlist-folder browser, album art and save-to-folder export. It reuses the routes
     # above rather than reimplementing them; _active_mix_tracks is handed over so an
@@ -582,7 +622,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "attune_scanjob", os.path.join(HERE, "scanjob.py"))
     scanjob = importlib.util.module_from_spec(sj_spec)
     sj_spec.loader.exec_module(scanjob)
-    scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load})
+    scan_job = scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load})
+
+    # ---- auto-scan: honors scan_on_launch (previously dead) and, if `watchdog` is
+    # installed, live-watches library_folders so new/changed audio triggers the same
+    # incremental pipeline without a manual Rescan click (autoscan.py).
+    as_spec = importlib.util.spec_from_file_location(
+        "attune_autoscan", os.path.join(HERE, "autoscan.py"))
+    autoscan = importlib.util.module_from_spec(as_spec)
+    as_spec.loader.exec_module(autoscan)
+    autoscan.register(app, {"job": scan_job, "load_settings": cfgmod.load})
 
     return app
 

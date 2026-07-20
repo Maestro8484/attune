@@ -49,6 +49,7 @@ const Prefs = (() => {
       $('prefMipUrl').value = serverSettings.musicip_url || '';
       $('prefMlPython').value = serverSettings.ml_venv_python || '';
       $('prefScanLaunch').checked = !!serverSettings.scan_on_launch;
+      $('prefWatch').checked = !!serverSettings.watch_folders;
       paintFolders(serverSettings.library_folders || []);
     }).catch(e => { $('prefsMsg').className = 'msg err'; $('prefsMsg').textContent = e.message; });
     // playback tab mirrors the player's persisted knobs
@@ -68,6 +69,25 @@ const Prefs = (() => {
     return [...$(containerId).querySelectorAll('input')]
       .map(x => x.value.trim()).filter(Boolean);
   }
+  // Raw input values with empty rows PRESERVED. collectFolders() (above) filters empties for
+  // save/scan; the add-row and browse actions must instead KEEP a blank row the user is
+  // about to fill — otherwise "+ Add another" on an all-empty list drops the blank before
+  // re-adding one and appears to do nothing.
+  function readFolderInputs(containerId = 'libFolders') {
+    return [...$(containerId).querySelectorAll('input')].map(x => x.value);
+  }
+  function focusLast(containerId) {
+    const inputs = $(containerId).querySelectorAll('input');
+    if (inputs.length) inputs[inputs.length - 1].focus();
+  }
+  function addFolderRow(containerId, value) {
+    const cur = readFolderInputs(containerId).filter(v => v.trim());  // drop blank placeholders
+    cur.push(value);
+    paintFolders(cur, containerId);
+  }
+  function firstFolder(containerId) {
+    return readFolderInputs(containerId).map(v => v.trim()).filter(Boolean)[0] || '';
+  }
 
   async function save() {
     const patch = {
@@ -77,6 +97,7 @@ const Prefs = (() => {
       musicip_url: $('prefMipUrl').value.trim() || 'http://localhost:10002',
       ml_venv_python: $('prefMlPython').value.trim(),
       scan_on_launch: $('prefScanLaunch').checked,
+      watch_folders: $('prefWatch').checked,
       library_folders: collectFolders(),
       theme: store.get('theme', 'attune'),
     };
@@ -210,6 +231,41 @@ const Prefs = (() => {
     }
   }
 
+  /* ---------------------------------------------------------------- folder picker */
+  // Server-side directory browser (/api/fs/dirs). pickFolder() returns Promise<string|null>:
+  // the absolute path chosen, or null if cancelled. Same behaviour in the browser and the
+  // desktop window — the listing comes from the server's filesystem, no native dialog.
+  let fsResolve = null;      // resolver of the in-flight pickFolder() promise, or null
+  let fsCurrent = '';        // folder currently listed ('' = the drives / top level)
+  let fsUpTarget = null;     // where Up navigates (null = already at the top level)
+
+  async function fsLoad(path) {
+    $('fsMsg').textContent = '';
+    let j;
+    try { j = await jget('/api/fs/dirs?path=' + encodeURIComponent(path || '')); }
+    catch (e) { $('fsMsg').className = 'msg err'; $('fsMsg').textContent = e.message; return; }
+    fsCurrent = j.path || '';
+    fsUpTarget = (j.parent === null || j.parent === undefined) ? null : j.parent;
+    $('fsPath').textContent = fsCurrent || 'This PC';
+    $('fsUp').disabled = fsUpTarget === null;
+    $('fsChoose').disabled = !fsCurrent;         // the "This PC" top level is not itself choosable
+    $('fsList').innerHTML = j.dirs.length
+      ? j.dirs.map(d =>
+          `<div class="fsrow" data-path="${esc(d.path)}" title="${esc(d.path)}">📁 ${esc(d.name)}</div>`).join('')
+      : '<div class="hint" style="padding:8px">No sub-folders here.</div>';
+    $('fsList').scrollTop = 0;
+  }
+  function pickFolder(startPath) {
+    $('fsWrap').hidden = false;
+    fsLoad(startPath || '');
+    return new Promise(res => { fsResolve = res; });
+  }
+  function fsClose(result) {
+    $('fsWrap').hidden = true;
+    const r = fsResolve; fsResolve = null;
+    if (r) r(result);
+  }
+
   /* ---------------------------------------------------------------- tag editor */
   const TAGMAP = { tgTitle: 'title', tgArtist: 'artist', tgAlbum: 'album',
     tgAlbumArtist: 'albumartist', tgGenre: 'genre', tgDate: 'date',
@@ -310,11 +366,15 @@ const Prefs = (() => {
     $('tagSave').onclick = saveTags;
     $('btnRescan').onclick = rescan;
     $('scanShow').onclick = () => { open(); };
+    // Add-row reads RAW values (readFolderInputs) so a blank row is actually added even
+    // when the current fields are empty; Browse opens the server-side folder picker.
     $('addFolder').onclick = () => {
-      const cur = collectFolders(); cur.push('');
-      paintFolders(cur);
-      const inputs = $('libFolders').querySelectorAll('input');
-      inputs[inputs.length - 1].focus();
+      const cur = readFolderInputs(); cur.push('');
+      paintFolders(cur); focusLast('libFolders');
+    };
+    $('libBrowse').onclick = async () => {
+      const p = await pickFolder(firstFolder('libFolders'));
+      if (p) addFolderRow('libFolders', p);
     };
     $('libFolders').addEventListener('click', e => {
       const del = e.target.closest('button[data-del]'); if (!del) return;
@@ -323,10 +383,12 @@ const Prefs = (() => {
     });
     // first-run wizard folder controls (its own list; Skip/✕ close via generic [data-close])
     $('wizAddFolder').onclick = () => {
-      const cur = collectFolders('wizFolders'); cur.push('');
-      paintFolders(cur, 'wizFolders');
-      const inputs = $('wizFolders').querySelectorAll('input');
-      inputs[inputs.length - 1].focus();
+      const cur = readFolderInputs('wizFolders'); cur.push('');
+      paintFolders(cur, 'wizFolders'); focusLast('wizFolders');
+    };
+    $('wizBrowse').onclick = async () => {
+      const p = await pickFolder(firstFolder('wizFolders'));
+      if (p) addFolderRow('wizFolders', p);
     };
     $('wizFolders').addEventListener('click', e => {
       const del = e.target.closest('button[data-del]'); if (!del) return;
@@ -334,6 +396,16 @@ const Prefs = (() => {
       paintFolders(cur, 'wizFolders');
     });
     $('wizStart').onclick = wizStart;
+    // folder picker (its own close buttons resolve the pickFolder() promise)
+    $('fsList').addEventListener('click', e => {
+      const row = e.target.closest('.fsrow'); if (!row) return;
+      fsLoad(row.dataset.path);
+    });
+    $('fsUp').onclick = () => { if (fsUpTarget !== null) fsLoad(fsUpTarget); };
+    $('fsChoose').onclick = () => { if (fsCurrent) fsClose(fsCurrent); };
+    $('fsCancel').onclick = () => fsClose(null);
+    $('fsX').onclick = () => fsClose(null);
+    $('fsWrap').addEventListener('mousedown', e => { if (e.target === $('fsWrap')) fsClose(null); });
     // tabs
     $('prefTabs').addEventListener('click', e => {
       const b = e.target.closest('button[data-tab]'); if (!b) return;

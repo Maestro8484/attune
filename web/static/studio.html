@@ -335,7 +335,8 @@
         <div class="prefrow"><span class="k">Music folders</span>
           <div class="v">
             <div class="folderlist" id="libFolders"></div>
-            <div class="btnrow"><button id="addFolder">+ Add folder</button>
+            <div class="btnrow"><button id="libBrowse">📁 Browse…</button>
+              <button id="addFolder">+ Add another</button>
               <button id="btnRescan" class="primary">⟳ Rescan library</button></div>
             <span class="hint">Folders scanned for new/changed music. The scan is
               incremental — unchanged tracks are skipped.</span>
@@ -350,6 +351,11 @@
         <div class="prefrow"><span class="k">On launch</span>
           <div class="v"><label class="chk"><input type="checkbox" id="prefScanLaunch">
             Scan library folders when the app starts</label></div></div>
+        <div class="prefrow"><span class="k">Live watch</span>
+          <div class="v"><label class="chk"><input type="checkbox" id="prefWatch">
+            Watch library folders — analyze new music automatically</label>
+            <span class="hint">New/changed audio in your library folders triggers an
+              incremental scan (20 s quiet period).</span></div></div>
         <div id="scanDetail" hidden>
           <div class="progressbar"><div class="fill" id="scanFill2" style="width:0%"></div></div>
           <div id="scanNote" class="hint"></div>
@@ -416,13 +422,37 @@
         Add one or more folders below, then scan — you can add more later in
         Preferences → Library.</p>
       <div class="folderlist" id="wizFolders"></div>
-      <div class="btnrow"><button id="wizAddFolder">+ Add folder</button></div>
+      <div class="btnrow"><button id="wizBrowse">📁 Browse…</button>
+        <button id="wizAddFolder">+ Add another</button></div>
     </div>
     <div class="modalFoot">
       <span id="wizMsg" class="msg"></span>
       <span class="spacer"></span>
       <button class="chip" data-close="wizWrap">Skip for now</button>
       <button class="chip on" id="wizStart">⟳ Scan my music</button>
+    </div>
+  </div>
+</div>
+
+<!-- Folder picker: a server-side directory browser. Works the same in the browser and the
+     desktop window — the listing comes from the server's own filesystem, so no native
+     dialog is needed and the chosen path is always absolute. -->
+<div id="fsWrap" class="modalwrap" hidden>
+  <div class="modal" style="width:540px">
+    <div class="modalHead">Choose a folder
+      <button class="x" id="fsX">✕</button></div>
+    <div class="modalBody">
+      <div class="fsbar">
+        <button id="fsUp" title="Up one level">↑ Up</button>
+        <span id="fsPath" class="fspath"></span>
+      </div>
+      <div class="fslist" id="fsList"></div>
+    </div>
+    <div class="modalFoot">
+      <span id="fsMsg" class="msg"></span>
+      <span class="spacer"></span>
+      <button class="chip" id="fsCancel">Cancel</button>
+      <button class="chip on" id="fsChoose">Choose this folder</button>
     </div>
   </div>
 </div>
