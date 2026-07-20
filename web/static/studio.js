@@ -260,10 +260,18 @@ async function initRecipes() {
   $('btnGenius').hidden = isMip;         // genius applies recipes, which are v2-param shaped
   if (isMip) return;           // recipes are v2-param shaped; nothing to do under musicip
   await loadRecipes();
-  const stored = store.get('recipe', null);
-  if (stored && RECIPES.some(r => r.name === stored)) {
+  // three distinct stored states: null = never chose (fall back to the server default),
+  // '' = explicitly chose Dials (manual) (respect it, do NOT reapply the default),
+  // a name = reapply it if it still exists, else forget it and treat as "never chose"
+  // (the recipe was deleted, possibly from another browser).
+  let stored = store.get('recipe', null);
+  if (stored && !RECIPES.some(r => r.name === stored)) {
+    try { localStorage.removeItem('attune.recipe'); } catch {}
+    stored = null;
+  }
+  if (stored) {
     selectRecipe(stored, { persist: false });
-  } else if (!stored && RECIPE_DEFAULT && RECIPES.some(r => r.name === RECIPE_DEFAULT)) {
+  } else if (stored === null && RECIPE_DEFAULT && RECIPES.some(r => r.name === RECIPE_DEFAULT)) {
     selectRecipe(RECIPE_DEFAULT, { persist: false });
   } else {
     curRecipe = '';
@@ -612,8 +620,12 @@ async function geniusMix() {
   $('btnGenius').disabled = true;
   try {
     const { i } = await jget('/api/recipe/genius_seed');
+    // doMix swallows its own errors; on success it assigns a NEW S.mix array. Comparing
+    // array identity (not just seed) distinguishes a fresh mix from a stale one left by
+    // an earlier run of the SAME seed (small loved/rated pools repeat seeds often).
+    const before = S.mix;
     await doMix(i);
-    if (S.seed === i && S.mix.length) Player.playList(S.mix, 0);
+    if (S.mix !== before && S.mix.length && S.mix[0] === i) Player.playList(S.mix, 0);
   } catch (e) { toast(e.message, true); }
   finally { $('btnGenius').disabled = false; }
 }
