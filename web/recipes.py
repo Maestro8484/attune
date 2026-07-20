@@ -195,9 +195,12 @@ def register(app, ctx):
             if rid:
                 # An UPDATE may rename/edit ANY recipe, builtins included -- that's fine,
                 # a builtin is just a starting point, not immutable.
+                old = con.execute("SELECT name FROM recipes WHERE id=?",
+                                  (int(rid),)).fetchone()
                 con.execute("UPDATE recipes SET name=?, params=? WHERE id=?",
                             (name, pj, int(rid)))
                 sid = int(rid)
+                renamed_from = old[0] if old and old[0] != name else None
             else:
                 # Deliberately NOT "INSERT OR REPLACE" like smartlists.py: a name collision
                 # on a brand-new recipe most likely means the user meant to edit an EXISTING
@@ -211,11 +214,16 @@ def register(app, ctx):
                     return jsonify(ok=False,
                                     error=f"a recipe named {name!r} already exists"), 400
                 sid = cur.lastrowid
+                renamed_from = None
             con.commit()
         except sqlite3.Error as e:
             return jsonify(ok=False, error=str(e)), 500
         finally:
             con.close()
+        # A rename must FOLLOW the configured default, or default_recipe dangles on a
+        # name that no longer exists. After commit, so a failed write can't move it.
+        if renamed_from and cfg.load().get("default_recipe") == renamed_from:
+            cfg.update({"default_recipe": name})
         return jsonify(ok=True, id=int(sid))
 
     @bp.post("/api/recipe/delete")
