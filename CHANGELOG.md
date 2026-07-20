@@ -6,6 +6,36 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Inline More/Less Like This on mix rows** (`web/static/{studio.js,studio.css}`): every
+  non-seed row of a mix shows hover-revealed +/− buttons in the title cell, wired to the
+  same thumbs → `/api/refine` (Rocchio) path as the right-click menu. Votes toggle (a
+  second click withdraws) and More/Less are mutually exclusive per track; the context-menu
+  items share the same helper now, so both entry points dedupe. V2-engine-gated like the
+  menu; voted tracks leave the refined list by design (`exclude=[seed]+liked+disliked`).
+  **Observed:** render (100 buttons, seed excluded), vote → re-rank → undo round-trip,
+  library-view isolation, zero console errors; all 16 journey-checkpoint exports
+  byte-identical before/after the change.
+
+### Fixed
+- **Watcher ignored library roots set to a bare drive root** (`web/autoscan.py`
+  `_under_any`, MAD 2026-07-19 review): `C:\` kept its trailing separator through
+  `abspath`, so the child-prefix check demanded `c:\\` and never matched — events under
+  such a root were silently dropped. Now the separator is normalized before the check.
+  **Observed:** harness — drive-root child True, sibling prefix-collision still False,
+  UNC child True.
+- **Observer teardown never joined the dying thread** (`web/autoscan.py` `_stop_watch`):
+  a recreated observer could briefly coexist with its stopping predecessor (duplicate
+  events, leaked handles). Teardown now `join(timeout=5)`s and surfaces a wedged emitter
+  in `last_error`. **Observed:** fake-observer harness — stop→join(5)→is_alive on the
+  clean path; wedged path sets `last_error`.
+- **`/api/fs/dirs` was reachable from the LAN when the server is bound to 0.0.0.0**
+  (`web/app.py`): the wizard's directory browser now answers only loopback clients; other
+  machines get 403 instead of a listing of this machine's folder names. **Observed:** real
+  app via test client — 127.0.0.1→200, 192.168.1.50→403, ::1→200.
+- **Browse re-click orphaned the first picker promise** (`web/static/prefs.js`
+  `pickFolder`): opening the picker while it was already open overwrote the pending
+  resolver, so the first `await pickFolder()` never settled. A re-click now resolves the
+  earlier call as a cancel before installing the new resolver.
 - **Folder picker in the first-run wizard and Preferences** (`web/app.py` `/api/fs/dirs`,
   `web/static/{studio.html,studio.css,prefs.js}`): a "Browse…" button opens a server-side
   directory browser (drive list → folders, with Up-navigation) so you can point Attune at

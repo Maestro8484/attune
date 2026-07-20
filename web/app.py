@@ -544,6 +544,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # native-dialog bridge, and it returns absolute paths the analyzer can actually use.
     @app.get("/api/fs/dirs")
     def fs_dirs():
+        # Local-first guard: folder browsing exists for the wizard/Preferences on THIS
+        # machine. When the server is deliberately LAN-bound (--host 0.0.0.0), other
+        # machines must not be able to enumerate this machine's directory tree.
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(error="folder browsing is only available on the Attune machine itself"), 403
         raw = (request.args.get("path") or "").strip()
         # Empty path = the top level. On Windows that's the set of existing drive roots;
         # on POSIX it's "/". Choosing this top level itself is disallowed client-side.
