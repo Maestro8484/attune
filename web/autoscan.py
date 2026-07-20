@@ -196,6 +196,13 @@ def _stop_watch(state, folder):
         return
     try:
         entry["observer"].stop()
+        # reap the observer thread before a possible same-folder recreate; without the
+        # join a recreated observer can briefly coexist with its dying predecessor
+        # (duplicate events, leaked handles). Bounded so a wedged emitter can't hang
+        # the supervisor tick.
+        entry["observer"].join(timeout=5)
+        if entry["observer"].is_alive():
+            state.last_error = f"observer for {folder} did not stop within 5s"
     except Exception:
         pass
 
@@ -225,7 +232,10 @@ def _under_any(path, roots):
     npath = os.path.normcase(os.path.abspath(path))
     for root in roots:
         nroot = os.path.normcase(os.path.abspath(root))
-        if npath == nroot or npath.startswith(nroot + os.sep):
+        # rstrip before re-adding the separator: a drive/filesystem root ("C:\", "/")
+        # keeps its trailing separator through abspath, and "C:\" + sep would demand
+        # a double backslash no child path ever has (MAD 2026-07-19 finding).
+        if npath == nroot or npath.startswith(nroot.rstrip(os.sep) + os.sep):
             return True
     return False
 

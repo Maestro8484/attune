@@ -256,6 +256,9 @@ const Prefs = (() => {
     $('fsList').scrollTop = 0;
   }
   function pickFolder(startPath) {
+    // a Browse re-click while the picker is already open must not orphan the first
+    // caller's promise -- resolve it as a cancel before installing the new resolver.
+    if (fsResolve) { const r = fsResolve; fsResolve = null; r(null); }
     $('fsWrap').hidden = false;
     fsLoad(startPath || '');
     return new Promise(res => { fsResolve = res; });
