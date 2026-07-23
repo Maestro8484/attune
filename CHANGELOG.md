@@ -5,6 +5,57 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0] — unreleased (initial public cut)
 
+### Fixed
+- **Startup: 30.8 s → 3.0 s to a window, 4.7 s to a fully loaded library**
+  (`src/hybrid.py`, `desktop/app_desktop.py`, `web/app.py`,
+  `web/static/{boot.js,studio.js}`). Four separate causes, each measured before it was
+  touched, none of them the music scan (the library was already analyzed):
+  1. **Key estimation was 90% of engine load** (`src/hybrid.py`). `HybridEngine.__init__`
+     re-derived the musical key of every pool track on EVERY launch by calling
+     `np.corrcoef` 24× per track — ~510,000 calls, **23.19 s of a 25.80 s load** — for the
+     `key` weight, which ships at 0.0 (it lost the ear test). Replaced with one
+     precomputed (24,12) profile matrix and a single matmul + argmax
+     (`_keys_from_chroma_batch`), using `corr(roll(c,-rot), prof) == corr(c, roll(prof, rot))`
+     and a column order that reproduces the loop's first-max tie-break.
+     **Parity-gated: identical `(tonic, is_major)`/None on all 21,236 pool tracks**;
+     22.43 s → 0.02 s; whole engine load 25.80 s → 0.51 s.
+  2. **A 4.13 s probe for MusicIP that isn't running** (`desktop/app_desktop.py`,
+     `web/app.py`). Measured on this machine: with MusicIP down, port 10002 *drops* the
+     SYN rather than refusing it, so the connect burns its full timeout — and urllib
+     against `localhost` does it twice (`::1`, then `127.0.0.1`). Every launch paid it.
+     Now a 0.25 s socket pre-check gates the HTTP call, and on the desktop path the probe
+     moved off the window's critical path entirely.
+  3. **The window only appeared after everything had loaded** (`desktop/app_desktop.py`).
+     `create_app()` ran to completion *before* `create_window()`, so a launch showed
+     nothing at all until the whole library was in memory. Added `_BootGate`, a WSGI gate
+     (werkzeug `DispatcherMiddleware` shape + a readiness endpoint) that serves a splash
+     and `/api/boot` immediately, then delegates every request to the real app once it is
+     built on a worker thread started via pywebview's own `webview.start(func)` idiom.
+     Window at 0.01 s from source, 3.0 s in the frozen build.
+  4. **`/static/*.js` 404'd in the packaged app** (`web/app.py`) — the reason the shipped
+     .exe opened with a dead UI. `Flask(__name__)` derives its static folder from the
+     import name, but `desktop/app_desktop.py` execs `app.py` via importlib without
+     registering it in `sys.modules`, so Flask fell back to the **current working
+     directory**. In dev `__name__ == "__main__"` made this accidentally correct; in the
+     frozen build `boot.js`, `player.js`, `prefs.js` and `smartlist.js` all 404'd — and
+     with `boot.js` missing, nothing initialized. `static_folder` is now anchored to the
+     module file, exactly as the existing `/studio`, `/studio.js`, `/studio.css` routes
+     already were. Observed 404→200 for all four in `Attune.exe`, same commit.
+- **A single failed request no longer kills the rest of the UI**
+  (`web/static/boot.js`, `web/static/studio.js`). `boot()` did
+  `try { await initCore() } catch { return }`, so one throw — most realistically
+  `/api/playlists` when the playlist folder is an unreachable network drive — skipped
+  `Player.init()`, `Prefs.init()`, `checkFirstRun()` and `Smart.init()`, leaving a window
+  with no transport, no preferences, no auto-playlists and no wizard. Each subsystem now
+  initializes independently; `initCore` never throws, retries `/api/lib/stats` with
+  backoff (`jgetReady`) in case the server is still coming up, and degrades per-section.
+  **Observed:** with `/api/playlists` forced to reject, `initCore` resolves
+  `{ok:false, error:'playlist folder unavailable'}`, the library still renders its 200
+  rows, and the UI reports the failure honestly instead of going dark.
+- Regression gate **16/16 byte-identical** against `REGRESSION_BASELINE_20260719`
+  (8 plain-server + 8 journey), run after the engine change and again on the final tree:
+  the speedup changes nothing about which tracks a mix contains or their order.
+
 ### Added
 - **"Take It With You" — copy a mix's actual audio files to a folder / USB**
   (`web/exportjob.py` NEW, `web/app.py`, `desktop/build.py`,

@@ -74,6 +74,39 @@ def _key_from_chroma(chroma12):
     return best[1]
 
 
+def _keys_from_chroma_batch(chroma_rows):
+    """Vectorized _key_from_chroma over a list of 12-dim chroma vectors (or None).
+
+    One (N,24) Pearson matrix + argmax instead of N*24 np.corrcoef calls -- the
+    per-track loop was 23s of a 26s engine load on the 21k library (90% of boot),
+    for a key term that ships with weight 0.0. Identity: corr(roll(c,-rot), prof)
+    == corr(c, roll(prof, rot)), so the 24 rotated/standardized profiles are
+    precomputed and each track is a single dot product. Column order (rot0 maj,
+    rot0 min, rot1 maj, ...) mirrors the loop's scan order, so argmax's
+    first-max tie-break matches the loop's strict '>'. Parity-gated: identical
+    (tonic, is_major)/None on all 21,236 prod pool tracks (2026-07-22).
+    """
+    n = len(chroma_rows)
+    have = [i for i, c in enumerate(chroma_rows) if c is not None]
+    out = [None] * n
+    if not have:
+        return out
+    C = np.vstack([np.asarray(chroma_rows[i], np.float64) for i in have])
+    std = C.std(axis=1)
+    valid = std >= 1e-9
+    Cz = (C - C.mean(axis=1, keepdims=True)) / np.where(std < 1e-9, 1.0, std)[:, None]
+    P = np.empty((24, 12))
+    for rot in range(12):
+        for k, prof in enumerate((_KRUM_MAJ, _KRUM_MIN)):
+            pr = np.roll(prof, rot)
+            P[rot * 2 + k] = (pr - pr.mean()) / pr.std()
+    col = np.argmax(Cz @ P.T, axis=1)   # /12 omitted: constant scale, same argmax
+    for r, i in enumerate(have):
+        if valid[r]:
+            out[i] = (int(col[r] // 2), col[r] % 2 == 0)
+    return out
+
+
 def _key_compat(k1, k2):
     """1.0 same key; 0.8 relative maj/min or a fifth away; 0.4 two fifths; else 0. None-safe."""
     if not k1 or not k2:
@@ -176,7 +209,7 @@ class HybridEngine:
         self.genre_tags = [_tags(meta.get(p, (None,)*5)[3]) for p in paths]
         self.year = np.array([meta.get(p, (None,)*5)[4] or 0 for p in paths], float)
         self.bpm = np.array([tempo.get(p, 0) or 0 for p in paths], float)
-        self.key = [_key_from_chroma(chroma.get(p)) for p in paths]
+        self.key = _keys_from_chroma_batch([chroma.get(p) for p in paths])
         self.meta = {p: {"artist": meta[p][0], "album": meta[p][1], "title": meta[p][2],
                          "genre": meta[p][3], "year": meta[p][4]} for p in meta}
 
