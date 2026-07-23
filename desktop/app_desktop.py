@@ -23,7 +23,10 @@ What it CANNOT do standalone (stated honestly, not hidden):
 import importlib.util
 import os
 import sys
+import threading
 import urllib.request
+
+from werkzeug.serving import make_server
 
 # app.py loads hybrid.py / engine.py / musicip_engine.py / export.py / studio.py by file
 # path (importlib), so PyInstaller's static analysis can't see their imports — pull the
@@ -87,9 +90,33 @@ def _find_playlists():
     return None
 
 
-def _musicip_alive(url="http://localhost:10002/api/version", timeout=2.0):
+def _port_open(host, port, timeout=0.25):
+    """Cheap 'is anything listening' pre-check.
+
+    MEASURED (2026-07-22, this machine): with MusicIP not running, port 10002 does
+    not REFUSE the connection -- the SYN is silently dropped -- so every connect
+    burns its full timeout. urllib against "localhost" then does it twice (::1 and
+    127.0.0.1), which cost 4.13s on EVERY launch, probing for software that wasn't
+    running. A short-timeout socket probe bounds that to <=2*timeout; a MusicIP that
+    IS running answers a loopback connect in single-digit ms, so 0.25s is generous.
+    """
+    import socket
     try:
-        with urllib.request.urlopen(url, timeout=timeout) as r:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _musicip_alive(url="http://localhost:10002", timeout=2.0):
+    """True only if a live MusicIP Mixer answers. Fast-fails when nothing listens."""
+    from urllib.parse import urlsplit
+    u = urlsplit(url if "//" in url else "//" + url, scheme="http")
+    host, port = u.hostname or "127.0.0.1", u.port or 10002
+    if not _port_open(host, port):
+        return False
+    try:
+        with urllib.request.urlopen(f"http://{host}:{port}/api/version", timeout=timeout) as r:
             return b"MusicIP" in r.read(64)
     except Exception:
         return False
@@ -110,6 +137,84 @@ def _load_config(base):
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+_SPLASH_HTML = """<!doctype html><meta charset="utf-8"><title>Attune</title>
+<style>
+ html,body{margin:0;height:100%;background:#0e1014;color:#e7e9ee;
+   font-family:'Segoe UI',system-ui,sans-serif;overflow:hidden}
+ .w{height:100%;display:flex;flex-direction:column;align-items:center;
+   justify-content:center;gap:18px}
+ .logo{font-size:34px;font-weight:600;color:#f0a92e;letter-spacing:.5px}
+ .bar{width:260px;height:3px;background:#23262e;border-radius:2px;overflow:hidden}
+ .bar i{display:block;height:100%;width:40%;background:#f0a92e;border-radius:2px;
+   animation:slide 1.1s ease-in-out infinite}
+ @keyframes slide{0%{transform:translateX(-110%)}100%{transform:translateX(360%)}}
+ .msg{font-size:13px;color:#8b93a3;min-height:18px}
+ .err{color:#ff6b6b;max-width:520px;text-align:center;line-height:1.6;font-size:14px}
+</style>
+<div class="w">
+  <div class="logo">&#9670; Attune</div>
+  <div class="bar"><i></i></div>
+  <div class="msg" id="m">Starting&hellip;</div>
+</div>
+<script>
+(async function(){
+  const m = document.getElementById('m');
+  for(;;){
+    try{
+      const r = await fetch('/api/boot', {cache:'no-store'});
+      const j = await r.json();
+      if(j.error){
+        document.querySelector('.bar').style.display='none';
+        m.className='err'; m.textContent = j.error; return;
+      }
+      m.textContent = j.phase || 'Loading\\u2026';
+      if(j.ready){ location.replace('/studio'); return; }
+    }catch(e){ /* server not up yet */ }
+    await new Promise(r=>setTimeout(r,150));
+  }
+})();
+</script>
+"""
+
+
+class _BootGate:
+    """WSGI gate so the WINDOW can open before the library is loaded.
+
+    Prior art, not invention: this is werkzeug's DispatcherMiddleware shape (a WSGI
+    callable that delegates to another app) plus a readiness endpoint -- the same
+    pattern the web launcher already uses when it polls /api/lib/stats before opening
+    a browser. Until the real Flask app exists, every request gets the splash and
+    /api/boot reports progress; afterwards every request is delegated unchanged, so
+    the app's own routes are untouched.
+
+    Why it matters: the old code called create_app() BEFORE create_window(), so the
+    user saw nothing at all until the whole library was in memory -- the single
+    biggest reason Attune did not feel like a normal desktop app.
+    """
+
+    def __init__(self):
+        self.real = None
+        self.phase = "Starting…"
+        self.error = None
+
+    def _text(self, start_response, body, ctype, status="200 OK"):
+        data = body.encode("utf-8")
+        start_response(status, [("Content-Type", ctype),
+                                ("Content-Length", str(len(data))),
+                                ("Cache-Control", "no-store")])
+        return [data]
+
+    def __call__(self, environ, start_response):
+        path = environ.get("PATH_INFO", "")
+        if path == "/api/boot":
+            payload = {"ready": self.real is not None,
+                       "phase": self.phase, "error": self.error}
+            return self._text(start_response, json.dumps(payload), "application/json")
+        if self.real is not None:
+            return self.real(environ, start_response)
+        return self._text(start_response, _SPLASH_HTML, "text/html; charset=utf-8")
 
 
 def _message_html(msg):
@@ -192,42 +297,58 @@ def main():
         except OSError:
             pass
 
-    # Engine: settings 'auto' (default) probes MusicIP and falls back to V2; an explicit
-    # 'musicip'/'v2' is honoured as-is.
     want_engine = cfg.effective(None, "ATTUNE_ENGINE", "engine", settings) or "auto"
-    if want_engine == "auto":
-        engine = "musicip" if _musicip_alive() else "v2"
-    else:
-        engine = want_engine
     playlists = cfg.effective(None, "ATTUNE_PLAYLIST_DIR", "playlist_dir", settings) \
         or _find_playlists()
-    print(f"Attune desktop — db={db}")
-    print(f"  engine={engine}  (MusicIP {'detected' if engine == 'musicip' else 'not running -> built-in V2'})")
-    print(f"  playlists={playlists or '(none configured)'}")
-
     mip_url = cfg.effective(None, "ATTUNE_MUSICIP_URL", "musicip_url", settings) \
         or "http://localhost:10002"
-    try:
-        create_app = _load_create_app(_base_dir())
-        app = create_app(db, engine_name=engine, musicip_url=mip_url, playlist_dir=playlists)
-    except SystemExit as e:
-        # If MusicIP vanished between the probe and load, or the DB is unusable, try one
-        # clean fall back to V2 before giving up.
-        if engine == "musicip":
-            try:
-                app = create_app(db, engine_name="v2", playlist_dir=playlists)
-            except Exception as e2:
-                _fail("Couldn't start the engine.<br><br>" + str(e2))
-                return
-        else:
-            _fail(str(e))
-            return
-    except Exception as e:
-        _fail("Couldn't start the engine.<br><br>" + str(e))
-        return
+    print(f"Attune desktop — db={db}")
+    print(f"  playlists={playlists or '(none configured)'}")
 
-    webview.create_window("Attune Studio", app, width=1360, height=880, min_size=(900, 620))
-    webview.start()
+    # ---- window first, library second -------------------------------------------------
+    # Serve a boot gate immediately on a free loopback port, open the window against it,
+    # and do ALL slow work (MusicIP probe, engine load) on a worker thread. The user sees
+    # Attune within a second instead of staring at nothing until the library is in memory.
+    gate = _BootGate()
+    srv = make_server("127.0.0.1", 0, gate, threaded=True)
+    port = srv.server_port
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    def _load():
+        try:
+            # Engine: 'auto' (default) probes MusicIP and falls back to V2; an explicit
+            # 'musicip'/'v2' is honoured as-is. Deliberately NOT on the window's critical
+            # path -- see _port_open: a dropped-SYN probe used to cost 4.13s per launch.
+            if want_engine == "auto":
+                gate.phase = "Looking for MusicIP…"
+                engine = "musicip" if _musicip_alive(mip_url) else "v2"
+                print(f"  engine=auto -> {engine}")
+            else:
+                engine = want_engine
+            gate.phase = "Loading your library…"
+            create_app = _load_create_app(_base_dir())
+            try:
+                app = create_app(db, engine_name=engine, musicip_url=mip_url,
+                                 playlist_dir=playlists)
+            except SystemExit as e:
+                # If MusicIP vanished between the probe and load, or the DB is unusable,
+                # try one clean fall back to V2 before giving up.
+                if engine == "musicip":
+                    app = create_app(db, engine_name="v2", playlist_dir=playlists)
+                else:
+                    raise
+            gate.real = app                     # publish last: readiness flips atomically
+            gate.phase = "Ready"
+        except BaseException as e:              # SystemExit included — report, never hang
+            gate.error = f"Couldn't start the engine: {e}"
+
+    webview.create_window("Attune Studio", f"http://127.0.0.1:{port}/",
+                          width=1360, height=880, min_size=(900, 620))
+    # webview.start(func) runs func on a worker thread only AFTER the GUI is up --
+    # pywebview's own documented idiom. Starting the loader any earlier makes it
+    # contend for the GIL with window creation and delays the very thing we want
+    # on screen first (measured: ~4s later when loaded before create_window).
+    webview.start(_load)
 
 
 if __name__ == "__main__":

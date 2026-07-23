@@ -302,7 +302,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             finally:
                 eng.w = saved
 
-    app = Flask(__name__)
+    # static_folder MUST be explicit. Flask(__name__) derives it from the import name,
+    # and app.py is exec'd by importlib (desktop/app_desktop.py::_load_create_app) without
+    # being registered in sys.modules -- so Flask fell back to the CURRENT WORKING
+    # DIRECTORY. In dev that was harmless (__name__ == "__main__" -> this folder), but in
+    # the frozen build every /static/*.js 404'd: boot.js, player.js, prefs.js, smartlist.js.
+    # With boot.js missing NOTHING initialized -- that is the packaged app opening with a
+    # dead UI (no transport, no preferences, no library). Anchor to this file, exactly as
+    # the /studio, /studio.js and /studio.css routes in studio.py already do.
+    # OBSERVED 2026-07-22: 404 in Attune.exe, 200 on the dev server, same commit.
+    app = Flask(__name__, static_folder=os.path.join(HERE, "static"),
+                static_url_path="/static")
 
     @app.get("/")
     def index():
@@ -1075,9 +1085,20 @@ def main():
                          f"db_path in {cfgmod.settings_path()}")
     if engine == "auto":
         # same probe the desktop launcher does: use MusicIP if it's live, else v2.
+        # A short-timeout socket pre-check comes FIRST: measured 2026-07-22, with
+        # MusicIP not running port 10002 drops the SYN rather than refusing it, so
+        # urllib against "localhost" (::1 then 127.0.0.1) burned 4.13s on every
+        # single launch before falling back to v2. See desktop/app_desktop.py.
+        import socket
         import urllib.request
+        from urllib.parse import urlsplit
+        u = urlsplit((musicip_url or "http://localhost:10002"))
+        host, port_ = u.hostname or "127.0.0.1", u.port or 10002
+        engine = "v2"
         try:
-            with urllib.request.urlopen(musicip_url.rstrip("/") + "/api/version",
+            with socket.create_connection((host, port_), timeout=0.25):
+                pass
+            with urllib.request.urlopen(f"http://{host}:{port_}/api/version",
                                         timeout=2.0) as r:
                 engine = "musicip" if b"MusicIP" in r.read(64) else "v2"
         except Exception:

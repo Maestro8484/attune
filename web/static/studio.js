@@ -1035,21 +1035,63 @@ function bindEvents() {
 }
 
 /* ------------------------------------------------------------------ boot (called by boot.js) */
+
+/* Fetch that tolerates a server still coming up. The window can be on screen
+   before the library finishes loading, so a refused connection early in boot is
+   normal, not fatal — retry with backoff instead of killing the UI. */
+async function jgetReady(url, { tries = 40, delay = 250, maxDelay = 1500 } = {}) {
+  let last;
+  for (let n = 0; n < tries; n++) {
+    try { return await jget(url); }
+    catch (e) {
+      last = e;
+      await new Promise(r => setTimeout(r, Math.min(delay * Math.pow(1.3, n), maxDelay)));
+    }
+  }
+  throw last;
+}
+
+/* Never throws. Returns {ok, error} so boot.js can bring the rest of the UI up
+   regardless. Each section below degrades on its own: a dead playlist folder
+   must not cost you the library, and neither must cost you the player. */
 async function initCore() {
-  renderHead();
-  bindSliders(); bindEvents();
+  try { renderHead(); bindSliders(); bindEvents(); }
+  catch (e) { console.error('[core] chrome', e); }
+
   try {
-    S.stats = await jget('/api/lib/stats');
-  } catch (e) { toast('Cannot reach server: ' + e.message, true); throw e; }
-  const s = S.stats;
-  $('engineName').textContent = s.engine === 'musicip' ? 'MusicIP Mixer (live)' : 'Attune V2';
-  $('mipControls').hidden = s.engine !== 'musicip';
-  $('v2Controls').hidden = s.engine === 'musicip';
-  $('btnPlex').disabled = !s.plex;
-  $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
-  $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
-    `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
-  $('flavor').dispatchEvent(new Event('change'));
-  await loadPlaylists();
-  await loadLibrary(true);
+    S.stats = await jgetReady('/api/lib/stats');
+  } catch (e) {
+    toast('Cannot reach server: ' + e.message, true);
+    return { ok: false, error: e.message };
+  }
+
+  try {
+    const s = S.stats;
+    $('engineName').textContent = s.engine === 'musicip' ? 'MusicIP Mixer (live)' : 'Attune V2';
+    $('mipControls').hidden = s.engine !== 'musicip';
+    $('v2Controls').hidden = s.engine === 'musicip';
+    $('btnPlex').disabled = !s.plex;
+    $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
+    $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
+      `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
+    $('flavor').dispatchEvent(new Event('change'));
+  } catch (e) { console.error('[core] header', e); }
+
+  // Playlists live in a folder that may be a network drive (M:) — slow or gone.
+  // Isolated: losing the playlist tree must never cost the library or the player.
+  let softFail = null;
+  try { await loadPlaylists(); }
+  catch (e) {
+    console.error('[core] playlists', e);
+    softFail = 'playlist folder unavailable';
+    try { $('exportDir').textContent = 'Playlist folder unavailable'; } catch {}
+  }
+
+  try { await loadLibrary(true); }
+  catch (e) {
+    console.error('[core] library', e);
+    softFail = 'library view failed to load';
+  }
+
+  return softFail ? { ok: false, error: softFail } : { ok: true };
 }
