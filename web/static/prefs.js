@@ -209,6 +209,16 @@ const Prefs = (() => {
     try { j = await jget('/api/settings'); } catch { return; }  // unreachable — don't nag on a fluke
     serverSettings = j.settings;
     if ((serverSettings.library_folders || []).length) return;  // already configured
+
+    // A configured SCAN FOLDER is not the same thing as HAVING A LIBRARY.
+    // library_folders only tells the scanner where to look for NEW music; it is routinely
+    // empty on a perfectly good install (e.g. cleared after a scan test). Gating the
+    // wizard on it alone put a full-screen modal over a working 21,236-track library and
+    // made the whole app unclickable. Only offer the wizard when we KNOW there is nothing
+    // to play. Unknown (stats missing) is NOT a reason to block the UI.
+    if (!S.stats || (S.stats.analyzed || 0) > 0) return;
+    if (store.get('wizardSkipped', false)) return;   // don't re-nag every launch
+
     paintFolders([''], 'wizFolders');
     $('wizMsg').textContent = '';
     $('wizWrap').hidden = false;
@@ -436,9 +446,18 @@ const Prefs = (() => {
     });
     // generic modal close
     document.querySelectorAll('[data-close]').forEach(b =>
-      b.onclick = () => $(b.dataset.close).hidden = true);
+      b.onclick = () => {
+        // Skipping the first-run wizard is remembered, so a genuinely empty library
+        // asks once instead of blocking the window on every single launch.
+        if (b.dataset.close === 'wizWrap') store.set('wizardSkipped', true);
+        $(b.dataset.close).hidden = true;
+      });
     document.querySelectorAll('.modalwrap').forEach(w =>
-      w.addEventListener('mousedown', e => { if (e.target === w) w.hidden = true; }));
+      w.addEventListener('mousedown', e => {
+        if (e.target !== w) return;
+        if (w.id === 'wizWrap') store.set('wizardSkipped', true);
+        w.hidden = true;
+      }));
   }
 
   function init() {
