@@ -135,6 +135,15 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .popover[hidden], .ctxmenu[hidden], .toast[hidden], .why[hidden], #v2Controls[hidden],
 #mipControls[hidden], .modalwrap[hidden], #eqPanel[hidden], #miniBar[hidden],
 #scanBanner[hidden], #colMenu[hidden] { display:none; }
+/* CRITICAL: .albumgrid sets `display:grid; position:absolute; inset:0` (line ~600).
+   That class rule ties the UA `[hidden]{display:none}` on specificity and, being later
+   in the sheet, WINS -- so in LIST view the (empty) album grid stayed display:grid,
+   absolutely covering the whole table and swallowing every real mouse click: row
+   selection, right-click context menu, everything. `#albumGrid[hidden]` (specificity
+   1,1,0) beats `.albumgrid` (0,1,0) and actually hides it. This was invisible to every
+   prior verification because synthetic dispatchEvent on a <tr> bypasses hit-testing;
+   only a real click (or elementFromPoint) reveals the overlay. Observed 2026-07-22. */
+#albumGrid[hidden] { display:none !important; }
 #optionsPanel { left:300px; } #exportPanel { left:440px; }
 .poptitle { font-weight:600; display:flex; justify-content:space-between; align-items:center; }
 .pill { background:var(--panel2); border:1px solid var(--line); border-radius:99px;
