@@ -168,6 +168,8 @@ function rowsHtml(rows, opts = {}) {
     if (S.sel.has(r.i)) cls.push('sel');
     if (r.i === playing && r.i >= 0) cls.push('playing');
     if (seed !== null && r.i === seed) cls.push('seed');
+    // "More Like This" anchors: pinned under the seed with the green edge + badge
+    if (S.view === 'mix' && r.i !== seed && S.liked.includes(r.i)) cls.push('pinned');
     if (r.missing) cls.push('missing');
     const tune = S.view === 'mix' && S.stats.engine === 'v2' &&
                  r.i >= 0 && r.i !== seed;
@@ -415,7 +417,29 @@ async function doMix(seedI) {
   finally { $('btnMix').disabled = false; }
 }
 
-async function showMix() {
+/* FLIP: capture where each row sits, re-render, then slide survivors from their old
+   position to the new one and fade newcomers in. This is what makes a re-rank read as
+   "the mix responded to me" instead of a flicker. Web Animations API — no class juggling. */
+function captureRowTops() {
+  const m = new Map();
+  document.querySelectorAll('#tbody tr[data-i]').forEach(tr =>
+    m.set(tr.dataset.i, tr.getBoundingClientRect().top));
+  return m;
+}
+function animateReorder(before) {
+  document.querySelectorAll('#tbody tr[data-i]').forEach(tr => {
+    const old = before.get(tr.dataset.i);
+    const now = tr.getBoundingClientRect().top;
+    if (old === undefined) {
+      tr.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 240, easing: 'ease-out' });
+    } else if (Math.abs(old - now) > 1) {
+      tr.animate([{ transform: `translateY(${old - now}px)` }, { transform: 'translateY(0)' }],
+                 { duration: 280, easing: 'cubic-bezier(.2,.7,.3,1)' });
+    }
+  });
+}
+
+async function showMix(opts = {}) {
   S.view = 'mix'; markTree('mix');
   $('viewLabel').textContent = 'Mix';
   $('btnBackLib').hidden = false;
@@ -425,10 +449,20 @@ async function showMix() {
   const j = await jget('/api/lib/rows?' + S.mix.map(i => `i=${i}`).join('&'));
   const byI = new Map(j.rows.map(r => [r.i, r]));
   const rows = S.mix.map(i => byI.get(i)).filter(Boolean);
+  // capture AFTER the fetch, immediately before the DOM swap (rects go stale if the
+  // user scrolls during the await). Only animate mix->mix re-ranks: on a fresh mix the
+  // old rows are library rows that may share pool ids, and FLIPping those looks chaotic.
+  const before = opts.animate ? captureRowTops() : null;
   renderRows(rows, { seed: S.seed });
+  if (before) animateReorder(before);
   const secs = rows.reduce((a, r) => a + r.seconds, 0);
   const sr = byI.get(S.seed);
-  $('viewSub').textContent = `${rows.length} tracks · ${hms(secs)} · seed: ${sr ? sr.artist + ' — ' + sr.title : '?'}`;
+  const votes = S.liked.length + S.disliked.length;
+  $('viewSub').innerHTML =
+    `${rows.length} tracks · ${hms(secs)} · seed: ${esc(sr ? sr.artist + ' — ' + sr.title : '?')}` +
+    (votes ? ` · <span class="steer">steering +${S.liked.length} −${S.disliked.length}</span>` +
+             ` <button class="chip" id="steerReset" title="Clear all steering and re-mix from the seed">reset</button>`
+           : '');
 }
 
 async function showNowPlaying() {
@@ -655,7 +689,7 @@ async function showWhy(i, x, y) {
   } catch (e) { toast(e.message, true); }
 }
 
-function tuneTrack(i, dir) {
+async function tuneTrack(i, dir) {
   // toggle semantics: clicking the same vote again withdraws it; More and Less
   // are mutually exclusive per track. Then re-rank through the same refine() path.
   const add = dir === 'more' ? S.liked : S.disliked;
@@ -667,10 +701,24 @@ function tuneTrack(i, dir) {
     const o = other.indexOf(i);
     if (o >= 0) other.splice(o, 1);
   }
-  refine();
+  // INSTANT acknowledgement — the button lights and (for a fresh "less" vote) the row
+  // starts sliding out NOW, not after the server round-trip. Perceived latency is the
+  // click-to-first-pixel gap, and this makes it one frame.
+  const tr = document.querySelector(`#tbody tr[data-i="${i}"]`);
+  if (tr) {
+    tr.querySelectorAll('.tb.more').forEach(b => b.classList.toggle('on', S.liked.includes(i)));
+    tr.querySelectorAll('.tb.less').forEach(b => b.classList.toggle('on', S.disliked.includes(i)));
+    if (dir === 'less' && S.disliked.includes(i)) {
+      tr.classList.add('rowOut');
+      await new Promise(r => setTimeout(r, 190));   // let the slide-out land first
+    }
+  }
+  // follow a fresh "more" vote to its pinned position; a withdrawn vote or a removal
+  // doesn't need the camera move.
+  refine(dir === 'more' && S.liked.includes(i) ? i : undefined);
 }
 
-async function refine() {
+async function refine(focusI) {
   if (S.seed == null) return toast('Create a mix first', true);
   if (S.stats.engine !== 'v2') return toast('More/Less Like This needs the V2 engine', true);
   try {
@@ -679,9 +727,25 @@ async function refine() {
       liked: S.liked, disliked: S.disliked,
     });
     const ids = (j.tracks || []).map(x => x.i);
-    S.mix = [S.seed, ...ids.filter(i => i !== S.seed)];
+    // Compose: seed, then the liked ANCHORS pinned in the order they were liked, then
+    // the server's re-ranked picks. The server excludes liked/disliked from its list
+    // (you already have the liked ones — they are pinned, not re-suggested).
+    const anchors = S.liked.filter(i => i !== S.seed);
+    S.mix = [S.seed, ...anchors,
+             ...ids.filter(i => i !== S.seed && !anchors.includes(i))];
     $('mixN').textContent = S.mix.length;
-    showMix(); toast(`Refined (+${S.liked.length} / −${S.disliked.length})`);
+    await showMix({ animate: true });
+    // land the eye: pulse the row you just voted, and if it docked off-screen
+    // (a "more" vote pins it up under the seed), follow it there.
+    if (focusI != null) {
+      const tr = document.querySelector(`#tbody tr[data-i="${focusI}"]`);
+      if (tr) {
+        tr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+        tr.animate([{ filter: 'brightness(1.7)' }, { filter: 'brightness(1)' }],
+                   { duration: 650, easing: 'ease-out' });
+      }
+    }
+    toast(`Steering: +${S.liked.length} / −${S.disliked.length}`);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -891,6 +955,11 @@ function bindEvents() {
   // search (debounced)
   let t; $('q').addEventListener('input', e => {
     clearTimeout(t); t = setTimeout(() => { S.q = e.target.value.trim(); loadLibrary(true); }, 220);
+  });
+
+  // steering reset (delegated — viewSub is re-rendered on every showMix)
+  $('viewSub').addEventListener('click', e => {
+    if (e.target.id === 'steerReset' && S.seed != null) doMix(S.seed);
   });
 
   // toolbar

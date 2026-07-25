@@ -293,6 +293,14 @@ tbody td { padding:4px 8px; border-bottom:1px solid var(--rowalt);
 tbody tr:nth-child(even) { background:var(--rowalt); }
 tbody tr:hover { background:var(--hover); }
 tbody tr.sel { background:var(--sel) !important; }
+/* anchored ("More Like This") rows: pinned under the seed, green edge + badge.
+   Declared BEFORE .playing/.seed so their ::before glyphs win when states stack
+   (a pinned row that starts playing shows ▶, and keeps the green edge). */
+tbody tr.pinned { box-shadow: inset 3px 0 0 var(--ok); }
+tbody tr.pinned td.c-title::before { content:"+ "; color:var(--ok); font-weight:700; }
+/* a "Less Like This" row leaves the list — slides out before the re-rank lands */
+tbody tr.rowOut { transition: opacity .18s ease, transform .18s ease;
+  opacity:0; transform:translateX(28px); pointer-events:none; }
 tbody tr.playing td.c-title::before { content:"▶ "; color:var(--accent); }
 tbody tr.seed td.c-title::before { content:"✦ "; color:var(--accent2); }
 tbody tr.missing { opacity:.45; font-style:italic; }
@@ -322,6 +330,12 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 .tb:hover { color:var(--fg); border-color:var(--muted); }
 .tb.more.on { color:var(--accent); border-color:var(--accent); }
 .tb.less.on { color:var(--err); border-color:var(--err); }
+/* tactility: every pressable control physically presses */
+#toolbar button:active, .viewBar button:active, .tb:active, .chip:active,
+.ctxmenu li:active { transform:translateY(1px); }
+/* steering summary in the mix header */
+#viewSub .steer { color:var(--accent); font-weight:600; }
+#viewSub .chip { padding:0 8px; font-size:11px; cursor:pointer; margin-left:2px; }
 .empty { padding:32px; text-align:center; color:var(--dim); }
 .pager { display:flex; gap:6px; align-items:center; padding:5px 10px;
   border-top:1px solid var(--line); background:var(--panel2); color:var(--muted);
@@ -358,7 +372,10 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 /* toast + why */
 .toast { position:fixed; bottom:38px; left:50%; transform:translateX(-50%);
   background:var(--panel); border:1px solid var(--line); border-radius:9px;
-  padding:9px 16px; box-shadow:0 8px 28px #0009; z-index:80; }
+  padding:9px 16px; box-shadow:0 8px 28px #0009; z-index:80;
+  /* purely informational — must NEVER eat the click on the row beneath it
+     (it sat over the bottom rows for 3.2s after every single action) */
+  pointer-events:none; }
 .toast.err { border-color:var(--err); color:var(--err); }
 .why { position:fixed; z-index:70; background:var(--panel); border:1px solid var(--line);
   border-radius:10px; padding:12px 14px; box-shadow:0 12px 36px #0009; max-width:340px; }
