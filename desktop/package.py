@@ -6,6 +6,7 @@
 Produces attune/dist/Attune/ containing:
     Attune.exe            the app
     _internal/            its runtime (PyInstaller)
+    analyzer/             AttuneAnalyzer.exe + its runtime — analyzing new audio
     mixer.db              a COPY of the analyzed library, so the exe is self-locating
     README.txt            what it needs and what it can't do
 
@@ -32,10 +33,14 @@ DB_SRC = os.path.join(ROOT, "mixer-ng", "data", "mixer.db")
 README = """Attune Studio — test bundle
 ===========================
 
-Double-click  Attune.exe  to run. A window opens after ~15-20s (it loads the library).
+Double-click  Attune.exe  to run. A window appears in about 3 seconds; the library
+finishes loading a couple of seconds later.
 
 WHAT THIS BUNDLE INCLUDES
   - Attune.exe + its Python runtime (_internal\\)
+  - analyzer\\AttuneAnalyzer.exe : analyzes new music (librosa + the CLAP encoder +
+    ffmpeg/ffprobe, all bundled). Kept as a separate program so the app you launch
+    every day stays small; Attune runs it for you when you scan.
   - mixer.db : your analyzed library (21k tracks, CLAP + librosa vectors, metadata)
 
 WHAT IT STILL NEEDS ON THIS PC (not bundled -- too large / third-party)
@@ -50,9 +55,13 @@ PLAYLIST FOLDER
   ATTUNE_PLAYLIST_DIR to your playlist folder, to browse and save .m3u8 playlists.
 
 WHAT IT CANNOT DO
-  - Analyze brand-new tracks. That needs the heavy torch/librosa/CLAP stack, deliberately
-    left out of this build. This bundle plays and mixes an already-analyzed library.
   - Launch MusicIP Mixer for you. MusicIP is separate, closed software.
+
+ANALYZING NEW MUSIC
+  Point Preferences -> Library at a folder and press Scan. Attune hands the work to
+  analyzer\\AttuneAnalyzer.exe, which carries everything it needs -- no system Python
+  and no system ffmpeg required. Newly analyzed tracks join the mixable pool after
+  the next restart (the engine loads its pool once, at startup).
 """
 
 

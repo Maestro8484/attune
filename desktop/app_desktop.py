@@ -39,6 +39,8 @@ import mutagen       # noqa: F401
 import requests      # noqa: F401  (MusicIP adapter + Plex export)
 import webview
 
+import worker_entry  # shared with analyzer_main.py (AttuneAnalyzer.exe)
+
 
 def _base_dir():
     """Root of the bundled 'attune' tree (frozen) or the real attune/ dir (source)."""
@@ -233,46 +235,21 @@ def _fail(msg, w=680, h=420):
 
 
 def _run_worker():
-    """Re-enter this frozen (or dev) exe as a headless analyzer worker.
+    """Re-enter this exe as a headless analyzer worker.
 
     Invoked as: Attune.exe --attune-worker <tool> <tool argv...>
-    tool is one of "scan" / "embed_onnx" — the module name under attune/src whose
-    main() we call. This lets scanjob.py drive the heavy analyze/embed stages by
-    re-launching sys.executable (the packaged exe itself) instead of a system
-    python, which a frozen build does not have.
+    tool is one of "scan" / "embed_onnx" — the module under attune/src whose main()
+    we call. This is the DEV path (a source run has the whole analyzer stack
+    importable); the FROZEN GUI bundle deliberately ships without librosa/
+    onnxruntime/the CLAP model, so there the analyzer is its own program,
+    analyzer\\AttuneAnalyzer.exe, and web/scanjob.py launches that instead. The
+    contract is unchanged for callers — same tool names, same argv tail — and the
+    dispatch body itself is shared with the analyzer exe (worker_entry.run), so
+    the two cannot drift. An analyzer import that fails inside the lean bundle
+    exits 2 with an honest message rather than a bare traceback.
     """
-    # Make the bundled ffmpeg/ffprobe (attune/bin) win over any system install for this
-    # worker process: scan.py shells out to `ffprobe` for tags and librosa/audioread fall
-    # back to `ffmpeg` to decode formats libsndfile can't (m4a/aac/wma). Prepending here
-    # (worker only — the GUI never decodes) means a first-run scan needs NO system ffmpeg.
-    bin_dir = (os.path.join(sys._MEIPASS, "attune", "bin") if getattr(sys, "frozen", False)
-               else os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffbin"))
-    if os.path.isdir(bin_dir):
-        os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
-
-    src_dir = (os.path.join(sys._MEIPASS, "attune", "src") if getattr(sys, "frozen", False)
-               else os.path.join(_base_dir(), "src"))
-    sys.path.insert(0, src_dir)
-    tool = sys.argv[2]
-    rest = sys.argv[3:]
-    sys.argv = [tool] + rest
-    try:
-        if tool == "scan":
-            import scan
-            scan.main()
-        elif tool == "embed_onnx":
-            import embed_onnx
-            embed_onnx.main()
-        else:
-            print(f"[attune-worker] unknown tool: {tool}", file=sys.stderr)
-            sys.exit(1)
-    except SystemExit:
-        raise
-    except Exception:
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
-    sys.exit(0)
+    worker_entry.run(sys.argv[2], sys.argv[3:], _base_dir(),
+                     os.path.join(os.path.dirname(os.path.abspath(__file__)), "ffbin"))
 
 
 def main():
