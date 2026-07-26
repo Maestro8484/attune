@@ -189,9 +189,55 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return os.path.basename(path).lower()
         return None
 
-    def _build_mix(i, size, field=None, variety=False, flow=False):
+    def _ban_args():
+        """Tracks and artists the listener has thrown OUT of the mix.
+
+        ban=<pool index>       repeatable, and comma-joined is accepted for compactness
+        ban_artist=<name>      repeatable ONLY -- never comma-split, because artist names
+                               legitimately contain commas ("Earth, Wind & Fire").
+        Raises ValueError on a malformed index (caller returns 400).
+        """
+        ban_i = set()
+        for raw in request.args.getlist("ban"):
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                bi = int(part)                       # ValueError -> 400 upstream
+                if 0 <= bi < len(eng.paths):
+                    ban_i.add(bi)
+        ban_art = {a.strip().lower() for a in request.args.getlist("ban_artist") if a.strip()}
+        return ban_i, ban_art
+
+    def _drop_banned(picks, ban_i, ban_art):
+        """Filter banned tracks/artists out of a list of pool PATHS."""
+        if not ban_i and not ban_art:
+            return picks
+        out = []
+        for p in picks:
+            pi = eng.idx.get(p)
+            if pi is None or pi in ban_i:
+                continue
+            if ban_art and (eng.artist[pi] or "").strip().lower() in ban_art:
+                continue
+            out.append(p)
+        return out
+
+    def _banned_headroom(pool_size, ban_i, ban_art):
+        """Over-fetch so a ban REPLACES a track instead of shortening the mix. Banning an
+        artist can remove many picks at once, so headroom scales rather than adding a
+        fixed pad. Capped: eng.mix() ranks the whole pool anyway, the cost is the walk."""
+        if not ban_i and not ban_art:
+            return pool_size
+        return min(max(pool_size * 3, pool_size + 60), 400)
+
+    def _build_mix(i, size, field=None, variety=False, flow=False, bans=None):
         """Return (seed_path, picks). With a dedup field, over-fetch then collapse
         same-key tracks (and any that duplicate the seed), so you still get `size`.
+
+        bans=(ban_i, ban_art): tracks/artists the listener removed. Applied to the raw
+        candidate list BEFORE dedup/mmr/flow, with extra over-fetch, so a removal is
+        backfilled from the next-best candidates rather than leaving a hole.
 
         variety=True: over-fetch a much larger candidate pool (up to 200; a 4x
         over-fetch like dedup uses isn't enough headroom for MMR to substitute
@@ -207,13 +253,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         Same set of tracks, different order -- applied last so it doesn't fight mmr.
         """
         seed = eng.paths[i]
+        ban_i, ban_art = bans or (set(), set())
         if variety:
             pool_size = 200
         elif field:
             pool_size = min(size * 4, 200)
         else:
             pool_size = size
+        pool_size = _banned_headroom(pool_size, ban_i, ban_art)
         picks = eng.mix(seed, size=pool_size) or []
+        picks = _drop_banned(picks, ban_i, ban_art)
         if field:
             seen, uniq = {_dupkey(seed, field)}, []
             for p in picks:
@@ -239,12 +288,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         This is the single source of truth both /api/mix and the export routes build their
         track list from, so an exported playlist always equals the mix the user is viewing
         under whichever engine is active (musicip or v2)."""
+        ban_i, ban_art = _ban_args()
         if is_musicip:
             style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), MUSICIP_STYLE_MAX)
             variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), MUSICIP_VARIETY_MAX)
             pool_size = min(size * 4, 200) if field else size
+            pool_size = _banned_headroom(pool_size, ban_i, ban_art)
             seed_ref = eng_iface.Ref(pool_i=i, label=labels[i])
             refs = active.similar(seed_ref, size=pool_size, style=style, variety=variety)
+            if ban_i or ban_art:
+                refs = [r for r in refs if r.pool_i not in ban_i
+                        and (eng.artist[r.pool_i] or "").strip().lower() not in ban_art]
             if field:
                 seen, uniq = {_dupkey(eng.paths[i], field)}, []
                 for r in refs:
@@ -259,7 +313,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         variety = (request.args.get("variety") or "").lower() in ("1", "true", "on")
         flow = (request.args.get("flow") or "").lower() in ("1", "true", "on")
         _seed, picks = _with_weights(
-            overrides, lambda: _build_mix(i, size, field, variety, flow))
+            overrides, lambda: _build_mix(i, size, field, variety, flow,
+                                          bans=(ban_i, ban_art)))
         return [eng.idx[p] for p in picks]
 
     def _active_mix_tracks(i, size, field=None):
@@ -402,15 +457,53 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 out.append(xi)
             return out
 
+        def _name_list(key):
+            vals = data.get(key) or []
+            if not isinstance(vals, list):
+                raise ValueError(f"{key} must be a list")
+            return {str(v).strip().lower() for v in vals if str(v).strip()}
+
+        # "More/Less like this ARTIST": the browser knows a NAME, not which pool rows
+        # belong to it, so expand here. Capped per artist -- a prolific artist would
+        # otherwise dominate the Rocchio centroid and turn a taste nudge into a
+        # single-artist mix. Pool order is stable, so the cap is deterministic.
+        ARTIST_VOTE_CAP = 8
+
+        def _artist_idx(names):
+            if not names:
+                return []
+            hits, seen = [], {}
+            for pi, a in enumerate(eng.artist):
+                key = (a or "").strip().lower()
+                if key and key in names and seen.get(key, 0) < ARTIST_VOTE_CAP:
+                    seen[key] = seen.get(key, 0) + 1
+                    hits.append(pi)
+            return hits
+
         try:
             liked = _idx_list("liked")
             disliked = _idx_list("disliked")
+            ban_i = set(_idx_list("ban"))
+            ban_art = _name_list("ban_artist")
+            liked_art = _artist_idx(_name_list("liked_artists"))
+            disliked_art = _artist_idx(_name_list("disliked_artists"))
         except (TypeError, ValueError) as e:
             return jsonify(error=str(e)), 400
 
         try:
-            q = eng.refine(i, liked_idx=liked, disliked_idx=disliked)
-            picks = eng.mix_from_vector(q, size=size, exclude=[i] + liked + disliked)
+            # Artist votes STEER the query vector but are not excluded from the result.
+            # Per-track votes keep their existing exclude semantics (you already have
+            # that track). Excluding artist-expanded rows made "More Like This Artist"
+            # return ZERO tracks by that artist -- the exact opposite of the ask.
+            # Hard removal is what "Block This Artist" (ban_artist) is for.
+            q = eng.refine(i, liked_idx=liked + liked_art,
+                           disliked_idx=disliked + disliked_art)
+            # Over-fetch when bans are active so a removal is BACKFILLED rather than
+            # leaving the mix short (same rule as _banned_headroom on the /api/mix path).
+            want = _banned_headroom(size, ban_i, ban_art)
+            picks = eng.mix_from_vector(
+                q, size=want, exclude=[i] + liked + disliked + sorted(ban_i))
+            picks = _drop_banned(picks, ban_i, ban_art)[:size]
         except ValueError as e:
             return jsonify(error=str(e)), 400
 
