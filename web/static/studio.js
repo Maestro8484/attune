@@ -1448,6 +1448,7 @@ function bindEvents() {
       if (ids.length) { Player.queueAdd(ids); toast(`Queued ${ids.length}`); }
     }
     else if (k === 'z') Player.prev();
+    else if (k === 'v') Player.stop();
     else if (k === 'b') Player.next();
     else if (k === 's') Player.toggleShuffle();
     else if (k === 'r') Player.cycleRepeat();
