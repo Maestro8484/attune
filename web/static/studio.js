@@ -965,18 +965,22 @@ function dropArtists(names) {
   remixWithFilters(`Blocked ${add.join(', ')}`);
 }
 
-function tuneArtist(name, dir) {
-  if (!name) return toast('No artist on that track', true);
+function tuneArtist(names, dir) {
+  // accepts one name or a list: the menu items act on the whole selection, same as
+  // drop/dropartist. Each name toggles independently; ONE re-mix at the end.
+  names = [...new Set((Array.isArray(names) ? names : [names]).filter(Boolean))];
+  if (!names.length) return toast('No artist on that track', true);
   const add = dir === 'more' ? S.likedArtists : S.dislikedArtists;
   const other = dir === 'more' ? S.dislikedArtists : S.likedArtists;
-  const at = add.indexOf(name);
-  if (at >= 0) add.splice(at, 1);
-  else {
+  for (const name of names) {
+    const at = add.indexOf(name);
+    if (at >= 0) { add.splice(at, 1); continue; }
     add.push(name);
     const o = other.indexOf(name);
     if (o >= 0) other.splice(o, 1);
   }
-  remixWithFilters(dir === 'more' ? `More like ${name}` : `Less like ${name}`);
+  const label = names.join(', ');
+  remixWithFilters(dir === 'more' ? `More like ${label}` : `Less like ${label}`);
 }
 
 function clearFilters() {
@@ -1375,8 +1379,14 @@ function bindEvents() {
       case 'tags': Prefs.openTagEditor(i); break;
       case 'more': tuneTrack(i, 'more'); break;
       case 'less': tuneTrack(i, 'less'); break;
-      case 'moreartist': tuneArtist(row.artist, 'more'); break;
-      case 'lessartist': tuneArtist(row.artist, 'less'); break;
+      case 'moreartist':
+      case 'lessartist': {
+        const names = (selectedIds().length ? selectedIds() : [i])
+          .map(artistOf).filter(Boolean);
+        tuneArtist(names.length ? names : [row.artist],
+                   li.dataset.act === 'moreartist' ? 'more' : 'less');
+        break;
+      }
       // filters act on the whole selection when there is one, so you can throw out
       // a block of tracks in one go
       case 'drop': dropTracks(selectedIds().length ? selectedIds() : [i]); break;
@@ -1409,7 +1419,8 @@ function bindEvents() {
     if (!e.target.closest('.ctxmenu')) $('ctx').hidden = true;
     if (!e.target.closest('#colMenu') && !e.target.closest('#thead-row')) $('colMenu').hidden = true;
     if (!e.target.closest('.why')) $('why').hidden = true;
-    if (!e.target.closest('.popover') && !e.target.closest('#toolbar button'))
+    if (!e.target.closest('.popover') && !e.target.closest('#toolbar button')
+        && !e.target.closest('#queueTools button'))
       { $('optionsPanel').hidden = true; $('exportPanel').hidden = true; }
     if (!e.target.closest('#eqPanel') && !e.target.closest('#tEq')) $('eqPanel').hidden = true;
   });
