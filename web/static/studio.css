@@ -110,6 +110,13 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
   border-color:transparent; color:#fff; font-weight:600;
 }
 #toolbar button.primary:hover { filter:brightness(1.1); }
+/* Genius: same shape as .primary but on --accent2, so the one-click path reads as a
+   distinct action from the manual "Create Mix" flow rather than a duplicate button. */
+#toolbar button.genius {
+  background:linear-gradient(180deg,var(--accent2),color-mix(in srgb,var(--accent2) 70%,#000));
+  border-color:transparent; color:#fff; font-weight:600;
+}
+#toolbar button.genius:hover { filter:brightness(1.1); }
 #toolbar button:disabled { opacity:.4; cursor:default; }
 #toolbar button.iconbtn { padding:6px 9px; }
 .field { display:flex; gap:0; }
@@ -119,6 +126,11 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 }
 .field input { border-radius:7px 0 0 7px; border-right:0; }
 .field select { border-radius:0 7px 7px 0; }
+/* recipe select: a lone toolbar dropdown (not paired like .field), so it gets the
+   same input chrome directly rather than through the .field/.search wrappers. */
+#recipeSel { background:var(--panel); border:1px solid var(--line); border-radius:7px;
+  padding:6px 8px; cursor:pointer; }
+#recipeSel:focus { outline:none; }
 .search { display:flex; align-items:center; gap:6px; background:var(--panel);
   border:1px solid var(--line); border-radius:7px; padding:0 8px; }
 .search .ico { color:var(--dim); }
@@ -134,7 +146,8 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 }
 .popover[hidden], .ctxmenu[hidden], .toast[hidden], .why[hidden], #v2Controls[hidden],
 #mipControls[hidden], .modalwrap[hidden], #eqPanel[hidden], #miniBar[hidden],
-#scanBanner[hidden], #colMenu[hidden] { display:none; }
+#scanBanner[hidden], #colMenu[hidden], #recipeControls[hidden], #recipeActions[hidden]
+  { display:none; }
 /* CRITICAL: .albumgrid sets `display:grid; position:absolute; inset:0` (line ~600).
    That class rule ties the UA `[hidden]{display:none}` on specificity and, being later
    in the sheet, WINS -- so in LIST view the (empty) album grid stayed display:grid,
@@ -275,6 +288,7 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .viewBar { display:flex; align-items:center; gap:10px; padding:6px 10px;
   border-bottom:1px solid var(--line); background:var(--panel2); flex:0 0 auto; }
 #viewLabel { font-weight:600; }
+#mixRecipeTag { color:var(--accent); }
 .viewBar button { background:var(--panel); border:1px solid var(--line); border-radius:6px;
   padding:3px 8px; cursor:pointer; font-size:12px; }
 .viewBar button:hover { border-color:var(--accent); }
@@ -530,6 +544,11 @@ html[data-theme="attune"] #toolbar button.primary {
   background:linear-gradient(180deg,#f7bd52,#d98f16); color:#1a1204; font-weight:700;
   text-shadow:1px 1px 0 #ffffff55;
   border-color:#ffd98a #7a5008 #7a5008 #ffd98a;
+}
+html[data-theme="attune"] #toolbar button.genius {
+  background:linear-gradient(180deg,color-mix(in srgb,var(--accent2) 80%,#fff),var(--accent2));
+  color:#062406; font-weight:700; text-shadow:1px 1px 0 #ffffff55;
+  border-color:#8dffb0 #075a07 #075a07 #8dffb0;
 }
 html[data-theme="attune"] .chip.on { color:var(--accent2); border-color:var(--bev-d) var(--bev-l) var(--bev-l) var(--bev-d); background:#1c2018; }
 

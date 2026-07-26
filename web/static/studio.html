@@ -15,6 +15,14 @@
     <span class="ico">✦</span> Create Mix
   </button>
 
+  <button id="btnGenius" class="genius" title="One click: pick a track you love, mix a journey, press play (Ctrl+G)">
+    <span class="ico">✦</span> Genius
+  </button>
+
+  <select id="recipeSel" title="Recipe — apply a saved preset to the mix dials below">
+    <option value="">Dials (manual)</option>
+  </select>
+
   <label class="field">
     <input id="mixSize" type="number" min="20" max="150" value="100" step="5" title="Mix length (20–150 tracks, or minutes)">
     <select id="sizeType" title="Mix length units — Minutes trims a 100-track mix to fit">
@@ -104,6 +112,21 @@
     <option value="title">same title</option>
     <option value="file">same filename</option>
   </select>
+
+  <!-- Recipes: named presets for the sliders/toggles above. Hidden entirely under the
+       MusicIP engine (recipes are v2-param shaped) -- see initRecipes() in studio.js. -->
+  <div id="recipeControls">
+    <div class="presets">
+      <span class="k">Recipe</span>
+      <button id="btnRecipeSave" class="chip">Save as recipe…</button>
+    </div>
+    <div class="btnrow" id="recipeActions" hidden>
+      <button id="btnRecipeUpdate" class="chip">Update</button>
+      <button id="btnRecipeRename" class="chip">Rename</button>
+      <button id="btnRecipeSetDefault" class="chip">Set default</button>
+      <button id="btnRecipeDelete" class="chip">Delete</button>
+    </div>
+  </div>
 </div>
 
 <!-- export popover -->
@@ -269,6 +292,7 @@
       <div id="viewBar" class="viewBar">
         <span id="viewLabel">Library</span>
         <span id="viewSub" class="hint"></span>
+        <span id="mixRecipeTag" class="pill" hidden></span>
         <span id="queueTools" hidden>
           <button id="qClear" title="Clear the queue">Clear</button>
           <button id="qShuffle" title="Shuffle the queue">Shuffle</button>

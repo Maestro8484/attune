@@ -84,6 +84,28 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   never a silent overwrite), surfaced playlist-write failures, filename truncation that
   can't leave a trailing dot/space, and a lock around the status snapshot — all re-verified
   live (happy/collision/cancel/tree) with the gate still 16/16.
+- **Mix recipes + the Genius button** (`web/recipes.py` NEW, `web/app.py`, `src/config.py`,
+  `desktop/build.py`, `web/static/{studio.html,studio.js,studio.css}`): named, saved
+  bundles of the existing mix parameters (five weight sliders, MMR variety, flow,
+  dedup, size) — no engine-math change, no new embedding. Additive `recipes` table
+  outside db.py's schema guard (smartlists pattern) with five seeded built-ins
+  (Classic Journey, Sound-Alike, Same-Era Deep Cuts, Genre Purist, Wander Far — names
+  provisional until the owner's ear pass), CRUD at `/api/recipe/{list,save,delete}`,
+  closed param whitelist clamped to the same ranges `/api/mix` enforces. Studio gains a
+  toolbar recipe select that writes the chosen bundle into the dial UI (`mixParams()`
+  untouched — recipes set dials, they never build requests), Save-as/Update/Rename/
+  Delete/Set-default in the Options popover, an active-recipe badge on the mix header,
+  and localStorage persistence. `default_recipe` settings key (not restart-keyed).
+  **✦ Genius (Ctrl+G)**: one click → `/api/recipe/genius_seed` picks a seed by tier
+  (loved-and-rested → rating≥4 → any analyzed, random within tier) → default recipe
+  (fallback Classic Journey) → normal `doMix` path → playback starts via the existing
+  `Player.playList`. Auto-DJ's queue refill reads the same dials, so it carries the
+  active recipe's params with no extra code. Hidden under the musicip engine (recipes
+  are v2-param-shaped). **Observed live:** built-ins seeded, CRUD + validation
+  round-trips over HTTP, recipe apply/persist across reloads, one real click →
+  audio actually playing (seed picked by tier logic), Auto-DJ refill request carrying
+  recipe params, and the 16 journey-checkpoint exports byte-identical at every step
+  (pre-flight, after each chunk, and after the MAD fixes).
 - **Inline More/Less Like This on mix rows** (`web/static/{studio.js,studio.css}`): every
   non-seed row of a mix shows hover-revealed +/− buttons in the title cell, wired to the
   same thumbs → `/api/refine` (Rocchio) path as the right-click menu. Votes toggle (a
