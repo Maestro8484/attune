@@ -36,6 +36,11 @@ const S = {
   anchor: null,
   seed: null,          // seed of the current mix
   mix: [],
+  ban: [],             // pool indices thrown out of the mix (live, undoable)
+  banLabel: {},        // pool index -> label, captured at removal time (see dropTracks)
+  banArtists: [],      // artist names thrown out of the mix (as displayed)
+  likedArtists: [],    // artist-level "more like this"
+  dislikedArtists: [],
   playlist: null,
   liked: [],
   disliked: [],
@@ -83,6 +88,10 @@ function mixParams() {
     if ($('mmr').checked) p.set('variety', '1');
     if ($('flow').checked) p.set('flow', '1');
   }
+  // live mix filters. ban_artist is repeated, never comma-joined: artist names
+  // contain commas ("Earth, Wind & Fire") and the server splits `ban` on commas.
+  for (const i of S.ban) p.append('ban', i);
+  for (const a of S.banArtists) p.append('ban_artist', a);
   return p;
 }
 function facetQS() {
@@ -567,8 +576,13 @@ async function loadFacets() {
   paint('fAlbum', j.albums, 'album', 'bN');
 }
 
-async function doMix(seedI) {
+async function doMix(seedI, opts) {
   if (seedI == null) return toast('Select a track first', true);
+  // A brand-new mix starts clean; a filter-driven re-mix keeps the filters.
+  if (!(opts && opts.keepFilters)) {
+    S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
+    S.banLabel = {};
+  }
   const byMinutes = $('sizeType').value === 'minutes';
   const want = Math.max(1, +$('mixSize').value || 100);
   const p = mixParams();
@@ -908,6 +922,96 @@ async function showWhy(i, x, y) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* ---------------------------------------------------------- live mix filters */
+
+/* Everything below re-runs the CURRENT mix through the server with the filters
+   applied, so removing a track or an artist backfills from the next-best
+   candidates instead of just leaving a shorter list. */
+
+function artistOf(i) {
+  const row = S.rows.find(r => r.i === i);
+  return (row && row.artist) || '';
+}
+
+async function remixWithFilters(msg) {
+  if (S.seed == null) return toast('Create a mix first', true);
+  // Voting (More/Less) owns the refine path; plain filters re-run the mix path.
+  if (S.liked.length || S.disliked.length ||
+      S.likedArtists.length || S.dislikedArtists.length) {
+    await refine(undefined, msg);
+  } else {
+    await doMix(S.seed, { keepFilters: true, msg });
+  }
+  renderFilterBar();
+}
+
+function dropTracks(ids) {
+  const add = ids.filter(i => i !== S.seed && !S.ban.includes(i));
+  if (!add.length) return toast('Nothing to remove (the seed stays)', true);
+  // Remember the label NOW: once the track leaves the mix it is gone from S.rows,
+  // and the chip would otherwise read "track 1849" instead of the song name.
+  for (const i of add) {
+    const r = S.rows.find(x => x.i === i);
+    if (r) S.banLabel[i] = r.artist ? `${r.artist} — ${r.title}` : r.title;
+  }
+  S.ban.push(...add);
+  remixWithFilters(`Removed ${add.length} track${add.length > 1 ? 's' : ''}`);
+}
+
+function dropArtists(names) {
+  const add = names.filter(a => a && !S.banArtists.includes(a));
+  if (!add.length) return;
+  S.banArtists.push(...add);
+  remixWithFilters(`Blocked ${add.join(', ')}`);
+}
+
+function tuneArtist(name, dir) {
+  if (!name) return toast('No artist on that track', true);
+  const add = dir === 'more' ? S.likedArtists : S.dislikedArtists;
+  const other = dir === 'more' ? S.dislikedArtists : S.likedArtists;
+  const at = add.indexOf(name);
+  if (at >= 0) add.splice(at, 1);
+  else {
+    add.push(name);
+    const o = other.indexOf(name);
+    if (o >= 0) other.splice(o, 1);
+  }
+  remixWithFilters(dir === 'more' ? `More like ${name}` : `Less like ${name}`);
+}
+
+function clearFilters() {
+  S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
+  S.liked = []; S.disliked = []; S.banLabel = {};
+  remixWithFilters('Filters cleared');
+}
+
+function renderFilterBar() {
+  const bar = $('filterBar'), chips = $('fbChips');
+  if (!bar || !chips) return;
+  const items = [
+    ...S.ban.map(i => ({ kind: 'track', key: String(i),
+                         text: S.banLabel[i]
+                               || (S.rows.find(r => r.i === i) || {}).title
+                               || `track ${i}` })),
+    ...S.banArtists.map(a => ({ kind: 'artist', key: a, text: a })),
+    ...S.likedArtists.map(a => ({ kind: 'more', key: a, text: '+ ' + a })),
+    ...S.dislikedArtists.map(a => ({ kind: 'less', key: a, text: '− ' + a })),
+  ];
+  bar.hidden = !items.length;
+  chips.innerHTML = items.map(it =>
+    `<span class="chip chip-${it.kind}" data-kind="${it.kind}" data-key="${esc(it.key)}"
+       title="Click to undo">${esc(it.text)} <b>×</b></span>`).join('');
+}
+
+function undoFilter(kind, key) {
+  const drop = (arr, v) => { const at = arr.indexOf(v); if (at >= 0) arr.splice(at, 1); };
+  if (kind === 'track') drop(S.ban, +key);
+  else if (kind === 'artist') drop(S.banArtists, key);
+  else if (kind === 'more') drop(S.likedArtists, key);
+  else if (kind === 'less') drop(S.dislikedArtists, key);
+  remixWithFilters('Filter removed');
+}
+
 async function tuneTrack(i, dir) {
   // toggle semantics: clicking the same vote again withdraws it; More and Less
   // are mutually exclusive per track. Then re-rank through the same refine() path.
@@ -937,13 +1041,17 @@ async function tuneTrack(i, dir) {
   refine(dir === 'more' && S.liked.includes(i) ? i : undefined);
 }
 
-async function refine(focusI) {
+async function refine(focusI, msg) {
   if (S.seed == null) return toast('Create a mix first', true);
   if (S.stats.engine !== 'v2') return toast('More/Less Like This needs the V2 engine', true);
   try {
     const j = await jpost('/api/refine', {
       i: S.seed, size: Math.min(Math.max(+$('mixSize').value || 100, 20), 150),
       liked: S.liked, disliked: S.disliked,
+      // live filters travel with the refine too, so a removed track/artist can't
+      // reappear the moment you vote on something else
+      ban: S.ban, ban_artist: S.banArtists,
+      liked_artists: S.likedArtists, disliked_artists: S.dislikedArtists,
     });
     const ids = (j.tracks || []).map(x => x.i);
     // Compose: seed, then the liked ANCHORS pinned in the order they were liked, then
@@ -954,6 +1062,7 @@ async function refine(focusI) {
              ...ids.filter(i => i !== S.seed && !anchors.includes(i))];
     $('mixN').textContent = S.mix.length;
     await showMix({ animate: true });
+    renderFilterBar();
     // land the eye: pulse the row you just voted, and if it docked off-screen
     // (a "more" vote pins it up under the seed), follow it there.
     if (focusI != null) {
@@ -964,7 +1073,9 @@ async function refine(focusI) {
                    { duration: 650, easing: 'ease-out' });
       }
     }
-    toast(`Steering: +${S.liked.length} / −${S.disliked.length}`);
+    const votes = S.liked.length + S.likedArtists.length;
+    const against = S.disliked.length + S.dislikedArtists.length;
+    toast(msg || `Steering: +${votes} / −${against}`);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1264,6 +1375,17 @@ function bindEvents() {
       case 'tags': Prefs.openTagEditor(i); break;
       case 'more': tuneTrack(i, 'more'); break;
       case 'less': tuneTrack(i, 'less'); break;
+      case 'moreartist': tuneArtist(row.artist, 'more'); break;
+      case 'lessartist': tuneArtist(row.artist, 'less'); break;
+      // filters act on the whole selection when there is one, so you can throw out
+      // a block of tracks in one go
+      case 'drop': dropTracks(selectedIds().length ? selectedIds() : [i]); break;
+      case 'dropartist': {
+        const names = (selectedIds().length ? selectedIds() : [i])
+          .map(artistOf).filter(Boolean);
+        dropArtists([...new Set(names)]);
+        break;
+      }
       case 'artist': S.facets.artist = new Set([row.artist]); loadLibrary(true); break;
       case 'album': S.facets.album = new Set([row.album]); loadLibrary(true); break;
       case 'genre': S.facets.genre = new Set([(row.genre || '').split(/[;,]/)[0].trim()]);
@@ -1274,6 +1396,15 @@ function bindEvents() {
       case 'reveal': jpost('/api/reveal', { i }).catch(err => toast(err.message, true)); break;
     }
   });
+  // live filter chips: click a chip to undo that one filter, "Clear all" to drop them all
+  const fb = $('fbChips');
+  if (fb) fb.addEventListener('click', e => {
+    const chip = e.target.closest('.chip'); if (!chip) return;
+    undoFilter(chip.dataset.kind, chip.dataset.key);
+  });
+  const fbc = $('fbClear');
+  if (fbc) fbc.addEventListener('click', clearFilters);
+
   document.addEventListener('click', e => {
     if (!e.target.closest('.ctxmenu')) $('ctx').hidden = true;
     if (!e.target.closest('#colMenu') && !e.target.closest('#thead-row')) $('colMenu').hidden = true;
@@ -1315,6 +1446,11 @@ function bindEvents() {
     else if (e.key === 'Delete' && S.view === 'nowplaying') {
       const ids = selectedIds();
       if (ids.length) { Player.removeFromQueue(ids); showNowPlaying(); }
+    }
+    // Del in the mix view throws the selection out of the mix (undoable via the chips)
+    else if (e.key === 'Delete' && S.view === 'mix') {
+      const ids = selectedIds();
+      if (ids.length) dropTracks(ids);
     }
     else if (e.key >= '0' && e.key <= '5' && !e.ctrlKey && !e.metaKey) {
       const i = firstSelected(); if (i != null) rateTrack(i, +e.key);

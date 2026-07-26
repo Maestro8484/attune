@@ -173,6 +173,11 @@
   <li data-act="mix"><b>Create Mix</b><kbd>Ctrl+M</kbd></li>
   <li data-act="more">More Like This</li>
   <li data-act="less">Less Like This</li>
+  <li data-act="moreartist">More Like This Artist</li>
+  <li data-act="lessartist">Less Like This Artist</li>
+  <li class="sep"></li>
+  <li data-act="drop">Remove from Mix<kbd>Del</kbd></li>
+  <li data-act="dropartist"><span>Block This Artist</span></li>
   <li class="sep"></li>
   <li data-act="play">Play</li>
   <li data-act="playnext">Play Next</li>
@@ -304,6 +309,12 @@
           <button id="btnViewGrid" title="Album grid">▦ Albums</button>
         </span>
         <button id="btnBackLib" hidden>← Back to Library</button>
+      </div>
+      <!-- live mix filters: every removal is visible and one click from undone -->
+      <div id="filterBar" class="filterBar" hidden>
+        <span class="fbLabel">Filtered out:</span>
+        <span id="fbChips"></span>
+        <button id="fbClear" class="fbClear" title="Clear all mix filters">Clear all</button>
       </div>
       <div class="tableWrap" id="tableWrap">
         <table id="tbl">

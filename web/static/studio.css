@@ -293,6 +293,26 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
   padding:3px 8px; cursor:pointer; font-size:12px; }
 .viewBar button:hover { border-color:var(--accent); }
 #queueTools { display:flex; gap:6px; }
+
+/* live mix filters — every removal stays visible and one click from undone */
+.filterBar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:5px 10px; border-bottom:1px solid var(--line); background:var(--panel);
+  flex:0 0 auto; font-size:12px; }
+.fbLabel { color:var(--muted); text-transform:uppercase; font-size:11px;
+  letter-spacing:.4px; }
+.filterBar .chip { display:inline-flex; align-items:center; gap:5px; cursor:pointer;
+  padding:2px 8px; border-radius:11px; border:1px solid var(--line);
+  background:var(--panel2); max-width:230px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.filterBar .chip:hover { border-color:var(--accent); color:var(--accent); }
+.filterBar .chip b { opacity:.55; font-weight:700; }
+.filterBar .chip:hover b { opacity:1; }
+.filterBar .chip-more { border-color:var(--accent); }
+.filterBar .chip-less { border-style:dashed; }
+.fbClear { margin-left:auto; background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; padding:2px 8px; cursor:pointer; font-size:11px; color:var(--muted); }
+.fbClear:hover { border-color:var(--accent); color:var(--fg); }
+
 .tableWrap { flex:1; overflow:auto; position:relative; }
 table { border-collapse:separate; border-spacing:0; width:100%; }
 thead th { position:sticky; top:0; z-index:2; background:var(--panel2);
