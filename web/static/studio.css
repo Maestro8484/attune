@@ -214,6 +214,11 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 /* tree */
 .treepane { flex:1 1 auto; }
 .tree { list-style:none; margin:0; padding:4px; overflow:auto; }
+/* the main nav (#tree: Library / Now Playing / smart views) must NEVER be crushed:
+   .tree.pl below is flex-grow and a big playlist folder (hundreds of entries) starved
+   #tree to a ~14px clipped sliver, leaving Now Playing invisible and unclickable.
+   Observed 2026-07-26 via elementFromPoint: a playlist row ate the click. */
+#tree { flex:0 0 auto; }
 .tree li { padding:5px 8px; border-radius:6px; cursor:pointer; display:flex; gap:7px;
   align-items:center; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .tree li:hover { background:var(--hover); }
