@@ -1,4 +1,4 @@
-"""Attune scan job — wires the EXISTING incremental analyze pipeline to a button.
+r"""Attune scan job — wires the EXISTING incremental analyze pipeline to a button.
 
 The pipeline (src/scan.py import-folder -> analyze, src/embed.py) is already
 incremental, resumable, and safe to re-run (mtime-skip logic verified in db.py).
@@ -16,9 +16,12 @@ Interpreter routing for the heavy (analyze/embed) stages:
     scan.py analyze + embed_onnx.py (numpy + librosa + onnxruntime, torch-free —
     the ONNX CLAP twin proven bit-faithful in ROADMAP_STANDALONE Phase A). No
     second Python environment to install or configure.
-  - no ml_venv_python (frozen)  -> refuse honestly: sys.executable is the packaged
-    GUI exe, not a Python, and scan.py/embed_onnx.py aren't in the bundle yet
-    (ROADMAP_STANDALONE Phase B). Configure an ML venv or use a dev build.
+  - no ml_venv_python (frozen)  -> the analyzer program: analyzer\AttuneAnalyzer.exe,
+    which ships in a subfolder beside the GUI exe and carries librosa/onnxruntime,
+    the CLAP encoder and a bundled ffmpeg. sys.executable is the packaged GUI exe,
+    which no longer contains any of that (it is ~800 MB the mixing path never uses),
+    so the work goes to the analyzer instead of re-entering this exe. If that
+    subfolder is absent, refuse honestly and name the expected path.
 
 The standalone path needs librosa + onnxruntime importable by the app's own
 interpreter; embed_onnx.py exits with an honest message if librosa is absent.
@@ -56,6 +59,17 @@ _PROG_RE = re.compile(r"(\d+)\s*/\s*(\d+)")
 # a scan from its own background thread alongside the HTTP /api/scan/start endpoint,
 # two callers could both pass the `if self.running` check before either set it True.
 _START_LOCK = threading.Lock()
+
+# The analyzer ships as its own program in a subfolder next to the frozen GUI exe
+# (see desktop/analyzer_main.py). Kept as a function, not a constant, because
+# sys.executable is only meaningful at call time (and the tests fake it).
+ANALYZER_SUBDIR = "analyzer"
+ANALYZER_EXE = "AttuneAnalyzer.exe"
+
+
+def _analyzer_exe():
+    return os.path.join(os.path.dirname(os.path.abspath(sys.executable)),
+                        ANALYZER_SUBDIR, ANALYZER_EXE)
 
 
 def _db_counts(db_path):
@@ -139,14 +153,20 @@ class ScanJob:
             #   no ml_python, dev    -> standalone path: the app's OWN interpreter +
             #                           embed_onnx.py (numpy+librosa+onnxruntime), so
             #                           there is no second Python environment to set up.
-            #   no ml_python, frozen -> worker path: sys.executable is the packaged
-            #                           Attune.exe, not a Python, but scan.py/embed_onnx.py
-            #                           ARE bundled (attune/src) and app_desktop.py's
-            #                           `--attune-worker` sentinel re-enters the exe as a
-            #                           headless analyzer, so this re-invokes itself instead
-            #                           of shelling out to a system python.
+            #   no ml_python, frozen -> analyzer program: sys.executable is the packaged
+            #                           GUI exe, not a Python, and the lean GUI bundle no
+            #                           longer carries librosa/onnxruntime/the CLAP model.
+            #                           analyzer\AttuneAnalyzer.exe (beside the GUI exe)
+            #                           does, and takes the same tool argv the old
+            #                           `--attune-worker` sentinel took.
             frozen = getattr(sys, "frozen", False)
             worker_mode = frozen and not ml_python
+            analyzer = _analyzer_exe() if worker_mode else None
+            if worker_mode and not os.path.isfile(analyzer):
+                self.error = ("the analyzer component is missing — expected "
+                              f"{analyzer}. Reinstall Attune, or set an ML venv in "
+                              "Preferences → Advanced to analyze with your own Python.")
+                return
             if ml_python:
                 heavy_python = ml_python
                 embed_script = os.path.join(SRC, "embed.py")
@@ -162,17 +182,16 @@ class ScanJob:
             imp_python = ml_python or sys.executable
 
             def _scan_argv(python_exe, *scan_args):
-                """argv for a scan.py invocation. In worker_mode, route through the
-                frozen exe's own --attune-worker re-entry point (sys.executable IS
-                Attune.exe there); otherwise run scan.py directly under python_exe."""
+                """argv for a scan.py invocation. In worker_mode, hand the work to the
+                analyzer program (which contains scan.py and its heavy deps);
+                otherwise run scan.py directly under python_exe."""
                 if worker_mode:
-                    return [sys.executable, "--attune-worker", "scan", *scan_args]
+                    return [analyzer, "scan", *scan_args]
                 return [python_exe, os.path.join(SRC, "scan.py"), *scan_args]
 
             def _embed_argv():
                 if worker_mode:
-                    return [sys.executable, "--attune-worker", "embed_onnx",
-                            "--db", self.db_path]
+                    return [analyzer, "embed_onnx", "--db", self.db_path]
                 return [heavy_python, embed_script, "--db", self.db_path]
 
             for d in folders:
