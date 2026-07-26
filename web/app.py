@@ -347,9 +347,12 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return out
 
     def _with_weights(overrides, fn):
-        if not overrides:
-            return fn()
+        # ALL mixes go through the lock, overrides or not: a no-override request
+        # used to run unlocked, so it could read eng.w mid-mutation while a
+        # concurrent overridden request had its temporary weights applied.
         with weights_lock:
+            if not overrides:
+                return fn()
             saved = dict(eng.w)
             eng.w.update(overrides)
             try:
