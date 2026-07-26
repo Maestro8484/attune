@@ -384,6 +384,16 @@ const Player = (() => {
     maybeExtendQueue();
   }
 
+  function stop() {
+    // full stop, Winamp semantics: halt playback AND rewind to the track start.
+    // Queue and position stay; Play resumes this track from 0:00.
+    const el = P.els[P.cur];
+    if (!el.src) return;
+    el.pause();
+    el.currentTime = 0;
+    paintPlayBtn();
+  }
+
   function togglePlay() {
     const el = P.els[P.cur];
     if (!el.src) {
@@ -689,6 +699,7 @@ const Player = (() => {
     }
     $('tPlay').onclick = togglePlay;
     $('miniPlay').onclick = togglePlay;
+    $('tStop').onclick = stop;
     $('tPrev').onclick = prev; $('miniPrev').onclick = prev;
     $('tNext').onclick = () => next(); $('miniNext').onclick = () => next();
     $('tShuf').onclick = toggleShuffle;
@@ -773,6 +784,6 @@ const Player = (() => {
     // actions
     playAt, playList, playTrack, queueAdd, removeFromQueue, clearQueue,
     moveInQueue, shuffleQueue, toggleShuffle, cycleRepeat,
-    togglePlay, next, prev, toggleEqPanel, toggleAutoDj, paintNowPlayingMeta,
+    togglePlay, stop, next, prev, toggleEqPanel, toggleAutoDj, paintNowPlayingMeta,
   };
 })();
