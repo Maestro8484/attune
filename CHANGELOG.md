@@ -6,6 +6,66 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Fixed
+- **Three dead controls found by the S10 GUI audit** (`web/static/{studio.js,studio.css}`):
+  (1) *More/Less Like This Artist ignored a multi-row selection* — only the right-clicked
+  row's artist voted, while Remove/Block honored the selection; the menu items now act on
+  every selected artist with one re-mix. (2) *The main nav tree could be crushed to a
+  clipped ~14 px sliver* whenever the playlist folder is large (`.tree.pl` is flex-grow and
+  `#tree` was default-shrinkable): with 232 playlist entries, "Now Playing" was invisible
+  and a playlist row ate its clicks — invisible to synthetic-event tests, caught by
+  elementFromPoint. `#tree` is now `flex:0 0 auto`. (3) *"Save queue as playlist" was dead
+  by mouse*: the click that opened the export panel bubbled to the document-level
+  outside-click handler, which closed it in the same frame (`#queueTools` buttons were not
+  exempt like `#toolbar` buttons). All three re-observed fixed via hit-testing on a live
+  server; regression gate 16/16 byte-identical (pool 21,236, k=25).
+- **weights_lock bypass** (`web/app.py`): a mix request carrying no weight params ran
+  outside the lock and could read `eng.w` mid-mutation while a slider-overridden request
+  had its temporary weights applied. All mixes now serialize through the lock.
+  Pre-existing at `6fd1072` (MAD MAJOR#1 from the recipes round); single-request behavior
+  unchanged, gate 16/16.
+
+### Changed
+- **The program you launch is 8x smaller: 938 MB → 119 MB** (`desktop/build.py`,
+  `desktop/worker_entry.py` NEW, `desktop/analyzer_main.py` NEW, `desktop/app_desktop.py`,
+  `web/scanjob.py`). `Attune.exe` was carrying ~800 MB it never used — the 276 MB CLAP
+  encoder, ffmpeg + ffprobe (283 MB) and librosa/numba/llvmlite/scipy/sklearn — all of
+  it only for analyzing NEW audio, while mixing reads vectors already in `mixer.db`.
+  The analyzer is now its own program, `analyzer\AttuneAnalyzer.exe`, inside the same
+  install; `scanjob.py` launches it for the frozen + no-ML-venv case and refuses
+  honestly, naming the expected path, when the folder is absent. **Nothing was removed:**
+  onnxruntime + `metric_head.onnx` stay in the GUI because `engine: learned` is reachable
+  from settings, and the analyzer scripts stay bundled because the ML-venv path runs them
+  under the user's own Python. The whole install is 1,032 MB, ~94 MB MORE than before —
+  the analyzer bundle duplicates the Python runtime — so this buys a small daily program
+  and a smaller AV surface, not less disk. Startup is unchanged (1.42 s to a window):
+  profiling refuted the earlier hypothesis that the analyzer stack cost import time in
+  the GUI process — it was never imported there. **Observed:** routing equivalent on all
+  four (ML venv × frozen) cases via `tools/routing_cases.py` (1-3 byte-identical, 4
+  replaced with the same tool names and argv tail); scrubbed-PATH (`System32` + `Windows`
+  only) analyzer run import/analyze/embed all rc=0 with real tags and durations from the
+  bundled ffprobe, features dim 79 + tempo, clap dim 512, 0 errors; the lean GUI mixing
+  under the same scrubbed PATH; a full scan driven from the real GUI into the analyzer;
+  regression gate 16/16 byte-identical.
+
+### Fixed
+- **A packaged scan could not finish for anyone with an ML venv configured**
+  (`desktop/build.py`). `embed.py` was never included in the bundle, so the packaged app
+  ran import and analyze and then died at the embed stage with rc=2 "can't open file" —
+  new tracks got librosa features but no CLAP vector, and so never joined the mixable
+  pool. **Observed** rc=2 before, rc=0 ("21456 already embedded, 0 to go") after. Missed
+  by earlier verification because a dev run has `embed.py` on disk.
+- **Scan progress never reached the UI in the packaged app**
+  (`desktop/analyzer_main.py`, `desktop/worker_entry.py`). The frozen worker was the
+  *windowed* GUI exe, which has no usable stdout, so every progress line the scan job
+  streams was written into nothing. The analyzer is a console build (launched with
+  `CREATE_NO_WINDOW`, so no window appears) and reconfigures stdout to UTF-8, so lines
+  now stream and accented track names survive the trip. **Observed:** "3/3 ok=3 err=0
+  0.60/s", "done: 3 embedded, 0 errors".
+
+### Added
+- **Stop button** (`web/static/{studio.html,studio.js}`, `web/static/player.js`):
+  transport Stop between Play and Next (V key) — halts playback and rewinds to the track
+  start; the queue and position stay, Play resumes from 0:00.
 - **Startup: 30.8 s → 3.0 s to a window, 4.7 s to a fully loaded library**
   (`src/hybrid.py`, `desktop/app_desktop.py`, `web/app.py`,
   `web/static/{boot.js,studio.js}`). Four separate causes, each measured before it was
