@@ -58,6 +58,29 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   as `refine`/`explain`). Regression gate 16/16 byte-identical against
   `REGRESSION_BASELINE_20260719` — the default `/api/mix` path, including the existing
   boolean `variety=1&flow=1` journey export, is untouched.
+- **The library is now alive** (`web/libreload.py` NEW, `web/libverify.py` NEW,
+  `web/{app.py,studio.py,userdata.py,smartlists.py,recipes.py,exportjob.py}`,
+  `web/static/{studio.html,studio.css,studio.js,prefs.js}`). Three pieces. (1) *Hot pool
+  reload*: `POST /api/lib/reload` rebuilds the engine from the DB in a background thread
+  and installs it into the running app, so freshly scanned tracks become searchable and
+  mixable WITHOUT restarting — the scan toast's "Restart Attune to load them" is now a
+  "Load now" button. The expensive build runs off-lock against throwaway instances; the
+  install is an in-place swap under a new `engine_lock` that every state-reading route
+  shares (`@_locked`), so a request runs entirely pre- or entirely post-reload, never
+  torn (`/audio` locks only its path lookup, so streaming can't stall a reload). (2)
+  *Missing-file detection*: `POST /api/lib/verify` walks every track path in a background
+  job into a new additive `filestate` table (outside the schema guard, usermeta pattern),
+  surfacing a `missing` count in `/api/lib/stats`, a "Missing Files" smart view, a
+  hide-missing filter (default off — mixes are NOT changed by a missing flag), and a
+  context-menu "Locate file…" relink that rekeys `tracks/features/clap/filestate` to the
+  new path. (3) *A real "Remove from library…"*: `POST /api/track/delete` transactionally
+  removes the track's rows across every per-track table and never touches the audio file
+  on disk; the in-RAM pool keeps the track until the next reload, and the UI says so.
+  **Observed:** scan of 3 scratch copies → reload → mixable without restart
+  (`old_count 21236, new_count 21239`, `/api/mix` real on all 3); 8 concurrent mixes
+  during a reload all 200; regression gate 16/16 byte-identical before AND after a no-op
+  reload; delete leaves 0 rows across 5 tables; the verify job found 22 genuinely missing
+  files already in the production library.
 
 ### Fixed
 - **Three dead controls found by the S10 GUI audit** (`web/static/{studio.js,studio.css}`):

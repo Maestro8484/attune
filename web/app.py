@@ -467,6 +467,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective)
 
     @app.get("/api/radio/next")
+    @_locked
     def radio_next():
         """Journey/Radio mode: the next batch of an infinite queue, seeded from Now
         Playing. Stateless -- the CLIENT tracks `exclude` (already played/queued pool
