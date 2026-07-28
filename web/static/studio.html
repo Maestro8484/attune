@@ -104,6 +104,22 @@
     </div>
     <label class="chk"><input id="mmr" type="checkbox"> MMR variety</label>
     <label class="chk"><input id="flow" type="checkbox"> Flow ordering</label>
+
+    <div class="expsep">Radio — infinite journey</div>
+    <label class="chk"><input id="radioOn" type="checkbox"> Radio (keep the queue playing forever)</label>
+    <label class="slider">
+      <span class="k">Radio variety <em id="radioVarietyV">3</em></span>
+      <input id="radioVariety" type="range" min="0" max="9" step="1" value="3">
+      <span class="hint">Same variety-walk idea as the Similarity dial above (MusicIP's own
+        mechanism): keeps each candidate with probability 1/(1+variety). 0 = strict top match.</span>
+    </label>
+    <label class="row"><span class="k">Energy arc</span>
+      <select id="radioArc">
+        <option value="flat">Flat — hold steady</option>
+        <option value="rise">Rise — build energy</option>
+        <option value="fall">Fall — wind down</option>
+        <option value="wave">Wave — ebb and flow</option>
+      </select></label>
   </div>
 
   <label class="chk"><input id="dedupOn" type="checkbox" checked> Hide duplicates</label>

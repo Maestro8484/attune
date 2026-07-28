@@ -72,7 +72,8 @@ class V2Engine(Engine):
     """Thin wrapper over hybrid.HybridEngine. HybridEngine's own `.paths` pool IS the
     shared pool here (no reconciliation needed) -- pool_i is just eng.idx[path]."""
     name = "v2"
-    capabilities = frozenset({"search", "similar", "refine", "mmr", "flow", "explain", "weights"})
+    capabilities = frozenset({"search", "similar", "refine", "mmr", "flow", "explain",
+                              "weights", "radio"})
 
     def __init__(self, db_path=None, hybrid_engine=None):
         if hybrid_engine is None:
@@ -134,6 +135,16 @@ class V2Engine(Engine):
 
     def set_weights(self, weights: dict):
         self.eng.w.update(weights)
+
+    def radio_next(self, seed_ref, n=20, exclude=(), variety=0.0, artist_spacing=3,
+                    arc="flat", pos=0, rng=None):
+        i = _as_pool_i(seed_ref)
+        excl_i = [_as_pool_i(x) for x in exclude]
+        picks = self.eng.radio_next(self.eng.paths[i], n=n, exclude=excl_i, variety=variety,
+                                    artist_spacing=artist_spacing, arc=arc, pos=pos, rng=rng)
+        if not picks:
+            return []
+        return [self._ref(self.eng.idx[p]) for p in picks]
 
 
 class MusicIPAdapter(Engine):

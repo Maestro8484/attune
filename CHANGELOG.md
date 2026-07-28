@@ -5,6 +5,29 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0] — unreleased (initial public cut)
 
+### Added
+- **Journey (Radio) mode: an infinite ambient-radio queue** (`src/hybrid.py`
+  `HybridEngine.radio_next()` NEW, `src/engine.py` `V2Engine.radio_next()` NEW,
+  `web/app.py` `GET /api/radio/next` NEW, `web/static/{studio.html,studio.js,player.js}`).
+  Reimplements MusicIP Mixer's actual variety mechanism, reverse-engineered in
+  `TEACHER_MECHANICS.md` B.1/B.7: i.i.d. Bernoulli thinning (`p = 1/(1+variety)`) of a
+  single fixed similarity-rank scan — NOT a diversity/packing walk — plus the same
+  artist-spacing drop-for-good rule `mix()` already uses. Adds an energy-arc corridor
+  MusicIP never had: a second Bernoulli-style accept/reject on the stored librosa
+  `rms_mean` (loudness) feature (`features.py` texture-group offset 75), biasing the walk
+  toward a flat/rise/fall/wave target over a 20-track period. Off by default —
+  `variety<=0` is exactly `mix()`'s own walk (`radio_next(seed, n, exclude=[], variety=0,
+  arc=<any>) == mix(seed, size=n)`, verified live). Stateless server (`exclude`/`pos` are
+  client-owned); the client refills the queue from `/api/radio/next` when Now Playing has
+  fewer than 5 upcoming tracks, seeded from Now Playing (falling back to the last mix
+  seed), excluding the last 100 played/queued pool indices. New Studio controls: a Radio
+  toggle, arc picker and variety slider in the Mix Options popover, and a `RADIO` LCD flag
+  alongside `SHUF`/`REP`/`DJ`/`EQ`. V2-engine only (`radio` capability, gated the same way
+  as `refine`/`explain`). Regression gate 16/16 byte-identical against
+  `REGRESSION_BASELINE_20260719` — the default `/api/mix` path, including the existing
+  boolean `variety=1&flow=1` journey export, is untouched. Built on `feature/journey`,
+  not yet merged.
+
 ### Fixed
 - **Three dead controls found by the S10 GUI audit** (`web/static/{studio.js,studio.css}`):
   (1) *More/Less Like This Artist ignored a multi-row selection* — only the right-clicked
