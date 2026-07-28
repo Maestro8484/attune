@@ -1101,7 +1101,7 @@ function bindSliders() {
     const upd = () => out.textContent = dp ? Number(el.value).toFixed(dp) : el.value;
     el.addEventListener('input', upd); upd();
   };
-  ['style', 'variety'].forEach(i => link(i, 0));
+  ['style', 'variety', 'radioVariety'].forEach(i => link(i, 0));
   ['clap', 'lib', 'genre', 'bpm', 'era'].forEach(i => link(i, 2));
 }
 
@@ -1453,6 +1453,7 @@ function bindEvents() {
     else if (k === 's') Player.toggleShuffle();
     else if (k === 'r') Player.cycleRepeat();
     else if (k === 'd') Player.toggleAutoDj();
+    else if (k === 'j') Player.toggleRadio();
     else if (k === 'e') Player.toggleEqPanel();
     else if (e.key === 'F2') { const i = firstSelected(); if (i != null) Prefs.openTagEditor(i); }
     else if (e.key === 'Delete' && S.view === 'nowplaying') {

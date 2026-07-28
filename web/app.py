@@ -24,6 +24,7 @@ import os
 import sqlite3
 import threading
 
+import numpy as np
 from flask import (Flask, Response, jsonify, redirect, render_template_string,
                    request, send_file)
 
@@ -431,6 +432,71 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         overrides = _weight_overrides()
         effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective)
+
+    @app.get("/api/radio/next")
+    def radio_next():
+        """Journey/Radio mode: the next batch of an infinite queue, seeded from Now
+        Playing. Stateless -- the CLIENT tracks `exclude` (already played/queued pool
+        indices) and `pos` (progress through the energy arc) across repeated calls; see
+        hybrid.HybridEngine.radio_next() for the mechanism itself: MusicIP's actual
+        variety mechanism (i.i.d. Bernoulli thinning of a fixed similarity ranking, per
+        TEACHER_MECHANICS.md B.1/B.7 -- NOT a diversity/packing walk) plus an energy-arc
+        corridor MusicIP never had. Shares this route's weight-override/lock plumbing
+        with /api/mix (_weight_overrides/_with_weights) rather than re-parsing dials.
+
+        V2-only for now (gated on the 'radio' capability, same pattern as /api/refine
+        and /api/explain below) -- the mechanism is a HybridEngine ranking walk, and
+        neither the live-MusicIP adapter nor the learned-metric engine expose one."""
+        if "radio" not in active.capabilities:
+            return jsonify(error=f"radio not supported by the '{active.name}' engine"), 501
+        try:
+            i = int(request.args.get("seed", ""))
+            n = min(max(int(request.args.get("n", 20)), 1), 100)
+            variety = max(0.0, float(request.args.get("variety", 0)))
+            pos = max(0, int(request.args.get("pos", 0)))
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        if not (0 <= i < len(eng.paths)):
+            return jsonify(error="unknown seed"), 404
+        arc = request.args.get("arc", "flat")
+        if arc not in ("flat", "rise", "fall", "wave"):
+            arc = "flat"
+
+        # exclude=<csv pool indices>, repeatable -- same comma-split convention as
+        # _ban_args()'s `ban` (never applied to ban_artist: names legitimately contain
+        # commas, but these are always integers).
+        exclude = []
+        for raw in request.args.getlist("exclude"):
+            for part in raw.split(","):
+                part = part.strip()
+                if not part:
+                    continue
+                try:
+                    ei = int(part)
+                except ValueError:
+                    return jsonify(error="bad request"), 400
+                if 0 <= ei < len(eng.paths):
+                    exclude.append(ei)
+
+        # optional rng seed, for reproducible tests -- radio otherwise varies call to
+        # call by design (a fresh np.random.default_rng() when absent).
+        rng = None
+        raw_rng = request.args.get("rng")
+        if raw_rng is not None:
+            try:
+                rng = np.random.default_rng(int(raw_rng))
+            except ValueError:
+                return jsonify(error="bad request"), 400
+
+        overrides = _weight_overrides()
+        try:
+            refs = _with_weights(overrides, lambda: active.radio_next(
+                i, n=n, exclude=exclude, variety=variety, arc=arc, pos=pos, rng=rng))
+        except AttributeError:
+            return jsonify(error=f"radio not supported by the '{active.name}' engine"), 501
+        tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
+        return jsonify(seed=labels[i], seed_i=i, tracks=tracks,
+                       variety=variety, arc=arc, pos=pos)
 
     @app.post("/api/refine")
     def refine():

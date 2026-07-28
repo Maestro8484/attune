@@ -32,6 +32,10 @@ const Player = (() => {
     shuffle: store.get('shuffle', false),
     repeat: store.get('repeat', 'off'),        // off | all | one
     autodj: store.get('autodj', false),        // infinite queue: refill with similar tracks
+    radio: store.get('radio', false),          // Journey mode: refill via /api/radio/next
+    radioArc: store.get('radioArc', 'flat'),   // flat | rise | fall | wave
+    radioVariety: store.get('radioVariety', 3),
+    radioPos: store.get('radioPos', 0),        // steps walked into the current energy arc
     djBusy: false,
     xfade: store.get('xfade', 0),
     rgOn: store.get('rg', false),
@@ -121,6 +125,7 @@ const Player = (() => {
       `<span class="${P.shuffle ? 'on' : ''}">SHUF</span> ` +
       `<span class="${P.repeat !== 'off' ? 'on' : ''}">REP${P.repeat === 'one' ? '1' : ''}</span> ` +
       `<span class="${P.autodj ? 'on' : ''}">DJ</span> ` +
+      `<span class="${P.radio ? 'on' : ''}">RADIO</span> ` +
       `<span class="${P.eqOn ? 'on' : ''}">EQ</span>`;
   }
   // kbps / kHz readout — one tag read per track change, cached
@@ -144,12 +149,59 @@ const Player = (() => {
     toast(P.autodj ? 'Auto-DJ on — the queue will keep itself full' : 'Auto-DJ off');
     if (P.autodj) maybeExtendQueue();
   }
+  function toggleRadio() {
+    P.radio = !P.radio; store.set('radio', P.radio);
+    const on = $('radioOn'); if (on) on.checked = P.radio;
+    paintTransport();
+    toast(P.radio ? 'Radio on — an infinite journey from Now Playing' : 'Radio off');
+    if (P.radio) { P.radioPos = 0; maybeExtendQueue(); }
+  }
+  // Radio mode (Journey): when fewer than 5 tracks remain upcoming, pull the next batch
+  // from /api/radio/next -- the MusicIP-style variety walk + energy-arc corridor (see
+  // hybrid.HybridEngine.radio_next()) -- seeded from Now Playing (falling back to the
+  // last mix seed if nothing is playing yet), excluding the last 100 played/queued pool
+  // indices so the walk doesn't loop back over what you just heard. Stateless server side:
+  // this client owns `exclude` (from P.q) and `pos` (P.radioPos, how far into the energy
+  // arc this session has walked) across repeated calls.
+  async function extendQueueRadio() {
+    if (P.q.length - P.pos >= 5) return;
+    const seed = currentPool() >= 0 ? currentPool()
+      : (typeof S !== 'undefined' && S.seed != null ? S.seed : -1);
+    if (seed < 0) return;
+    P.djBusy = true;
+    try {
+      const p = new URLSearchParams();
+      p.set('seed', seed);
+      p.set('n', 20);
+      p.set('variety', P.radioVariety);
+      p.set('arc', P.radioArc);
+      p.set('pos', P.radioPos);
+      const exclude = P.q.slice(-100);
+      if (exclude.length) p.set('exclude', exclude.join(','));
+      // ride the same mix dials (weights) Auto-DJ/Create Mix use -- never re-parsed here.
+      if (typeof mixParams === 'function') {
+        const mp = mixParams();
+        for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) {
+          if (mp.has(k)) p.set(k, mp.get(k));
+        }
+      }
+      const j = await jget('/api/radio/next?' + p);
+      const have = new Set(P.q);
+      const fresh = (j.tracks || []).map(x => x.i).filter(i => i !== seed && !have.has(i));
+      if (fresh.length) {
+        P.q.push(...fresh);
+        P.radioPos += fresh.length; store.set('radioPos', P.radioPos);
+        paintTransport(); persist();
+        if (S.view === 'nowplaying') showNowPlaying();
+      }
+    } catch { /* engine hiccup — try again on the next tick */ }
+    finally { P.djBusy = false; }
+  }
   // When the queue is within 3 of the end, append a fresh batch of tracks the engine
   // says sound like the current one — the "infinite radio" the recommendation engine is
   // actually for. De-dupes against what's already queued.
-  async function maybeExtendQueue() {
-    if (!P.autodj || P.djBusy) return;
-    if (P.pos < 0 || P.q.length - P.pos > 3) return;
+  async function extendQueueAutoDj() {
+    if (P.q.length - P.pos > 3) return;
     const seed = currentPool();
     if (seed < 0) return;
     P.djBusy = true;
@@ -166,6 +218,14 @@ const Player = (() => {
       }
     } catch { /* engine hiccup — try again on the next tick */ }
     finally { P.djBusy = false; }
+  }
+  // Radio and Auto-DJ are alternative refill strategies for the same "queue is running
+  // low" moment -- Radio (when on) takes priority; Auto-DJ's plain /api/mix refill is
+  // the fallback for listeners who never touch Radio. Both no-op with nothing playing.
+  async function maybeExtendQueue() {
+    if (P.djBusy || P.pos < 0) return;
+    if (P.radio) return extendQueueRadio();
+    if (P.autodj) return extendQueueAutoDj();
   }
   function paintPlayBtn() {
     const playing = P.els[P.cur] && !P.els[P.cur].paused;
@@ -667,6 +727,31 @@ const Player = (() => {
   }
   function toggleEqPanel() { $('eqPanel').hidden = !$('eqPanel').hidden; }
 
+  /* ---------------------------------------------------------------- Radio controls
+     Lives in the same Mix Options popover as the dial sliders (studio.html's
+     #v2Controls), wired here (not studio.js) because it's queue/playback behaviour,
+     the same split EQ/xfade/replaygain already follow. */
+  function bindRadioControls() {
+    const on = $('radioOn'), arc = $('radioArc'), variety = $('radioVariety');
+    if (!on || !arc || !variety) return;      // options popover not present (e.g. classic view)
+    on.checked = P.radio;
+    arc.value = P.radioArc;
+    variety.value = P.radioVariety;
+    on.addEventListener('change', () => {
+      P.radio = on.checked; store.set('radio', P.radio);
+      if (P.radio) P.radioPos = 0;
+      paintTransport();
+      toast(P.radio ? 'Radio on — an infinite journey from Now Playing' : 'Radio off');
+      if (P.radio) maybeExtendQueue();
+    });
+    arc.addEventListener('change', () => {
+      P.radioArc = arc.value; store.set('radioArc', P.radioArc);
+    });
+    variety.addEventListener('input', () => {
+      P.radioVariety = +variety.value; store.set('radioVariety', P.radioVariety);
+    });
+  }
+
   /* ---------------------------------------------------------------- wiring */
   function bind() {
     P.els = [$('audio'), $('audioB')];
@@ -706,6 +791,7 @@ const Player = (() => {
     $('tRep').onclick = cycleRepeat;
     $('tDj').onclick = toggleAutoDj;
     $('tEq').onclick = toggleEqPanel;
+    bindRadioControls();
     const seekTo = v => {
       const el = P.els[P.cur];
       if (el.duration) el.currentTime = (v / 1000) * el.duration;
@@ -784,6 +870,7 @@ const Player = (() => {
     // actions
     playAt, playList, playTrack, queueAdd, removeFromQueue, clearQueue,
     moveInQueue, shuffleQueue, toggleShuffle, cycleRepeat,
-    togglePlay, stop, next, prev, toggleEqPanel, toggleAutoDj, paintNowPlayingMeta,
+    togglePlay, stop, next, prev, toggleEqPanel, toggleAutoDj, toggleRadio,
+    paintNowPlayingMeta,
   };
 })();
