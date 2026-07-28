@@ -74,3 +74,9 @@ bridge/playlists/
 # Per-session, and they carry personal library paths -- local only.
 eval/abtest_key_*.json
 eval/abtest_results.jsonl
+
+# mined behavioural pairs (eval/build_behavior_pairs.py --emit-pairs): ~6 MB, carries the
+# full personal library path list, and regenerates in seconds. The small result JSONs next
+# to it (behavior_probe_result / behavior_signal_probe) ARE committed -- they are the
+# evidence behind eval/SIGNAL_REPORT.md.
+eval/behavior_pairs.json
