@@ -129,6 +129,10 @@
     <option value="file">same filename</option>
   </select>
 
+  <label class="chk" title="Purely a display filter — missing tracks stay in the
+    library and in mixes either way">
+    <input id="hideMissing" type="checkbox"> Hide missing files</label>
+
   <!-- Recipes: named presets for the sliders/toggles above. Hidden entirely under the
        MusicIP engine (recipes are v2-param shaped) -- see initRecipes() in studio.js. -->
   <div id="recipeControls">
@@ -211,6 +215,9 @@
   <li data-act="why">Why this pick?</li>
   <li data-act="reveal">Open File Location</li>
   <li data-act="copy">Copy Artist — Title</li>
+  <li class="sep"></li>
+  <li data-act="locate">Locate file…</li>
+  <li data-act="delete"><span>Remove from library…</span></li>
 </ul>
 
 <!-- column chooser (right-click table header) -->
@@ -232,6 +239,7 @@
         <li data-smart="recent"><span class="ti">✚</span> Recently Added</li>
         <li data-smart="mostplayed"><span class="ti">↻</span> Most Played</li>
         <li data-smart="neverplayed"><span class="ti">·</span> Never Played</li>
+        <li data-smart="missing"><span class="ti">⚠</span> Missing Files <b id="missingN">0</b></li>
         <li class="grouphead" id="foldersHead">Folders <span class="fold" id="foldersTog">▸</span></li>
       </ul>
       <ul id="folderTree" class="tree folders" hidden></ul>
@@ -381,6 +389,16 @@
   <span id="scanEta" class="hint"></span>
   <span class="spacer"></span>
   <button class="chip" id="scanShow">Details</button>
+</div>
+
+<!-- hot pool reload: "N new tracks -- Load now" -> POST /api/lib/reload, progress,
+     then a refresh of stats + whatever view is on screen. Falls back to the old
+     "restart Attune" wording if the reload itself errors. -->
+<div id="reloadBanner" hidden>
+  <span id="reloadMsg">—</span>
+  <div class="progressbar" id="reloadBar"><div class="fill" id="reloadFill" style="width:0%"></div></div>
+  <span class="spacer"></span>
+  <button class="chip primary" id="reloadNow">Load now</button>
 </div>
 
 <div id="toast" class="toast" hidden></div>

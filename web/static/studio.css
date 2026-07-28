@@ -146,7 +146,8 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 }
 .popover[hidden], .ctxmenu[hidden], .toast[hidden], .why[hidden], #v2Controls[hidden],
 #mipControls[hidden], .modalwrap[hidden], #eqPanel[hidden], #miniBar[hidden],
-#scanBanner[hidden], #colMenu[hidden], #recipeControls[hidden], #recipeActions[hidden]
+#scanBanner[hidden], #colMenu[hidden], #recipeControls[hidden], #recipeActions[hidden],
+#reloadBanner[hidden]
   { display:none; }
 /* CRITICAL: .albumgrid sets `display:grid; position:absolute; inset:0` (line ~600).
    That class rule ties the UA `[hidden]{display:none}` on specificity and, being later
@@ -343,6 +344,9 @@ tbody tr.rowOut { transition: opacity .18s ease, transform .18s ease;
 tbody tr.playing td.c-title::before { content:"▶ "; color:var(--accent); }
 tbody tr.seed td.c-title::before { content:"✦ "; color:var(--accent2); }
 tbody tr.missing { opacity:.45; font-style:italic; }
+/* "Hide missing files" toggle (client-side only -- the query behind the row is
+   unchanged, this purely hides the row; see #hideMissing in studio.js) */
+body.hideMissing tbody tr.missing { display:none; }
 tbody tr.dragover td { border-top:2px solid var(--accent); }
 .c-track { width:52px; text-align:right; font-variant-numeric:tabular-nums; }
 .c-len { width:60px; text-align:right; font-variant-numeric:tabular-nums; }
@@ -489,6 +493,12 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 #scanBanner { display:flex; align-items:center; gap:10px; padding:4px 12px; font-size:11px;
   background:var(--panel2); border-top:1px solid var(--line); color:var(--muted); }
 #scanBanner .progressbar { width:160px; }
+
+/* reload banner ("N new tracks -- Load now") -- same shape as scanBanner */
+#reloadBanner { display:flex; align-items:center; gap:10px; padding:4px 12px; font-size:11px;
+  background:var(--panel2); border-top:1px solid var(--line); color:var(--muted); }
+#reloadBanner #reloadBar { width:120px; }
+.chip.primary { border-color:var(--accent); color:var(--accent); font-weight:600; }
 
 /* tag editor grid */
 .taggrid { display:grid; grid-template-columns:110px 1fr; gap:8px 10px; align-items:center; }
