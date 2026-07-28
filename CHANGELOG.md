@@ -189,6 +189,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   unchanged, gate 16/16.
 
 ### Changed
+- Default `theme` settings key is now `bee`, matching the client default since the
+  MusicBee-style UI; the key is currently client-inert (prefs.js keeps the theme in
+  localStorage) but must stay in DEFAULTS because the client POSTs it on every
+  settings save (`src/config.py`). Stale day-1 "no GUI / no export" lines removed
+  from Known limitations; `find_env` docstring no longer promises a repo-root
+  fallback the code never had (`src/export.py`).
 - **The program you launch is 8x smaller: 938 MB → 119 MB** (`desktop/build.py`,
   `desktop/worker_entry.py` NEW, `desktop/analyzer_main.py` NEW, `desktop/app_desktop.py`,
   `web/scanjob.py`). `Attune.exe` was carrying ~800 MB it never used — the 276 MB CLAP
@@ -504,6 +510,4 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - Docs: architecture, validation method, MusicIP heritage; MIT license; legal notice.
 
 ### Known limitations
-- No playlist export or player integration yet (roadmap: `.m3u`, Plex, Jellyfin).
-- No GUI yet — CLI only; the engine is UI-agnostic.
 - Brute-force similarity (fine to ~10⁵ tracks; swap in an ANN index beyond that).
