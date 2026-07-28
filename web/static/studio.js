@@ -1496,6 +1496,13 @@ function bindEvents() {
   // toolbar
   $('btnMix').onclick = () => doMix(firstSelected());
   $('btnGenius').onclick = geniusMix;
+  // right rail, Track Info tab: pivot the mix onto the track you're hearing.
+  // Same doMix() path as Create Mix — different seed integer, so no ear gate.
+  $('tiMixFrom').onclick = () => {
+    const i = Player.currentPool();
+    if (i < 0) return toast('Nothing is playing', true);
+    doMix(i);
+  };
   $('btnShuffle').onclick = () => {
     const rows = S.rows.slice();
     for (let i = rows.length - 1; i > 0; i--) {

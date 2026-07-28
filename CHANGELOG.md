@@ -6,6 +6,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **"Mix from this"** — a button on the right rail's Track Info tab that starts a
+  new mix seeded on the track you are hearing (`web/static/studio.{html,css,js}`).
+  Same `doMix()` path as Create Mix with a different seed integer, so exports and
+  the engine are untouched by construction; with nothing playing it toasts instead.
+  Verified by real clicks + elementFromPoint hit-testing on a scratch-DB server:
+  the rendered mix matched the pinned `/api/mix` capture for the same seed
+  track-for-track; regression gate 16/16 before and after.
 - **MusicBee-style layout, a global player bar, and a new default skin**
   (`web/static/{studio.html,studio.css,studio.js,player.js,prefs.js}`; no server code, no
   new files, no build changes). Rebuilds the Studio frame around MusicBee's documented
