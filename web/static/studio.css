@@ -329,6 +329,10 @@ body.norail #splitRight, body.norail #rightRail { display:none; }
 .tiRow .k { flex:0 0 46px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px;
   font-size:10px; }
 .tiRow .t { flex:1; min-width:0; color:var(--muted); overflow-wrap:anywhere; }
+.tiMixBtn { margin:10px 11px 12px; padding:6px 11px; background:var(--panel2);
+  border:1px solid var(--line); border-radius:7px; cursor:pointer; transition:.12s;
+  text-align:center; }
+.tiMixBtn:hover { background:var(--hover); border-color:var(--accent); }
 
 /* ---------- global player bar (bottom panel) ---------- */
 #bottomBar { flex:0 0 auto; height:var(--barh); display:flex; align-items:center; gap:12px;
