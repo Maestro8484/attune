@@ -152,10 +152,11 @@ def _pick_genius_seed(lib):
 
 
 def register(app, ctx):
-    """ctx: dict(db_path, lib, cfg)."""
+    """ctx: dict(db_path, lib, cfg, locked)."""
     lib = ctx["lib"]
     db_path = ctx["db_path"]
     cfg = ctx["cfg"]
+    locked = ctx["locked"]
     existed = _ensure_schema(db_path)
     if not existed:
         _seed_builtins(db_path)
@@ -249,6 +250,7 @@ def register(app, ctx):
         return jsonify(ok=True)
 
     @bp.get("/api/recipe/genius_seed")
+    @locked
     def r_genius_seed():
         i, tier = _pick_genius_seed(lib)
         if i is None:

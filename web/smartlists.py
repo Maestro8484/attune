@@ -42,6 +42,7 @@ FIELDS = {
     "length":      ("num",  lambda lib, i: lib.seconds[i]),          # seconds
     "loved":       ("bool", lambda lib, i: bool(lib.loved[i])),
     "analyzed":    ("bool", lambda lib, i: bool(lib.analyzed[i])),
+    "missing":     ("bool", lambda lib, i: bool(lib.missing[i])),
     "added":       ("date", lambda lib, i: lib.date_added[i]),       # epoch secs
     "last_played": ("date", lambda lib, i: lib.last_played[i]),
     "artist":      ("text", lambda lib, i: lib.artist[i]),
@@ -197,9 +198,10 @@ def evaluate(lib, rules):
 
 
 def register(app, ctx):
-    """ctx: dict(db_path, lib)."""
+    """ctx: dict(db_path, lib, locked)."""
     lib = ctx["lib"]
     db_path = ctx["db_path"]
+    locked = ctx["locked"]
     _ensure_schema(db_path)
     bp = Blueprint("smartlists", __name__)
 
@@ -217,6 +219,7 @@ def register(app, ctx):
         return jsonify(smartlists=out)
 
     @bp.post("/api/smartlist/preview")
+    @locked
     def sl_preview():
         body = request.get_json(silent=True) or {}
         rules = body.get("rules")
@@ -231,6 +234,7 @@ def register(app, ctx):
                        ids=idxs)       # full id list so the client can queue/export all
 
     @bp.get("/api/smartlist/open")
+    @locked
     def sl_open():
         try:
             sid = int(request.args.get("id", ""))
@@ -253,6 +257,7 @@ def register(app, ctx):
                        total=len(idxs), rows=_rows(idxs[:cap]), ids=idxs)
 
     @bp.post("/api/smartlist/save")
+    @locked
     def sl_save():
         body = request.get_json(silent=True) or {}
         name = (body.get("name") or "").strip()

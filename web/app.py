@@ -18,6 +18,7 @@ point --db at a database that is not being actively written (e.g. mid
 analyze/embed) — newly-added tracks only appear after a restart.
 """
 import argparse
+import functools
 import importlib.util
 import mimetypes
 import os
@@ -132,40 +133,69 @@ def _load_config():
     return mod
 
 
+def _load_libreload():
+    path = os.path.join(HERE, "libreload.py")
+    spec = importlib.util.spec_from_file_location("attune_libreload", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _load_libverify():
+    path = os.path.join(HERE, "libverify.py")
+    spec = importlib.util.spec_from_file_location("attune_libverify", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
                playlist_dir=None):
     _check_db(db_path)
     hybrid = _load_hybrid()
     print(f"Loading library from {db_path} ...")
+    # search + mix are routed through the common engine interface (src/engine.py) so the
+    # concrete engine (our CLAP/librosa hybrid, or a live MusicIP Mixer) is swappable.
+    eng_iface = _load_engine_iface()
+    libreload = _load_libreload()
+
     # HybridEngine loads regardless of --engine: playback (/audio), .m3u8/Plex export, and
     # dedup all key off of ITS pool indices (eng.paths/eng.meta) -- MusicIPAdapter resolves
     # its own results into that same pool, so meta/playback/export don't have to know which
     # engine picked the tracks. hybrid.py never imports torch (it only reads precomputed CLAP
     # vectors already in the DB), so this stays torch-free either way.
-    eng = hybrid.HybridEngine(db_path)
-    # precompute a lowercased label per pool index once; search is then a cheap scan
-    labels = [_label(eng, p) for p in eng.paths]
-    labels_lc = [s.lower() for s in labels]
+    #
+    # Construction is factored into libreload.build_engine_bundle() so POST /api/lib/reload
+    # (the hot-reload endpoint -- rebuilds this exact bundle from the DB, in a background
+    # thread, without restarting the app) shares this code instead of duplicating it.
+    eng, labels, labels_lc, active = libreload.build_engine_bundle(
+        hybrid, eng_iface, db_path, engine_name, musicip_url, log=print)
     print(f"Ready — {len(eng.paths):,} songs in the mixable pool.")
-
-    # search + mix are routed through the common engine interface (src/engine.py) so the
-    # concrete engine (our CLAP/librosa hybrid, or a live MusicIP Mixer) is swappable.
-    eng_iface = _load_engine_iface()
-    if engine_name == "musicip":
-        active = eng_iface.MusicIPAdapter(eng.paths, url=musicip_url, log=print)
-        active.attach_meta(eng.meta)
-        if not active.mip.alive():
-            raise SystemExit(
-                f"--engine musicip requires a live MusicIP Mixer at {musicip_url}; "
-                f"it did not respond. Start MusicIP Mixer's web API, or run with --engine v2.")
-        print(f"MusicIP engine ready at {musicip_url}.")
-    elif engine_name == "learned":
-        # the distilled-metric head (onnxruntime, still torch-free). SELECTABLE ONLY --
-        # per LAW 1 it cannot become the default before a blind ear test (eval/abtest.py).
-        active = eng_iface.LearnedEngine(db_path, hybrid_engine=eng, log=print)
-    else:
-        active = eng_iface.V2Engine(hybrid_engine=eng)
     is_musicip = engine_name == "musicip"
+    if is_musicip and not active.mip.alive():
+        raise SystemExit(
+            f"--engine musicip requires a live MusicIP Mixer at {musicip_url}; "
+            f"it did not respond. Start MusicIP Mixer's web API, or run with --engine v2.")
+    if is_musicip:
+        print(f"MusicIP engine ready at {musicip_url}.")
+
+    # engine_lock guards every read of eng/active/labels/labels_lc/lib/ud: POST
+    # /api/lib/reload reinitializes those SAME objects in place from a background
+    # thread (see libreload.py's module docstring for why in-place, not a rebind), and
+    # every route below that touches any of them is wrapped with @_locked so a request
+    # never sees a torn mix of pre-/post-reload state. The lock is only ever held for
+    # the fast "install" step of a reload (the slow DB read happens off-lock against a
+    # throwaway instance) or for the duration of a single request -- reload's install
+    # simply waits for an in-flight request to finish on the old state, exactly the
+    # "in-flight requests finish on the old object" behaviour the feature calls for.
+    engine_lock = threading.RLock()
+
+    def _locked(fn):
+        @functools.wraps(fn)
+        def _wrapper(*a, **kw):
+            with engine_lock:
+                return fn(*a, **kw)
+        return _wrapper
 
     # export: path-map (+ optional Plex), config auto-discovered from a .env
     exp_spec = importlib.util.spec_from_file_location("attune_export", os.path.join(SRC, "export.py"))
@@ -377,6 +407,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return redirect("/studio")
 
     @app.get("/classic")
+    @_locked
     def classic():
         return render_template_string(
             PAGE, count=len(eng.paths), plex=plex_configured, engine=engine_name,
@@ -385,6 +416,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             musicip_style_max=MUSICIP_STYLE_MAX)
 
     @app.get("/api/search")
+    @_locked
     def search():
         q = (request.args.get("q") or "").strip().lower()
         if not q:
@@ -406,6 +438,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return jsonify(results=out, truncated=len(out) >= 50)
 
     @app.get("/api/mix")
+    @_locked
     def mix():
         try:
             i = int(request.args.get("i", ""))
@@ -433,6 +466,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective)
 
     @app.post("/api/refine")
+    @_locked
     def refine():
         """Thumbs up/down relevance feedback: Rocchio-refine the seed's CLAP vector
         toward liked and away from disliked pool-indices, then re-rank by cosine to
@@ -517,6 +551,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         )
 
     @app.get("/api/explain")
+    @_locked
     def explain():
         """Per-term score breakdown for one (seed, candidate) pair -- backs the
         "why?" affordance per mix row."""
@@ -538,14 +573,22 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     @app.get("/audio")
     def audio():
         """Range-streams the audio file for a pool index -- index into eng.paths
-        ONLY, never a raw client-supplied path."""
+        ONLY, never a raw client-supplied path.
+
+        Deliberately NOT @_locked for the whole handler: a big waveform fetch or a
+        slow-network (SMB) transfer can hold this response open for a while, and
+        engine_lock serializes every other reload-sensitive route (see app.py's
+        threaded=True comment on why concurrent /audio must never block a mix). Only
+        the bounds-check + path lookup is a shared-state read, so only THAT is locked
+        -- a fraction of a microsecond, not the whole streamed transfer."""
         try:
             i = int(request.args.get("i", ""))
         except ValueError:
             return jsonify(error="bad request"), 400
-        if not (0 <= i < len(eng.paths)):
-            return jsonify(error="unknown track"), 404
-        path = eng.paths[i]
+        with engine_lock:
+            if not (0 <= i < len(eng.paths)):
+                return jsonify(error="unknown track"), 404
+            path = eng.paths[i]
         if not os.path.isfile(path):
             return jsonify(error="audio file missing on disk"), 404
         return send_file(path, mimetype=_audio_mimetype(path), conditional=True)
@@ -561,6 +604,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return i, size
 
     @app.get("/api/export/m3u")
+    @_locked
     def export_m3u():
         try:
             i, size = _seed_index()
@@ -593,6 +637,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                         headers={"Content-Disposition": f'attachment; filename="Attune-{safe}.m3u8"'})
 
     @app.post("/api/export/plex")
+    @_locked
     def export_plex():
         try:
             i, size = _seed_index()
@@ -691,7 +736,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # playlist-folder browser, album art and save-to-folder export. It reuses the routes
     # above rather than reimplementing them; _active_mix_tracks is handed over so an
     # exported playlist always equals the mix on screen.
-    lib = _load_studio().register(app, {
+    # studio_mod is kept (not just its .register() return value) because libreload.py
+    # needs the LibraryIndex class itself to build a throwaway instance off-lock.
+    studio_mod = _load_studio()
+    lib = studio_mod.register(app, {
         "db_path": db_path,
         "eng": eng,
         "labels": labels,
@@ -700,6 +748,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "engine_name": engine_name,
         "plex_configured": plex_configured,
         "active_mix_tracks": _active_mix_tracks,
+        "locked": _locked,
     })
 
     # ---- user data: ratings / play counts / tag editor / ReplayGain (userdata.py).
@@ -716,8 +765,30 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "attune_userdata", os.path.join(HERE, "userdata.py"))
     userdata = importlib.util.module_from_spec(ud_spec)
     ud_spec.loader.exec_module(userdata)
-    userdata.register(app, {"db_path": db_path, "eng": eng, "lib": lib,
-                            "on_tags_changed": _on_tags_changed})
+    ud = userdata.register(app, {"db_path": db_path, "eng": eng, "lib": lib,
+                                 "engine_lock": engine_lock, "locked": _locked,
+                                 "on_tags_changed": _on_tags_changed})
+
+    # ---- library verification: missing-file detection + manual relink (libverify.py).
+    # Registered right after userdata, whose ud instance and read/write-tags path it
+    # reuses for relink's tag refresh.
+    libverify = _load_libverify()
+    verify_handles = libverify.register(app, {
+        "db_path": db_path, "lib": lib, "eng": eng, "ud": ud,
+        "engine_lock": engine_lock, "locked": _locked,
+    })
+
+    # ---- hot pool reload: POST /api/lib/reload rebuilds eng/active/labels/lib/ud from
+    # the DB in a background thread and installs them without restarting the app
+    # (libreload.py). Registered last among the state-touching modules so its ctx can
+    # hand back libverify's `filestate` (re-attached to `lib` after every reload).
+    libreload.register(app, {
+        "db_path": db_path, "engine_name": engine_name, "musicip_url": musicip_url,
+        "hybrid_mod": hybrid, "eng_iface_mod": eng_iface, "studio_mod": studio_mod,
+        "eng": eng, "active": active, "labels": labels, "labels_lc": labels_lc,
+        "lib": lib, "ud": ud, "engine_lock": engine_lock,
+        "filestate": verify_handles["filestate"],
+    })
 
     # ---- auto-playlists: user-defined smart-playlist rules (smartlists.py). Registered
     # AFTER userdata so lib already carries rating/plays/loved/date_added columns the
@@ -726,7 +797,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "attune_smartlists", os.path.join(HERE, "smartlists.py"))
     smartlists = importlib.util.module_from_spec(sl_spec)
     sl_spec.loader.exec_module(smartlists)
-    smartlists.register(app, {"db_path": db_path, "lib": lib})
+    smartlists.register(app, {"db_path": db_path, "lib": lib, "locked": _locked})
 
     # ---- mix recipes: named, saved mix-param bundles for Studio/Genius (recipes.py).
     # Registered after smartlists, before scanjob -- no ordering dependency on either,
@@ -735,7 +806,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "attune_recipes", os.path.join(HERE, "recipes.py"))
     recipes = importlib.util.module_from_spec(rc_spec)
     rc_spec.loader.exec_module(recipes)
-    recipes.register(app, {"db_path": db_path, "lib": lib, "cfg": cfgmod})
+    recipes.register(app, {"db_path": db_path, "lib": lib, "cfg": cfgmod, "locked": _locked})
 
     # ---- rescan: the existing incremental pipeline behind a button (scanjob.py)
     sj_spec = importlib.util.spec_from_file_location(
@@ -760,7 +831,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "attune_exportjob", os.path.join(HERE, "exportjob.py"))
     exportjob = importlib.util.module_from_spec(ej_spec)
     ej_spec.loader.exec_module(exportjob)
-    exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks})
+    exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks,
+                             "locked": _locked})
 
     return app
 

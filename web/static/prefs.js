@@ -173,9 +173,14 @@ const Prefs = (() => {
       stopScanPoll();
       if (st.error) toast('Scan: ' + st.error, true);
       else if (st.cancelled) toast('Scan cancelled');
-      else toast(st.new_tracks
-        ? `Scan done — ${st.new_tracks.toLocaleString()} new track${st.new_tracks === 1 ? '' : 's'}. Restart Attune to load them.`
-        : 'Scan done — library is up to date.');
+      else if (st.new_tracks) {
+        toast(`Scan done — ${st.new_tracks.toLocaleString()} new track${st.new_tracks === 1 ? '' : 's'} found.`);
+        // studio.js owns the reload banner/button (it needs S/loadLibrary) -- this
+        // module only reports the count, same cross-file global-function pattern
+        // studio.js's own toast() already uses from here.
+        if (typeof offerReload === 'function') offerReload(st.new_tracks);
+      }
+      else toast('Scan done — library is up to date.');
     }
   }
   async function pollScan() {
@@ -245,9 +250,10 @@ const Prefs = (() => {
   // Server-side directory browser (/api/fs/dirs). pickFolder() returns Promise<string|null>:
   // the absolute path chosen, or null if cancelled. Same behaviour in the browser and the
   // desktop window — the listing comes from the server's filesystem, no native dialog.
-  let fsResolve = null;      // resolver of the in-flight pickFolder() promise, or null
+  let fsResolve = null;      // resolver of the in-flight pickFolder()/pickFile() promise
   let fsCurrent = '';        // folder currently listed ('' = the drives / top level)
   let fsUpTarget = null;     // where Up navigates (null = already at the top level)
+  let fsFileMode = false;    // true while pickFile() is open: also list+accept audio files
 
   async function fsLoad(path) {
     $('fsMsg').textContent = '';
@@ -258,23 +264,52 @@ const Prefs = (() => {
     fsUpTarget = (j.parent === null || j.parent === undefined) ? null : j.parent;
     $('fsPath').textContent = fsCurrent || 'This PC';
     $('fsUp').disabled = fsUpTarget === null;
-    $('fsChoose').disabled = !fsCurrent;         // the "This PC" top level is not itself choosable
-    $('fsList').innerHTML = j.dirs.length
+    // In file mode there is no valid "choose the folder itself" outcome — only a
+    // listed audio file resolves the picker (see the fsList click handler below).
+    $('fsChoose').disabled = fsFileMode || !fsCurrent;
+    $('fsChoose').title = fsFileMode ? 'Pick an audio file below' : '';
+    let html = j.dirs.length
       ? j.dirs.map(d =>
           `<div class="fsrow" data-path="${esc(d.path)}" title="${esc(d.path)}">📁 ${esc(d.name)}</div>`).join('')
-      : '<div class="hint" style="padding:8px">No sub-folders here.</div>';
+      : '';
+    // File mode (the relink "Locate file…" flow): also list audio files directly in
+    // this folder — a sibling call to /api/fs/dirs, same loopback-guarded shape,
+    // extension-filtered server-side (GET /api/fs/files, libverify.py).
+    if (fsFileMode && fsCurrent) {
+      try {
+        const jf = await jget('/api/fs/files?path=' + encodeURIComponent(fsCurrent));
+        html += jf.files.map(f =>
+          `<div class="fsrow fsfile" data-file="${esc(f.path)}" title="${esc(f.path)}">🎵 ${esc(f.name)}</div>`).join('');
+      } catch { /* non-fatal — folder navigation still works */ }
+    }
+    $('fsList').innerHTML = html ||
+      `<div class="hint" style="padding:8px">No ${fsFileMode ? 'sub-folders or audio files' : 'sub-folders'} here.</div>`;
     $('fsList').scrollTop = 0;
   }
   function pickFolder(startPath) {
     // a Browse re-click while the picker is already open must not orphan the first
     // caller's promise -- resolve it as a cancel before installing the new resolver.
     if (fsResolve) { const r = fsResolve; fsResolve = null; r(null); }
+    fsFileMode = false;
+    $('fsChoose').textContent = 'Choose this folder';
+    $('fsWrap').hidden = false;
+    fsLoad(startPath || '');
+    return new Promise(res => { fsResolve = res; });
+  }
+  // Same modal, file-picking mode: navigate folders exactly like pickFolder, but a
+  // click on a listed audio file resolves immediately with that file's path. Backs
+  // studio.js's "Locate file…" (relink) flow — reuse, not a second dialog.
+  function pickFile(startPath) {
+    if (fsResolve) { const r = fsResolve; fsResolve = null; r(null); }
+    fsFileMode = true;
+    $('fsChoose').textContent = 'Pick a file below';
     $('fsWrap').hidden = false;
     fsLoad(startPath || '');
     return new Promise(res => { fsResolve = res; });
   }
   function fsClose(result) {
     $('fsWrap').hidden = true;
+    fsFileMode = false;
     const r = fsResolve; fsResolve = null;
     if (r) r(result);
   }
@@ -412,6 +447,7 @@ const Prefs = (() => {
     // folder picker (its own close buttons resolve the pickFolder() promise)
     $('fsList').addEventListener('click', e => {
       const row = e.target.closest('.fsrow'); if (!row) return;
+      if (row.classList.contains('fsfile')) { fsClose(row.dataset.file); return; }
       fsLoad(row.dataset.path);
     });
     $('fsUp').onclick = () => { if (fsUpTarget !== null) fsLoad(fsUpTarget); };
@@ -470,5 +506,7 @@ const Prefs = (() => {
 
   // pickFolder is exposed so studio.js's "Copy to folder/USB" export can reuse the
   // exact same server-side directory browser (GET /api/fs/dirs) the wizard/Library use.
-  return { init, open, applyThemeEarly, openTagEditor, toggleMini, checkFirstRun, pickFolder };
+  // pickFile is the same modal in file-picking mode, backing "Locate file…" (relink).
+  return { init, open, applyThemeEarly, openTagEditor, toggleMini, checkFirstRun,
+    pickFolder, pickFile };
 })();
