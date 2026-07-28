@@ -73,6 +73,72 @@ function toast(msg, err) {
   clearTimeout(toast._t); toast._t = setTimeout(() => t.hidden = true, 3200);
 }
 
+/* ------------------------------------------------------------------ hot pool reload
+   scanjob's own docstring used to end with "tracks this job adds only become mixable
+   after an app restart" -- POST /api/lib/reload (libreload.py) removes that restart.
+   prefs.js calls offerReload(n) when a scan finishes with new tracks; this owns the
+   banner/button/poll because it needs S/loadLibrary, which live here. */
+let reloadTimer = 0;
+
+function offerReload(newCount) {
+  $('reloadMsg').textContent =
+    `${fmt(newCount)} new track${newCount === 1 ? '' : 's'} — ready to load`;
+  $('reloadBar').hidden = true;
+  const btn = $('reloadNow');
+  btn.textContent = 'Load now'; btn.disabled = false; btn.onclick = startReload;
+  $('reloadBanner').hidden = false;
+}
+
+async function startReload() {
+  const btn = $('reloadNow');
+  btn.disabled = true;
+  $('reloadMsg').textContent = 'Reloading library…';
+  $('reloadBar').hidden = false;
+  $('reloadFill').style.width = '25%';
+  try {
+    await jpost('/api/lib/reload', {});
+  } catch (e) {
+    // fallback: reload itself couldn't even start -- the old restart path still works
+    $('reloadMsg').textContent = `Reload failed: ${e.message} — restart Attune to load them.`;
+    btn.textContent = 'Retry'; btn.disabled = false;
+    return;
+  }
+  clearInterval(reloadTimer);
+  reloadTimer = setInterval(pollReload, 800);
+}
+
+async function pollReload() {
+  let st;
+  try { st = await jget('/api/lib/reload/status'); }
+  catch { return; }        // server briefly busy — keep polling, same as pollScan()
+  if (st.running) { $('reloadFill').style.width = '70%'; return; }
+  clearInterval(reloadTimer); reloadTimer = 0;
+  if (st.error) {
+    $('reloadMsg').textContent = `Reload failed: ${st.error} — restart Attune to load them.`;
+    const btn = $('reloadNow');
+    btn.textContent = 'Retry'; btn.disabled = false;
+    return;
+  }
+  $('reloadFill').style.width = '100%';
+  const added = Math.max(0, (st.new_count || 0) - (st.old_count || 0));
+  $('reloadMsg').textContent = `Loaded — ${fmt(st.new_count)} tracks in the mixable pool.`;
+  toast(added ? `Library reloaded — ${fmt(added)} new track${added === 1 ? '' : 's'} now mixable`
+              : 'Library reloaded');
+  // refresh everything the reload just changed underneath us
+  try {
+    S.stats = await jget('/api/lib/stats');
+    const s = S.stats;
+    $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
+    $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
+      `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
+    $('missingN').textContent = fmt(s.missing || 0);
+  } catch (e) { console.error('[reload] stats refresh', e); }
+  try {
+    if (S.view === 'library') await loadLibrary(false);
+  } catch (e) { console.error('[reload] library refresh', e); }
+  setTimeout(() => { $('reloadBanner').hidden = true; }, 2500);
+}
+
 /* ------------------------------------------------------------------ params */
 function mixParams() {
   const p = new URLSearchParams();
@@ -404,7 +470,7 @@ function setHeaderSort() {
 
 /* ------------------------------------------------------------------ views */
 const SMART_LABELS = { loved: 'Loved', toprated: 'Top Rated', recent: 'Recently Added',
-  mostplayed: 'Most Played', neverplayed: 'Never Played' };
+  mostplayed: 'Most Played', neverplayed: 'Never Played', missing: 'Missing Files' };
 
 function setTableMode(grid) {
   $('tableWrap').classList.toggle('gridmode', grid);
@@ -816,6 +882,49 @@ async function loveTrack(i, loved) {
     if (Player.currentPool() === i) Player.paintNowPlayingMeta({ loved });
     toast(loved ? '♥ Loved' : 'Un-loved');
   } catch (e) { toast(e.message, true); }
+}
+
+/* ------------------------------------------------------------------ missing files */
+// "Locate file…" — reuses the SAME server-side folder browser the Library-folder
+// picker uses (Prefs.pickFolder), in file-picking mode (Prefs.pickFile): browse to
+// the folder, click the actual audio file, POST /api/track/relink.
+async function locateFile(i) {
+  const picked = await Prefs.pickFile('');
+  if (!picked) return;
+  try {
+    const j = await jpost('/api/track/relink', { i, new_path: picked });
+    for (const r of S.rows) if (r.i === i) Object.assign(r, j.row, { missing: false });
+    renderRows(S.rows, { seed: S.seed });
+    toast(`Relinked — ${j.row.title || 'file'}`);
+  } catch (e) { toast(e.message, true); }
+}
+
+// "Remove from library…" — a real confirm (count + names), Cancel is the native
+// default action. Only touches Attune's own bookkeeping (tracks/features/clap/
+// usermeta/filestate); the audio file on disk is never touched. The in-RAM pool
+// still lists the track(s) until the next hot reload -- offer one right after.
+async function deleteTracks(ids) {
+  if (!ids.length) return;
+  const names = ids.map(i => {
+    const r = S.rows.find(x => x.i === i);
+    return r ? `${r.artist || '?'} - ${r.title || '?'}` : `#${i}`;
+  });
+  const preview = names.slice(0, 8).join('\n') + (names.length > 8 ? `\n… and ${names.length - 8} more` : '');
+  const ok = confirm(
+    `Remove ${ids.length} track${ids.length === 1 ? '' : 's'} from the Attune library?\n\n` +
+    `${preview}\n\nThe audio file(s) on disk are NOT touched. This cannot be undone.`);
+  if (!ok) return;
+  let removed = 0;
+  for (const i of ids) {
+    try { await jpost('/api/track/delete', { i }); removed++; }
+    catch (e) { toast(`Failed on one track: ${e.message}`, true); }
+  }
+  if (!removed) return;
+  toast(`Removed ${removed} track${removed === 1 ? '' : 's'} from the library.`);
+  S.sel.clear();
+  if (confirm(`Reload the library now so ${removed === 1 ? 'it drops' : 'they drop'} out of mixes and search?`)) {
+    startReload();
+  }
 }
 
 /* ------------------------------------------------------------------ export */
@@ -1329,6 +1438,28 @@ function bindEvents() {
   // if a copy is already running (started before this page loaded), surface it
   jget('/api/export/copy/status').then(st => { if (st.running) startCopyPoll(); }).catch(() => {});
 
+  $('reloadNow').onclick = startReload;
+  // if a reload was already running before this page loaded (e.g. a refresh mid-reload),
+  // surface it instead of silently missing the in-flight job.
+  jget('/api/lib/reload/status').then(st => {
+    if (!st.running) return;
+    $('reloadMsg').textContent = 'Reloading library…';
+    $('reloadBar').hidden = false;
+    $('reloadNow').disabled = true;
+    $('reloadBanner').hidden = false;
+    clearInterval(reloadTimer);
+    reloadTimer = setInterval(pollReload, 800);
+  }).catch(() => {});
+
+  // "Hide missing files" — purely a client-side display toggle (row visibility via
+  // CSS; the underlying query/mixes are unchanged). Default off, persisted.
+  $('hideMissing').checked = store.get('hideMissing', false);
+  document.body.classList.toggle('hideMissing', $('hideMissing').checked);
+  $('hideMissing').addEventListener('change', () => {
+    store.set('hideMissing', $('hideMissing').checked);
+    document.body.classList.toggle('hideMissing', $('hideMissing').checked);
+  });
+
   document.querySelectorAll('.chip[data-preset]').forEach(b => b.onclick = () => {
     const w = b.dataset.preset === 'nobpm'
       ? { clap: 1.0, lib: 0.4, genre: 0.3, bpm: 0.0, era: 0.1 }
@@ -1404,6 +1535,8 @@ function bindEvents() {
       case 'copy': navigator.clipboard.writeText(`${row.artist} — ${row.title}`)
         .then(() => toast('Copied')); break;
       case 'reveal': jpost('/api/reveal', { i }).catch(err => toast(err.message, true)); break;
+      case 'locate': locateFile(i); break;
+      case 'delete': deleteTracks(selectedIds().length ? selectedIds() : [i]); break;
     }
   });
   // live filter chips: click a chip to undo that one filter, "Clear all" to drop them all
@@ -1512,6 +1645,7 @@ async function initCore() {
     $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
     $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
       `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
+    $('missingN').textContent = fmt(s.missing || 0);
   } catch (e) { console.error('[core] header', e); }
 
   // Recipes load before the flavor dispatch (the applied default writes the dials the

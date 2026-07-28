@@ -94,6 +94,7 @@ class LibraryIndex:
     def __init__(self, db_path, paths, meta):
         self.paths = paths
         self.n = len(paths)
+        self.idx = {p: i for i, p in enumerate(paths)}
         self.by_relkey = {}
         for i, p in enumerate(paths):
             self.by_relkey.setdefault(_relkey(p), i)
@@ -157,6 +158,11 @@ class LibraryIndex:
         self.plays = [0] * self.n
         self.last_played = [0] * self.n
         self.date_added = [0] * self.n
+        # file-presence columns — zeros until libverify.py's FileState loads the real
+        # values from `filestate` and overwrites these lists in place (same pattern
+        # as the user columns just above).
+        self.missing = [False] * self.n
+        self.checked_at = [0] * self.n
 
         self._trackno = {}
         self._trackno_lock = threading.Lock()
@@ -282,6 +288,7 @@ class LibraryIndex:
             "plays": self.plays[i],
             "added": self.date_added[i] or None,
             "status": "Analyzed" if self.analyzed[i] else "Not analyzed",
+            "missing": bool(self.missing[i]),
         }
 
 
@@ -423,12 +430,15 @@ def register(app, ctx):
     art = ArtCache()
     bp = Blueprint("studio", __name__)
     playlist_dir = ctx.get("playlist_dir") or ""
+    locked = ctx["locked"]
 
     @bp.get("/api/lib/stats")
+    @locked
     def lib_stats():
         analyzed = sum(lib.analyzed)
         return jsonify(
             songs=lib.n, analyzed=analyzed,
+            missing=sum(lib.missing),
             hours=round(lib.total_seconds / 3600.0, 1),
             gb=round(lib.total_bytes / 1e9, 1),
             genres=len({t for g in lib.gtags for t in g}),
@@ -452,6 +462,7 @@ def register(app, ctx):
         return [x for x in v if x]
 
     @bp.get("/api/lib/facets")
+    @locked
     def lib_facets():
         """Counts are computed against the OTHER panes' selection, so each pane shows what
         is still reachable — the cascade the MusicIP panes actually perform."""
@@ -472,12 +483,14 @@ def register(app, ctx):
         "mostplayed": lambda i: lib.plays[i] > 0,
         "neverplayed": lambda i: lib.plays[i] == 0,
         "recent":    lambda i: bool(lib.date_added[i]),
+        "missing":   lambda i: lib.missing[i],
     }
     # default sort per smart view, so "Recently Added" actually shows newest first etc.
     SMART_SORT = {"mostplayed": ("plays", False), "recent": ("added", False),
                   "toprated": ("rating", False)}
 
     @bp.get("/api/lib/tracks")
+    @locked
     def lib_tracks():
         g, a, b = _multi("genre"), _multi("artist"), _multi("album")
         q = request.args.get("q", "")
@@ -511,6 +524,7 @@ def register(app, ctx):
             rows=[lib.row(i) for i in page])
 
     @bp.get("/api/lib/rows")
+    @locked
     def lib_rows():
         """Hydrate an arbitrary list of pool indices (used by Mix view + playlist view)."""
         try:
@@ -521,6 +535,7 @@ def register(app, ctx):
         return jsonify(rows=[lib.row(i) for i in ids])
 
     @bp.get("/api/lib/albums")
+    @locked
     def lib_albums():
         """Album-grid data: group the (facet/smart-filtered) selection by album, one card
         each with an art seed (a representative track index), artist, track count, length.
@@ -549,6 +564,7 @@ def register(app, ctx):
         return jsonify(total=len(out), albums=out)
 
     @bp.get("/api/lib/folders")
+    @locked
     def lib_folders():
         """One level of the folder tree. `?path=` (empty = roots): returns immediate child
         folders under it, each with a recursive track count, plus the pool indices of tracks
@@ -589,6 +605,7 @@ def register(app, ctx):
         return jsonify(path=base, folders=kids, rows=[lib.row(i) for i in here[:500]])
 
     @bp.get("/api/art")
+    @locked
     def art_route():
         try:
             i = int(request.args.get("i", ""))
@@ -622,6 +639,7 @@ def register(app, ctx):
         return jsonify(dir=playlist_dir, playlists=_scan_playlists(playlist_dir))
 
     @bp.get("/api/playlist")
+    @locked
     def playlist():
         name = request.args.get("name", "")
         if not playlist_dir:
@@ -637,6 +655,7 @@ def register(app, ctx):
         return jsonify(name=name, rows=[lib.row(i) for i in ids], missing=missing)
 
     @bp.post("/api/export/m3u_dir")
+    @locked
     def export_m3u_dir():
         """Write the current mix (or an explicit id list) as an .m3u8 INTO the configured
         playlist folder. The only write path in this app."""

@@ -340,9 +340,10 @@ def _resolve_target(dest, folder):
 
 
 def register(app, ctx):
-    """ctx: dict(eng, active_mix_tracks=callable(i,size,field)->[paths])."""
+    """ctx: dict(eng, active_mix_tracks=callable(i,size,field)->[paths], locked)."""
     eng = ctx["eng"]
     active_mix_tracks = ctx["active_mix_tracks"]
+    locked = ctx["locked"]
     job = ExportJob()
     bp = Blueprint("exportjob", __name__)
 
@@ -358,6 +359,7 @@ def register(app, ctx):
         return jsonify(job.status())
 
     @bp.post("/api/export/copy")
+    @locked
     def copy_start():
         if not _guard():
             return jsonify(ok=False, error="only available on the Attune machine itself"), 403
