@@ -113,13 +113,21 @@ const Player = (() => {
   }
 
   /* ---------------------------------------------------------------- UI */
+  // One notification for "the queue changed" -> the right rail's Up Next repaints from
+  // Player.q. studio.js owns that render (it owns jget/esc and the view state); this is
+  // just the hook, kept optional so the player never depends on the rail existing.
+  function queueDirty() {
+    if (typeof queueChanged === 'function') queueChanged();
+  }
   function paintTransport() {
     $('tShuf').classList.toggle('on', P.shuffle);
     $('tRep').classList.toggle('on', P.repeat !== 'off');
     $('tRep').textContent = P.repeat === 'one' ? '🔂' : '🔁';
     $('tDj').classList.toggle('on', P.autodj);
+    $('tRadio').classList.toggle('on', P.radio);
     $('tEq').classList.toggle('on', P.eqOn);
     $('npN').textContent = P.q.length;
+    queueDirty();
     // LCD status flags, Winamp-style
     $('lcdFlags').innerHTML =
       `<span class="${P.shuffle ? 'on' : ''}">SHUF</span> ` +
@@ -248,7 +256,12 @@ const Player = (() => {
         track.classList.add('scroll');
       }
     });
+    // right rail, Track Info tab — same row object the LCD line is built from
     $('npArtistSmall').textContent = r ? (r.album || '') : '';
+    $('tiTitle').textContent = r ? r.title : '—';
+    $('tiArtist').textContent = r ? (r.artist || '') : '';
+    $('tiGenre').textContent = r ? (r.genre || '') : '';
+    $('tiYear').textContent = r ? (r.year || '') : '';
     $('miniTitle').textContent = r ? r.title : '—';
     $('miniArtist').textContent = r ? r.artist : '';
     paintNowPlayingMeta(r || {});
@@ -380,7 +393,7 @@ const Player = (() => {
     const [x] = P.q.splice(from, 1);
     P.q.splice(to, 0, x);
     P.pos = P.q.indexOf(curI);
-    persist();
+    persist(); queueDirty();
   }
   function shuffleArr(a) {
     for (let i = a.length - 1; i > 0; i--) {
@@ -391,7 +404,7 @@ const Player = (() => {
     const tail = P.q.splice(P.pos + 1);
     shuffleArr(tail);
     P.q = P.q.concat(tail);
-    persist();
+    persist(); queueDirty();
   }
   function toggleShuffle() {
     P.shuffle = !P.shuffle;
@@ -790,6 +803,10 @@ const Player = (() => {
     $('tShuf').onclick = toggleShuffle;
     $('tRep').onclick = cycleRepeat;
     $('tDj').onclick = toggleAutoDj;
+    // Radio used to be reachable only via the J key or a checkbox 8 controls deep in the
+    // Options popover. Same toggleRadio() path, now one click from the player bar; the
+    // Options checkbox and the LCD's RADIO flag stay in sync through it.
+    $('tRadio').onclick = toggleRadio;
     $('tEq').onclick = toggleEqPanel;
     bindRadioControls();
     const seekTo = v => {
