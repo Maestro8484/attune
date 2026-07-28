@@ -40,7 +40,13 @@
   --sel:#24304a; --hover:#1e2431; --rowalt:#12151c;
   --star:#f2c14e; --heart:#f26d78;
   --vis1:#6d8cff; --vis2:#8b5cf6; --vis-peak:#e7e9ee;
-  --h: 34px;
+  /* The display panel (LCD + waveform) and the LED spectrum are the deliberate Winamp
+     throwback zone and stay green-on-black in EVERY theme — so their tokens live here,
+     on :root, not inside the attune-only block where they used to. A theme may still
+     override them (attune re-asserts these exact values); nothing has to. */
+  --lcd-bg:#0a120a; --lcd:#00e800; --lcd-dim:#0a3d0a;
+  --led-low:#00e800; --led-mid:#f0a92e; --led-high:#ff4b3e;
+  --barh:72px;              /* player-bar height; #eqPanel clears it off this token */
 }
 /* ---- the Attune identity: gunmetal chrome, amber controls, LCD green ---- */
 html[data-theme="attune"] {
@@ -53,6 +59,20 @@ html[data-theme="attune"] {
   --lcd-bg:#0a120a; --lcd:#00e800; --lcd-dim:#0a3d0a;
   --bev-l:#3d434d; --bev-d:#0c0e11;
   --led-low:#00e800; --led-mid:#f0a92e; --led-high:#ff4b3e;
+}
+/* ---- "bee": the new default. MusicBee's community-dark-skin pattern — three
+   desaturated dark background tiers, two text tiers, ONE disciplined blue accent
+   reserved for selection / active / progress. --accent2 (warm gold) is used for
+   exactly one thing: the Genius button, the single deliberate attune nod. ---- */
+html[data-theme="bee"] {
+  --bg:#1a1c20; --panel:#212429; --panel2:#262a30; --line:#30343b;
+  --fg:#e6e8ec; --muted:#9aa3ad; --dim:#6d7681;
+  --accent:#3d84c6; --accent2:#d0a032; --ok:#3fb950; --warn:#d29922; --err:#f85149;
+  /* --sel is accent at 18% over --panel, resolved to a literal so it cannot drift
+     if a later rule re-points --accent: rgb(61,132,198)*.18 + rgb(33,36,41)*.82 */
+  --sel:#263545; --hover:#2b2f36; --rowalt:#1e2126;
+  --star:#d0a032; --heart:#e0596b;
+  --vis1:#3d84c6; --vis2:#5f9ed4; --vis-peak:#e6e8ec;
 }
 html[data-theme="aurora"] {
   --bg:#060a08; --panel:#0b120e; --panel2:#101a14; --line:#1c2b22;
@@ -105,6 +125,7 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
   padding:6px 11px; cursor:pointer; white-space:nowrap; transition:.12s;
 }
 #toolbar button:hover { background:var(--hover); border-color:var(--accent); }
+#toolbar button.iconbtn.on { border-color:var(--accent); color:var(--accent); }
 #toolbar button.primary {
   background:linear-gradient(180deg,var(--accent),color-mix(in srgb,var(--accent) 70%,#000));
   border-color:transparent; color:#fff; font-weight:600;
@@ -131,10 +152,25 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 #recipeSel { background:var(--panel); border:1px solid var(--line); border-radius:7px;
   padding:6px 8px; cursor:pointer; }
 #recipeSel:focus { outline:none; }
+/* The toolbar is one non-wrapping row, so SOMETHING has to absorb a narrow window.
+   Every other control is pinned (flex-shrink:0) and the search box is the give: it
+   shrinks down to a 96px floor before anything can be pushed off the right edge.
+   Measured at 1024x700 the row overflowed by 188px and pushed the search plus all
+   three icon buttons (rail / mini / preferences) off-screen and unclickable. */
+#toolbar > *:not(.search) { flex-shrink:0; }
 .search { display:flex; align-items:center; gap:6px; background:var(--panel);
-  border:1px solid var(--line); border-radius:7px; padding:0 8px; }
-.search .ico { color:var(--dim); }
-.search input { border:0; background:transparent; width:200px; padding:6px 0; }
+  border:1px solid var(--line); border-radius:7px; padding:0 8px;
+  flex:0 1 auto; min-width:96px; }
+.search .ico { color:var(--dim); flex:0 0 auto; }
+.search input { border:0; background:transparent; width:200px; padding:6px 0;
+  flex:1 1 auto; min-width:0; }
+/* below ~1180px tighten the fixed chrome first, so the search keeps a usable width */
+@media (max-width:1180px) {
+  #toolbar { gap:5px; padding:8px 8px; }
+  #toolbar button { padding:6px 8px; }
+  #toolbar button.iconbtn { padding:6px 7px; }
+  #recipeSel { max-width:132px; }
+}
 .search input:focus, .field input:focus { outline:none; }
 .search:focus-within { border-color:var(--accent); }
 
@@ -143,6 +179,9 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
   position:absolute; top:52px; z-index:40; width:340px;
   background:var(--panel); border:1px solid var(--line); border-radius:10px;
   box-shadow:0 12px 40px #0008; padding:14px; display:flex; flex-direction:column; gap:10px;
+  /* Mix options is ~655px tall against a resizable desktop window. Without these it
+     simply clipped off the bottom of a short window with no way to reach the rest. */
+  max-height:calc(100vh - 70px); overflow:auto;
 }
 .popover[hidden], .ctxmenu[hidden], .toast[hidden], .why[hidden], #v2Controls[hidden],
 #mipControls[hidden], .modalwrap[hidden], #eqPanel[hidden], #miniBar[hidden],
@@ -195,11 +234,18 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
   border-radius:7px; color:var(--fg); padding:5px 10px; cursor:pointer; font-size:12px; }
 .row button.rowbtn:hover { filter:brightness(1.12); }
 
-/* ---------- layout + splitters ---------- */
-#grid { flex:1; display:grid; grid-template-columns:var(--leftw,270px) 6px 1fr;
+/* ---------- layout + splitters ----------
+   Five columns, MusicBee's frame: Navigator | split | main panel | split | right rail.
+   Collapsing the rail zeroes the last two tracks rather than re-declaring the grid, so
+   the first three columns keep their exact computed widths across the toggle. */
+#grid { flex:1; display:grid;
+  grid-template-columns:var(--leftw,230px) 6px minmax(0,1fr) 6px var(--rightw,300px);
   padding:8px; min-height:0; }
+body.norail #grid { grid-template-columns:var(--leftw,230px) 6px minmax(0,1fr) 0 0; }
+body.norail #splitRight, body.norail #rightRail { display:none; }
 #left { display:flex; flex-direction:column; gap:8px; min-height:0; min-width:180px; }
 #right { display:flex; flex-direction:column; min-height:0; }
+#rightRail { display:flex; flex-direction:column; min-height:0; min-width:0; }
 .vsplit { cursor:col-resize; position:relative; }
 .vsplit::after { content:""; position:absolute; inset:0 2px; border-radius:2px; }
 .vsplit:hover::after, .vsplit.drag::after { background:var(--accent); opacity:.4; }
@@ -232,37 +278,89 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .tree.pl li { color:var(--muted); font-size:12px; }
 .tree.pl li.on { color:var(--fg); }
 
-/* art + vis + transport */
-.artpane { flex:0 0 auto; }
+/* ---------- right rail: Up Next + Track Info (MusicBee's right sidebar) ---------- */
+.railpane { flex:1 1 auto; }
+/* Panel.ChildHeader: a thin caption strip carrying the tabs, not a chunky tab bar */
+.railTabs { display:flex; gap:0; flex:0 0 auto; background:var(--panel2);
+  border-bottom:1px solid var(--line); }
+.railTabs button { flex:1; background:none; border:0; border-bottom:2px solid transparent;
+  color:var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+  padding:7px 6px; cursor:pointer; white-space:nowrap; }
+.railTabs button:hover { color:var(--fg); background:var(--hover); }
+.railTabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
+.railTabs button b { color:var(--dim); }
+.railTabs button.on b { color:var(--accent); }
+.railBody { flex:1 1 auto; min-height:0; overflow:auto; }
+.railBody[hidden] { display:none; }
+.railEmpty { padding:22px 12px; text-align:center; color:var(--dim); font-size:12px; }
+
+.upnext { list-style:none; margin:0; padding:3px; }
+.upnext li { display:flex; align-items:center; gap:7px; padding:4px 6px; border-radius:5px;
+  cursor:default; min-width:0; }
+.upnext li:hover { background:var(--hover); }
+.upnext li.sel { background:var(--sel); }
+.upnext li.done { opacity:.5; }
+.upnext li.playing { background:var(--sel); box-shadow:inset 2px 0 0 var(--accent); }
+.upnext li .n { flex:0 0 20px; text-align:right; font-size:10px; color:var(--dim);
+  font-variant-numeric:tabular-nums; }
+.upnext li.playing .n { color:var(--accent); }
+.upnext li .qm { flex:1; min-width:0; }
+.upnext li .qt { display:block; font-size:12px; white-space:nowrap; overflow:hidden;
+  text-overflow:ellipsis; }
+.upnext li .qa { display:block; font-size:11px; color:var(--muted); white-space:nowrap;
+  overflow:hidden; text-overflow:ellipsis; }
+/* dim-at-rest rather than opacity:0 — a fully transparent control is dropped from the
+   accessibility tree (confirmed: it vanished from the a11y snapshot while still
+   hit-testing), and an affordance nobody can find is not restraint. */
+.upnext li .qx { flex:0 0 auto; background:none; border:0; color:var(--dim); cursor:pointer;
+  padding:1px 5px; border-radius:4px; font-size:11px; opacity:.28; transition:opacity .12s; }
+.upnext li:hover .qx { opacity:1; }
+.upnext li .qx:hover { color:var(--err); background:var(--hover); }
+
+.railInfo { display:flex; flex-direction:column; }
 .art { aspect-ratio:1/1; background:var(--panel2); display:flex; align-items:center;
-  justify-content:center; overflow:hidden; position:relative; }
+  justify-content:center; overflow:hidden; position:relative; flex:0 0 auto; }
 .art img { width:100%; height:100%; object-fit:cover; display:block; }
 .art .noart { font-size:52px; color:var(--dim); }
-.npTitle { padding:8px 10px 0; font-weight:600; white-space:nowrap; overflow:hidden;
-  text-overflow:ellipsis; }
-.npArtist { padding:0 10px 2px; color:var(--muted); font-size:12px; white-space:nowrap;
-  overflow:hidden; text-overflow:ellipsis; }
-.npMeta { display:flex; align-items:center; gap:8px; padding:0 10px 6px; }
-.npMeta .stars { font-size:13px; }
-#vis { display:block; width:100%; height:44px; background:var(--panel2);
-  border-top:1px solid var(--line); cursor:pointer; }
-.transport { display:flex; align-items:center; gap:6px; padding:8px 10px;
-  border-top:1px solid var(--line); background:var(--panel2); flex-wrap:wrap; }
-.transport button { background:none; border:0; color:var(--muted); cursor:pointer;
-  font-size:15px; padding:2px 4px; border-radius:5px; line-height:1.2; }
-.transport button:hover { color:var(--fg); background:var(--hover); }
-.transport button.play { color:var(--fg); font-size:17px; }
-.transport button.on { color:var(--accent); }
-.transport .t { font-size:10px; color:var(--dim); font-variant-numeric:tabular-nums;
-  min-width:30px; text-align:center; }
-.transport .seek { flex:1; min-width:20px; }
-.transport .vol { display:flex; align-items:center; gap:3px; font-size:10px; }
-.transport .vol input { width:48px; accent-color:var(--accent); }
-.transport .r2 { display:flex; align-items:center; gap:4px; width:100%; }
+.tiMeta { padding:9px 11px 12px; display:flex; flex-direction:column; gap:2px; min-width:0; }
+.tiTitle { font-weight:600; font-size:13px; line-height:1.3; overflow-wrap:anywhere; }
+.tiArtist { color:var(--muted); font-size:12px; margin-bottom:5px; overflow-wrap:anywhere; }
+.tiRow { display:flex; gap:8px; font-size:11px; align-items:baseline; }
+.tiRow .k { flex:0 0 46px; color:var(--dim); text-transform:uppercase; letter-spacing:.5px;
+  font-size:10px; }
+.tiRow .t { flex:1; min-width:0; color:var(--muted); overflow-wrap:anywhere; }
+
+/* ---------- global player bar (bottom panel) ---------- */
+#bottomBar { flex:0 0 auto; height:var(--barh); display:flex; align-items:center; gap:12px;
+  padding:0 12px; background:var(--panel2); border-top:1px solid var(--line); }
+.transport { display:flex; align-items:center; gap:4px; flex:0 0 auto; }
+.transport button, .barRight button { background:none; border:0; color:var(--muted);
+  cursor:pointer; font-size:15px; padding:3px 5px; border-radius:5px; line-height:1.2; }
+.transport button:hover, .barRight button:hover { color:var(--fg); background:var(--hover); }
+.transport button.play { color:var(--fg); font-size:19px; }
+.transport button.on, .barRight button.on { color:var(--accent); }
+
+/* the display panel — LCD marquee with the waveform seek directly beneath it */
+.displayPanel { flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:3px; }
+.waveRow { display:flex; align-items:center; gap:6px; }
+.waveRow .t { font-size:10px; color:var(--dim); font-variant-numeric:tabular-nums;
+  min-width:32px; text-align:center; }
+
+.barRight { display:flex; align-items:center; gap:9px; flex:0 0 auto; }
+.barRight .stars { font-size:13px; }
+.barRight .heart { font-size:14px; }
+#vis { display:block; width:132px; height:40px; background:var(--lcd-bg);
+  border:1px solid var(--line); border-radius:2px; cursor:pointer; flex:0 0 auto; }
+.barRight .vol { display:flex; align-items:center; gap:4px; font-size:11px; }
+.barRight .vol input { width:76px; accent-color:var(--accent); }
 
 /* EQ panel */
+/* bottom offset is derived from --barh, never re-typed: with the old hardcoded 44px
+   the panel sat ON TOP of the new player bar and covered its own EQ button plus the
+   volume/spectrum cluster (caught by elementFromPoint: the button reported "covered
+   by #eqPanel"). Tying it to the bar height means resizing the bar cannot re-break it. */
 #eqPanel {
-  position:fixed; z-index:45; right:12px; bottom:44px; width:420px;
+  position:fixed; z-index:45; right:12px; bottom:calc(var(--barh) + 36px); width:420px;
   background:var(--panel); border:1px solid var(--line); border-radius:12px;
   box-shadow:0 16px 48px #000a; padding:12px 14px; display:flex; flex-direction:column; gap:8px;
 }
@@ -390,7 +488,8 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 /* column chooser */
 #colMenu { position:fixed; z-index:65; list-style:none; margin:0; padding:5px;
   background:var(--panel); border:1px solid var(--line); border-radius:9px;
-  box-shadow:0 12px 36px #0009; min-width:160px; }
+  box-shadow:0 12px 36px #0009; min-width:160px;
+  max-height:calc(100vh - 16px); overflow:auto; }
 #colMenu li { padding:5px 10px; border-radius:6px; cursor:pointer; display:flex; gap:8px; }
 #colMenu li:hover { background:var(--sel); }
 #colMenu li .ck { width:14px; color:var(--accent); }
@@ -401,9 +500,12 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 #status .sep { color:var(--dim); }
 
 /* context menu */
+/* The 22-item menu is ~683px tall. A measured clamp (studio.js) keeps it on screen
+   when it fits; this keeps it USABLE on a window shorter than the menu itself. */
 .ctxmenu { position:fixed; z-index:60; list-style:none; margin:0; padding:5px;
   background:var(--panel); border:1px solid var(--line); border-radius:9px;
-  box-shadow:0 12px 36px #0009; min-width:220px; }
+  box-shadow:0 12px 36px #0009; min-width:220px;
+  max-height:calc(100vh - 16px); overflow:auto; }
 .ctxmenu li { padding:6px 10px; border-radius:6px; cursor:pointer; display:flex;
   justify-content:space-between; gap:16px; align-items:center; }
 .ctxmenu li:hover { background:var(--sel); }
@@ -509,8 +611,9 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
   border-top:1px solid var(--line); padding-top:8px; margin-top:4px; }
 
 /* ---------- mini player ---------- */
-body.mini #grid, body.mini #status, body.mini #toolbar .field, body.mini #btnOptions,
-body.mini #btnShuffle, body.mini #btnExport, body.mini #btnMix, body.mini .search
+body.mini #grid, body.mini #status, body.mini #bottomBar, body.mini #toolbar .field,
+body.mini #btnOptions, body.mini #btnShuffle, body.mini #btnExport, body.mini #btnMix,
+body.mini #btnRail, body.mini .search
   { display:none !important; }
 #miniBar { display:flex; align-items:center; gap:10px; padding:10px 14px; flex:1;
   background:var(--panel); }
@@ -609,14 +712,31 @@ html[data-theme="attune"] ::-webkit-scrollbar-thumb {
 }
 html[data-theme="attune"] ::-webkit-scrollbar-thumb:hover { background:#3a414b; }
 
-/* transport: gold accents, chunky glyph buttons */
-html[data-theme="attune"] .transport { background:linear-gradient(180deg,#282c33,#1e2126);
+/* the player bar in attune dress: gold accents, chunky glyph buttons. Same rules as
+   before the redesign, re-pointed at the regions the transport now lives in
+   (#bottomBar carries the chrome; .transport/.barRight carry the buttons). */
+html[data-theme="attune"] #bottomBar { background:linear-gradient(180deg,#282c33,#1e2126);
   border-top:1px solid var(--bev-d); box-shadow: inset 0 1px 0 var(--bev-l); }
-html[data-theme="attune"] .transport button { color:#aeb6c2; text-shadow:1px 1px 0 #000; }
-html[data-theme="attune"] .transport button:hover { color:var(--accent); background:none; }
-html[data-theme="attune"] .transport button.on { color:var(--accent2); }
+html[data-theme="attune"] .transport button,
+html[data-theme="attune"] .barRight button { color:#aeb6c2; text-shadow:1px 1px 0 #000; }
+html[data-theme="attune"] .transport button:hover,
+html[data-theme="attune"] .barRight button:hover { color:var(--accent); background:none; }
+html[data-theme="attune"] .transport button.on,
+html[data-theme="attune"] .barRight button.on { color:var(--accent2); }
 html[data-theme="attune"] .transport button.play { color:var(--fg); }
+html[data-theme="attune"] #vis { border:1px solid;
+  border-color:var(--bev-d) var(--bev-l) var(--bev-l) var(--bev-d); }
 html[data-theme="attune"] input[type=range] { accent-color:var(--accent); }
+
+/* right rail: the ridged Winamp titlebar treatment carries onto the rail tab strip */
+html[data-theme="attune"] .railTabs {
+  background: repeating-linear-gradient(180deg,#31363e 0 1px,#23262b 1px 3px);
+  border-bottom:1px solid var(--bev-d); }
+html[data-theme="attune"] .railTabs button { color:var(--muted); font-weight:700;
+  letter-spacing:1.2px; text-shadow:1px 1px 0 #000; }
+html[data-theme="attune"] .railTabs button.on { color:var(--accent); }
+html[data-theme="attune"] .upnext li { border-radius:2px; }
+html[data-theme="attune"] .upnext li.playing { box-shadow:inset 2px 0 0 var(--accent2); }
 
 /* status bar = sunken inset wells */
 html[data-theme="attune"] #status { background:#1c1f24;
@@ -626,20 +746,22 @@ html[data-theme="attune"] #status span:not(.sep):not(.spacer) {
   padding:2px 8px; border-radius:2px;
 }
 
-/* ---------------- LCD now-playing display (all themes; glows in attune) ------- */
+/* ---------------- LCD now-playing display -------------------------------------
+   Shared by every theme now (it used to be styled inside the attune-only block).
+   Colour comes from --lcd-bg / --lcd / --lcd-dim, which default to the historical
+   green-on-black on :root — so the Winamp display panel survives a theme swap.
+   The glow is part of that identity and is shared for the same reason. */
 .lcd {
-  margin:8px 8px 4px; padding:7px 9px 6px; border-radius:3px;
+  padding:3px 9px 3px; border-radius:3px;
   background:var(--lcd-bg,#0d1117); color:var(--lcd,var(--fg));
   border:1px solid; border-color:var(--bev-d,#000) var(--bev-l,#333) var(--bev-l,#333) var(--bev-d,#000);
   font-family:"Lucida Console",Consolas,ui-monospace,monospace;
-  display:flex; flex-direction:column; gap:2px; overflow:hidden;
-}
-html[data-theme="attune"] .lcd {
-  box-shadow: inset 0 0 14px #00e80014, inset 1px 1px 0 #000;
+  display:flex; flex-direction:column; gap:1px; overflow:hidden;
+  box-shadow: inset 0 0 14px color-mix(in srgb, var(--lcd) 8%, transparent), inset 1px 1px 0 #000;
   text-shadow: 0 0 4px color-mix(in srgb, var(--lcd) 55%, transparent);
 }
 .lcdRow1 { display:flex; align-items:baseline; gap:8px; min-width:0; }
-.lcdTime { font-size:21px; font-weight:700; letter-spacing:1px;
+.lcdTime { font-size:17px; font-weight:700; letter-spacing:1px; line-height:1.15;
   font-variant-numeric:tabular-nums; flex:0 0 auto; }
 .lcdTrackWrap { flex:1; min-width:0; overflow:hidden; white-space:nowrap; position:relative; }
 .lcdTrack { display:inline-block; font-size:12px; letter-spacing:.5px; white-space:pre; }
@@ -648,23 +770,20 @@ html[data-theme="attune"] .lcd {
   0%, 12% { transform:translateX(0); }
   88%, 100% { transform:translateX(var(--mq,-100px)); }
 }
-.lcdRow2 { display:flex; gap:10px; font-size:10px; color:var(--lcd-dim,var(--dim));
+.lcdRow2 { display:flex; gap:10px; font-size:10px; line-height:1.2;
+  color:color-mix(in srgb, var(--lcd) 55%, var(--lcd-bg));
   letter-spacing:.6px; align-items:center; }
-html[data-theme="attune"] .lcdRow2 { color:color-mix(in srgb, var(--lcd) 55%, #0a120a); }
 .lcdRow2 b { color:inherit; font-size:10px; font-weight:400; }
 .lcdRow2 .on { color:var(--lcd,var(--accent)); }
-
-/* np meta strip under the LCD keeps working in every theme */
-.npMeta { padding:0 10px 6px; }
 
 /* mini bar in attune dress */
 html[data-theme="attune"] #miniBar { border-bottom:1px solid var(--bev-d);
   box-shadow: inset 0 1px 0 var(--bev-l); }
 
-/* seek canvas (waveform seekbar — all themes) */
-#wave { flex:1; min-width:20px; height:22px; cursor:pointer; border-radius:2px;
-  background:var(--panel2); align-self:center; }
-html[data-theme="attune"] #wave { background:#14170f;
+/* seek canvas (waveform seekbar — all themes, sunken into the display panel) */
+#wave { flex:1 1 auto; min-width:20px; height:20px; cursor:pointer; border-radius:2px;
+  background:var(--lcd-bg); border:1px solid var(--line); align-self:center; }
+html[data-theme="attune"] #wave {
   border:1px solid; border-color:var(--bev-d) var(--bev-l) var(--bev-l) var(--bev-d); }
 
 /* ---------------- album grid ---------------- */
@@ -707,3 +826,48 @@ html[data-theme="attune"] .acard .cover .play { border-radius:3px; background:li
 .tree.folders li .tw { color:var(--dim); width:12px; text-align:center; flex:0 0 auto; }
 .tree.folders li.on { color:var(--fg); background:var(--sel); }
 #treeTail { padding-top:0; }
+
+/* ================= "bee" — flat MusicBee-style skin (the default) =============
+   Deliberately SHORT: the palette above does almost all of the work. What is left
+   here is only where the base sheet carries a non-flat assumption (gradients, pill
+   radii, the 2000s scrollbars) that has to be undone, plus the three list-row
+   states MusicBee is actually recognisable by. */
+
+html[data-theme="bee"] body { font-family:"Segoe UI",system-ui,sans-serif; font-size:12px; }
+
+/* flat chrome — no gradients on any panel or bar */
+html[data-theme="bee"] #toolbar,
+html[data-theme="bee"] #bottomBar { background:var(--panel2); }
+html[data-theme="bee"] .pane { border-radius:4px; }
+html[data-theme="bee"] .paneHead, html[data-theme="bee"] .railTabs button {
+  font-weight:600; letter-spacing:.7px; }
+
+/* buttons: hairline border, subtle hover tint, accent border on hover */
+html[data-theme="bee"] #toolbar button, html[data-theme="bee"] .btnrow button,
+html[data-theme="bee"] .viewBar button, html[data-theme="bee"] .pager button,
+html[data-theme="bee"] .chip, html[data-theme="bee"] .folderlist .fr button,
+html[data-theme="bee"] #recipeSel, html[data-theme="bee"] .search,
+html[data-theme="bee"] .field input, html[data-theme="bee"] .field select
+  { border-radius:4px; }
+html[data-theme="bee"] .chip { border-radius:99px; }   /* chips stay pills */
+html[data-theme="bee"] #toolbar button.primary {
+  background:var(--accent); border-color:var(--accent); color:#fff; }
+html[data-theme="bee"] #toolbar button.primary:hover { background:#4a91d2; filter:none; }
+/* the one warm note in the whole skin: Genius keeps the attune gold */
+html[data-theme="bee"] #toolbar button.genius {
+  background:var(--accent2); border-color:var(--accent2); color:#241a05; }
+html[data-theme="bee"] #toolbar button.genius:hover { background:#dcae44; filter:none; }
+html[data-theme="bee"] .btnrow button.primary { background:var(--accent); }
+
+/* list rows: selection = accent over panel with full-strength text; the playing row
+   is marked by a 2px accent edge, MusicBee's own "this one" cue */
+html[data-theme="bee"] tbody tr.sel td { color:var(--fg); }
+html[data-theme="bee"] tbody tr.playing { box-shadow:inset 2px 0 0 var(--accent); }
+html[data-theme="bee"] thead th { text-transform:none; letter-spacing:.2px;
+  font-size:11px; color:var(--muted); }
+
+/* slim square-ish scrollbars (the base sheet only redraws them under attune) */
+html[data-theme="bee"] ::-webkit-scrollbar { width:10px; height:10px; }
+html[data-theme="bee"] ::-webkit-scrollbar-track { background:var(--panel); }
+html[data-theme="bee"] ::-webkit-scrollbar-thumb { background:#3a3f47; border-radius:2px; }
+html[data-theme="bee"] ::-webkit-scrollbar-thumb:hover { background:#4a505a; }
