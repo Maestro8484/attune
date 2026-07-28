@@ -83,6 +83,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   files already in the production library.
 
 ### Fixed
+- **Packaged-app-only boot crash, caught before shipping** (`desktop/build.py`): the
+  living-library modules `web/libreload.py` and `web/libverify.py` were not in the GUI
+  bundle's data list, and `app.py` loads both by file path unconditionally in
+  `create_app` — the frozen `Attune.exe` would have died at startup while dev stayed
+  green (the same failure class as the S10 unbundled-`embed.py` scan bug). Found by
+  reading the PyInstaller command line in the build log against the merged `app.py`;
+  both files are now bundled. **Observed after rebuild:** the packaged exe boots,
+  `/api/lib/stats` 200, and the new `/api/radio/next` + `/api/lib/reload/status`
+  endpoints answer from the shipped bits.
 - **Three dead controls found by the S10 GUI audit** (`web/static/{studio.js,studio.css}`):
   (1) *More/Less Like This Artist ignored a multi-row selection* — only the right-clicked
   row's artist voted, while Remove/Block honored the selection; the menu items now act on
