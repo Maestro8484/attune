@@ -17,6 +17,12 @@ Endpoints:
   POST /api/track/tags     {i, title, artist, ...}  write tags to file + tracks + memory
   GET  /api/track/gain?i=  ReplayGain track/album gain from tags (cached)
   POST /api/reveal         {i}                      Explorer/select (local desktop only)
+  POST /api/track/delete   {i}                      remove from tracks/features/clap/
+                                                     usermeta/filestate — NEVER the file
+                                                     on disk. Loopback-guarded, like
+                                                     exportjob.py's copy endpoints: this
+                                                     is a this-machine library edit, not
+                                                     something a LAN client should drive.
 
 Every id crossing the wire is a pool index into eng.paths — never a raw path.
 """
@@ -237,13 +243,52 @@ class UserData:
         self._gain_cache[i] = out
         return out
 
+    # ------------------------------------------------------------------ delete
+    # Per-track tables a delete must clear. Kept as one list so a future additive
+    # table only needs adding here (and to libverify.py's _rekey_path).
+    PER_TRACK_TABLES = ("tracks", "features", "clap", "usermeta", "filestate")
+
+    def delete_track(self, i):
+        """Transactionally remove track i's rows from every per-track table. NEVER
+        touches the audio file on disk — the LAW here is "library bookkeeping only",
+        the same non-destructive guarantee exportjob.py's copy job documents for its
+        own writes. The in-RAM pool (self.eng/self.lib, and whichever engine is
+        active) still holds this track until the next hot reload (see libreload.py) —
+        deliberately not addressed here; the caller is expected to offer a reload."""
+        path = self.paths[i]
+        con = sqlite3.connect(self.db_path, timeout=30)
+        deleted = {}
+        try:
+            con.execute("PRAGMA journal_mode=WAL")
+            con.execute("BEGIN IMMEDIATE")
+            for table in self.PER_TRACK_TABLES:
+                try:
+                    cur = con.execute(f"DELETE FROM {table} WHERE path=?", (path,))
+                    deleted[table] = cur.rowcount
+                except sqlite3.OperationalError:
+                    deleted[table] = 0     # table doesn't exist in this DB — nothing to drop
+            con.commit()
+        except Exception:
+            con.rollback()
+            raise
+        finally:
+            con.close()
+        return {"path": path, "deleted": deleted}
+
 
 def register(app, ctx):
-    """ctx: dict(db_path, eng, lib, on_tags_changed?). Returns the UserData instance."""
+    """ctx: dict(db_path, eng, lib, engine_lock, locked, on_tags_changed?). Returns the
+    UserData instance."""
     eng = ctx["eng"]
     lib = ctx["lib"]
+    locked = ctx["locked"]
     ud = UserData(ctx["db_path"], eng, lib, ctx.get("on_tags_changed"))
     bp = Blueprint("userdata", __name__)
+
+    def _guard():
+        # Deleting library rows is a this-machine action, same rule as
+        # exportjob.py's copy endpoints and app.py's /api/fs/dirs.
+        return request.remote_addr in ("127.0.0.1", "::1")
 
     def _idx(source):
         i = int(source.get("i"))
@@ -252,6 +297,7 @@ def register(app, ctx):
         return i
 
     @bp.post("/api/track/rate")
+    @locked
     def rate():
         body = request.get_json(silent=True) or {}
         try:
@@ -267,6 +313,7 @@ def register(app, ctx):
         return jsonify(ok=True, i=i, rating=r)
 
     @bp.post("/api/track/loved")
+    @locked
     def loved():
         body = request.get_json(silent=True) or {}
         try:
@@ -279,6 +326,7 @@ def register(app, ctx):
         return jsonify(ok=True, i=i, loved=lib.loved[i])
 
     @bp.post("/api/track/played")
+    @locked
     def played():
         body = request.get_json(silent=True) or {}
         try:
@@ -290,6 +338,7 @@ def register(app, ctx):
         return jsonify(ok=True, i=i, plays=ud.played(i))
 
     @bp.post("/api/track/skipped")
+    @locked
     def skipped():
         body = request.get_json(silent=True) or {}
         try:
@@ -302,6 +351,7 @@ def register(app, ctx):
         return jsonify(ok=True)
 
     @bp.get("/api/track/tags")
+    @locked
     def get_tags():
         try:
             i = _idx(request.args)
@@ -315,6 +365,7 @@ def register(app, ctx):
             return jsonify(error=str(e)), 500
 
     @bp.post("/api/track/tags")
+    @locked
     def set_tags():
         body = request.get_json(silent=True) or {}
         try:
@@ -333,6 +384,7 @@ def register(app, ctx):
         return jsonify(ok=True, row=row)
 
     @bp.get("/api/track/gain")
+    @locked
     def get_gain():
         try:
             i = _idx(request.args)
@@ -343,6 +395,7 @@ def register(app, ctx):
         return jsonify(i=i, **ud.gain(i))
 
     @bp.post("/api/reveal")
+    @locked
     def reveal():
         """Open Explorer with the file selected. Windows + local use only — this runs
         on the machine the server runs on, which for the desktop app is the user's."""
@@ -360,6 +413,26 @@ def register(app, ctx):
             return jsonify(error="file missing on disk"), 404
         subprocess.Popen(["explorer", "/select,", path])
         return jsonify(ok=True)
+
+    @bp.post("/api/track/delete")
+    @locked
+    def delete():
+        if not _guard():
+            return jsonify(ok=False, error="only available on the Attune machine itself"), 403
+        body = request.get_json(silent=True) or {}
+        try:
+            i = _idx(body)
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="bad request"), 400
+        except IndexError:
+            return jsonify(ok=False, error="unknown track"), 404
+        row = lib.row(i)
+        try:
+            result = ud.delete_track(i)
+        except sqlite3.Error as e:
+            return jsonify(ok=False, error=str(e)), 500
+        label = f"{row.get('artist') or '?'} - {row.get('title') or ''}"
+        return jsonify(ok=True, i=i, path=result["path"], deleted=result["deleted"], label=label)
 
     app.register_blueprint(bp)
     return ud
