@@ -1,0 +1,32 @@
+{
+ "folds": 5,
+ "pool_size": 21236,
+ "k": 25,
+ "clap_baseline_heldout": 0.010996109769652165,
+ "trained_heldout": 0.037536265664388925,
+ "delta_heldout": 0.02654015589473676,
+ "clap_baseline_insample": 0.0122,
+ "trained_insample": 0.08473333333333334,
+ "delta_insample": 0.07253333333333334,
+ "n_lists": 24,
+ "verdict": "GENERALISES",
+ "config": {
+  "db": "C:/Users/SuperMaster/Documents/_Software-CodingProjects/Attune/mixer-ng/data/mixer.db",
+  "pairs": "eval/behavior_pairs.json",
+  "mode": "probe",
+  "folds": 5,
+  "epochs": 20,
+  "batch": 256,
+  "dim": 512,
+  "hidden": 4096,
+  "lr": 0.0003,
+  "tau": 0.05,
+  "pos_k": 8,
+  "negs": 2048,
+  "k": 25,
+  "max_seeds": 600,
+  "min_delta": 0.01,
+  "track_holdout": 0.1
+ },
+ "seed": 20260727
+}

@@ -1,0 +1,177 @@
+{
+ "pool_size": 21236,
+ "k": 25,
+ "seed": 20260727,
+ "coherence": {
+  "candidate (non-ABTest)": {
+   "n": 24,
+   "mean_z": 2.482288282925648,
+   "mean_excess_cosine": 0.01850749635034137
+  },
+  "CONTROL: ABTest (known engine output)": {
+   "n": 45,
+   "mean_z": 1.2979190089702408,
+   "mean_excess_cosine": 0.02538171527562315
+  }
+ },
+ "controls": {
+  "clap": 0.010996109769652165,
+  "trained": 0.037536265664388925,
+  "c1_seedblind": 0.012021591125371312,
+  "c2_clap": 0.009151680768656432,
+  "c2_head": 0.025540051341796738,
+  "c3_shuffled": 0.01758812392450499,
+  "signal_attributable": 0.019948141739883934
+ },
+ "teacher": {
+  "clap": 0.010996109769652165,
+  "shipped_musicip_head": 0.07485033923622259,
+  "behavior_head": 0.037536265664388925,
+  "per_list": [
+   {
+    "file": "Like-SweptAway.m3u.bak",
+    "n": 130,
+    "clap": 0.009538461538461539,
+    "musicip_head": 0.11938461538461538
+   },
+   {
+    "file": "Like-PeachTreeRascals.m3u.bak",
+    "n": 120,
+    "clap": 0.015000000000000001,
+    "musicip_head": 0.09099999999999998
+   },
+   {
+    "file": "LIke-Mama Said.m3u.bak",
+    "n": 117,
+    "clap": 0.02393162393162393,
+    "musicip_head": 0.11521367521367519
+   },
+   {
+    "file": "Like-bang drum all day.m3u.bak",
+    "n": 112,
+    "clap": 0.007857142857142858,
+    "musicip_head": 0.050357142857142864
+   },
+   {
+    "file": "like-Faces-OohLaLa.m3u",
+    "n": 100,
+    "clap": 0.0124,
+    "musicip_head": 0.1008
+   },
+   {
+    "file": "like-ifIhadMillionDollars.m3u",
+    "n": 100,
+    "clap": 0.013200000000000003,
+    "musicip_head": 0.052000000000000005
+   },
+   {
+    "file": "_Similar To\\like-BurnToShine.m3u",
+    "n": 99,
+    "clap": 0.008484848484848486,
+    "musicip_head": 0.03838383838383839
+   },
+   {
+    "file": "aSync\\like-bensonB-MrElectric-CastleHill.m3u",
+    "n": 99,
+    "clap": 0.020202020202020204,
+    "musicip_head": 0.14383838383838385
+   },
+   {
+    "file": "MiniPC\\like-Lumineers-SigurRos.m3u",
+    "n": 95,
+    "clap": 0.008,
+    "musicip_head": 0.07494736842105264
+   },
+   {
+    "file": "MiniPC\\like-DanceMonkey.m3u",
+    "n": 88,
+    "clap": 0.01090909090909091,
+    "musicip_head": 0.11045454545454544
+   },
+   {
+    "file": "Like-EdSh--ThinkingOutLoud.m3u.bak",
+    "n": 87,
+    "clap": 0.014712643678160922,
+    "musicip_head": 0.053793103448275856
+   },
+   {
+    "file": "MiniPC\\like-Johnny-I've been everywhere.m3u",
+    "n": 87,
+    "clap": 0.014252873563218393,
+    "musicip_head": 0.05471264367816093
+   },
+   {
+    "file": "MiniPC\\like-OuttaMyHead.m3u",
+    "n": 82,
+    "clap": 0.006341463414634147,
+    "musicip_head": 0.08585365853658537
+   },
+   {
+    "file": "Like-motorcycle_drive-by.m3u.bak",
+    "n": 81,
+    "clap": 0.011851851851851851,
+    "musicip_head": 0.07851851851851853
+   },
+   {
+    "file": "Like-EdSh-CastleHill.m3u.bak",
+    "n": 79,
+    "clap": 0.013670886075949368,
+    "musicip_head": 0.09417721518987342
+   },
+   {
+    "file": "MiniPC\\like-Some Nights.m3u",
+    "n": 77,
+    "clap": 0.005194805194805195,
+    "musicip_head": 0.05818181818181819
+   },
+   {
+    "file": "MiniPC\\_RockinRoundHouseMix-like-SendMeOnMyWay.m3u",
+    "n": 72,
+    "clap": 0.008333333333333335,
+    "musicip_head": 0.045555555555555544
+   },
+   {
+    "file": "_Similar To\\like-Kiss-IwasmadeforLovinYou.m3u",
+    "n": 71,
+    "clap": 0.009577464788732394,
+    "musicip_head": 0.04507042253521127
+   },
+   {
+    "file": "Like-CCR Down on the Corner.m3u.bak",
+    "n": 70,
+    "clap": 0.010857142857142857,
+    "musicip_head": 0.040571428571428585
+   },
+   {
+    "file": "Like-CCR-oldmandownroad.m3u.bak",
+    "n": 69,
+    "clap": 0.011014492753623189,
+    "musicip_head": 0.041159420289855086
+   },
+   {
+    "file": "Like-AnyDayNow(MB).m3u.bak",
+    "n": 64,
+    "clap": 0.00375,
+    "musicip_head": 0.0625
+   },
+   {
+    "file": "MiniPC\\Like-NumaNumaSong.m3u",
+    "n": 50,
+    "clap": 0.0064,
+    "musicip_head": 0.09280000000000001
+   },
+   {
+    "file": "Like-OKGoObsession.m3u.bak",
+    "n": 37,
+    "clap": 0.003243243243243243,
+    "musicip_head": 0.047567567567567574
+   },
+   {
+    "file": "Like-Come With Me Now.m3u8",
+    "n": 15,
+    "clap": 0.0,
+    "musicip_head": 0.014285714285714285
+   }
+  ]
+ }
+}
