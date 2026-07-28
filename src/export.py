@@ -30,7 +30,12 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 
 # --------------------------------------------------------------------------- env
 def find_env(explicit=None):
-    """Locate a .env: explicit arg → $ATTUNE_ENV → walk up from cwd → repo root."""
+    """Locate a .env: explicit arg → $ATTUNE_ENV → walk up from cwd → None if not found.
+
+    No repo-root fallback exists: a process whose cwd is outside the workspace (e.g.
+    a scheduled task starting in System32, or an installed copy under Program Files)
+    gets no .env and therefore no UNC/Plex export roots. Root-caused S12 2026-07-28
+    (nightly gate 400); the settings-based fix is a queued design item."""
     for cand in (explicit, os.environ.get("ATTUNE_ENV")):
         if cand and os.path.exists(cand):
             return cand

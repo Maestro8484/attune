@@ -30,7 +30,10 @@ DEFAULTS = {
     "ml_venv_python": "",          # python.exe of the heavy analyze venv ('' = analysis off)
     "scan_on_launch": False,       # run an incremental rescan when the app starts
     "watch_folders": False,        # live-watch library_folders; new/changed audio triggers an incremental scan
-    "theme": "attune",             # UI theme id — the Winamp-throwback house identity
+    "theme": "bee",                # UI theme id. Currently client-inert: prefs.js keeps theme in
+                                   # localStorage and never reads this key back (it does POST it, so
+                                   # the key must stay in DEFAULTS or the whole settings save 400s).
+                                   # 'bee' matches the client default since the S11 MusicBee UI.
     "default_recipe": "",          # name of the recipe applied by Genius / preselected in Studio ('' = engine defaults)
 }
 
