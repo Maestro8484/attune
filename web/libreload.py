@@ -16,7 +16,8 @@ DESIGN -- why in-place reinitialization, not rebinding a new object:
     # reset state"), just applied to a handful of shared objects instead of one.
 
     The EXPENSIVE part -- HybridEngine.__init__ reading the whole DB and rebuilding
-    the CLAP matrix, ~15-20s on the production library -- runs against throwaway
+    the CLAP matrix, observed ~1 s on the production library since the S9 startup fix
+    (it was ~25 s before that; either way the slow part) -- runs against throwaway
     STANDALONE instances of the same classes, holding no lock, so in-flight requests
     against the OLD pool are completely unaffected while it runs. Only the FAST
     "install" step -- copying each throwaway instance's __dict__ onto the live
