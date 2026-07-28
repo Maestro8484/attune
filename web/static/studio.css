@@ -863,6 +863,9 @@ html[data-theme="bee"] .btnrow button.primary { background:var(--accent); }
    is marked by a 2px accent edge, MusicBee's own "this one" cue */
 html[data-theme="bee"] tbody tr.sel td { color:var(--fg); }
 html[data-theme="bee"] tbody tr.playing { box-shadow:inset 2px 0 0 var(--accent); }
+/* keep the 23px row: MusicBee's density comes from a small font and single-line rows,
+   not from padding. The base 4px padding gives 26px at this font size. */
+html[data-theme="bee"] tbody td { padding:2.5px 8px; }
 html[data-theme="bee"] thead th { text-transform:none; letter-spacing:.2px;
   font-size:11px; color:var(--muted); }
 

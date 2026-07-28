@@ -6,6 +6,84 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **MusicBee-style layout, a global player bar, and a new default skin**
+  (`web/static/{studio.html,studio.css,studio.js,player.js,prefs.js}`; no server code, no
+  new files, no build changes). Rebuilds the Studio frame around MusicBee's documented
+  anatomy (`_scratch-uiresearch/MUSICBEE_SPEC.md`) while preserving every existing element
+  ID, so every `getElementById` contract in the JS keeps resolving.
+  - **`#grid` is now five columns**: `--leftw` | splitter | main panel | splitter |
+    `--rightw`. The left rail is the **Navigator only**. The art, LCD, visualizer and
+    transport that used to be stacked underneath it have moved out.
+  - **New `#rightRail`**, MusicBee's signature right sidebar: **Up Next** and **Track
+    Info** as two tabs. Resizable via a new `#splitRight` (`--rightw`, localStorage
+    persisted, same drag helper as `#splitLeft`) and collapsible from a new toolbar
+    button. On by default at >=1100px, collapsed below, and the choice persists.
+    Track Info carries `#art` at ~298px (up from 268px) plus title/artist/album/genre/year.
+  - **New `#bottomBar`** (72px), the global player bar in MusicBee's documented
+    left-to-right order: transport, then a centre display panel, then rating, spectrum,
+    volume and EQ. The display panel is the Winamp throwback zone: `#lcd` moved intact
+    (marquee, kbps/kHz, SHUF/REP/DJ/RADIO/EQ flags) with `#wave` directly beneath it.
+  - **Up Next is a view of the queue, not a copy of it.** `Player.q` remains the single
+    owner. Every queue mutation already funnels through `paintTransport()`, which now
+    fires a `queueChanged()` hook that repaints the rail from `Player.q`/`Player.pos`;
+    `moveInQueue()` and `shuffleQueue()` gained the same hook. `showNowPlaying()` (the
+    main-view queue) is untouched and still works.
+  - **Radio has a transport button** (`#tRadio`) on the same `toggleRadio()` path the `J`
+    key uses. It was previously 2 clicks deep and the 8th interactive control down inside
+    the Mix Options popover.
+  - **The LCD, waveform and LED spectrum are now theme-shared**, driven by new `--lcd-bg`
+    / `--lcd` / `--lcd-dim` / `--led-*` tokens that default on `:root` to the historical
+    green-on-black. They used to live inside the attune-only block and vanished under the
+    other themes.
+  - **New `bee` theme, now the default**: three desaturated dark background tiers, two
+    text tiers, one disciplined blue accent (`#3d84c6`) for selection/active/progress, and
+    warm gold (`#d0a032`) reserved for exactly one control, the Genius button. Segoe UI at
+    12px, 23px rows, flat panels, slim scrollbars. The `attune.themeChosen` guard is
+    unchanged: an install that ever picked a theme keeps it, and only the un-chosen
+    fallback moves from `attune` to `bee`. Attune's structural block is re-pointed at the
+    regions the transport now occupies, so its bevels, ridged captions and gold survive on
+    the new frame.
+
+  **Bundled fixes** (all from `_scratch-uiaudit/GUI_AUDIT.md` §5):
+  - Context menu, column chooser and "Why this pick?" no longer clamp against a hardcoded
+    height budget. `#ctx` assumed 430px while the menu had grown to 683px, so right-clicking
+    low in an 800px window hung it 253px off-screen with no scroll and no edge flip. A new
+    `placeFloating()` measures the real box before placing it, and the CSS adds
+    `max-height`/`overflow` so a floater taller than the window scrolls instead of clipping.
+  - `.popover` gets `max-height` + `overflow`. Mix options is ~655px tall and simply clipped
+    off the bottom of a short window with no way to reach the rest.
+  - Favicon: an inline `data:` SVG `<link>`. `GET /favicon.ico` used to 404, and no new file
+    ships.
+  - Removed the dead `--h: 34px` token (declared, never referenced).
+
+  **Found during verification, both by `elementFromPoint`:** `#eqPanel`'s `bottom:44px` was
+  measured against the old layout and sat on top of the new player bar, covering its own EQ
+  button; it derives from a `--barh` token now. And the toolbar overflowed its row by 188px
+  at 1024px wide, pushing the search box and all three icon buttons off-screen (pre-existing;
+  the new rail button made it 31px worse). Every toolbar control is pinned now except the
+  search, which shrinks to a 96px floor, backed by a `<=1180px` media query.
+
+  **Observed** (scratch copy of `mixer.db`, 115,511,296 bytes byte-verified, 21,236 tracks,
+  port 8785; fresh browser profile, `%APPDATA%\Attune\settings.json` never touched):
+  65/65 controls hit-test to themselves via `document.elementFromPoint` at 1280x800 and
+  42/42 at 1024x700, with zero console output. The audit's exact context-menu repro
+  (right-click at `clientY=498` in an 800px window) now places the menu at top 111 / bottom
+  794, fully on screen; at 1024x560 it caps at 544px, scrolls, and both the first and last
+  items hit-test. Mix options caps at 630px on a 700px window and its Radio checkbox is
+  reachable. Real clicks (Browser pane) confirmed the Radio button lights the button, the
+  LCD `RADIO` flag and the Options checkbox together; removing a track from the rail took
+  the queue 8 to 7 and every surface followed (rail rows, tab badge, tree count,
+  localStorage). Seed to mix is unchanged at 2 clicks (101 tracks, same seed line as the
+  audit). Waveform seek at 75% across landed at 202s of a 268s track. All six themes swap
+  live with `grid-template-columns` identical in every one. Mini mode, the EQ panel, and
+  album/list click-through all verified. A stale pre-redesign `localStorage`
+  (`theme=attune` + `themeChosen`, `leftw=270`, none of the new keys) boots attune on the
+  new layout with sane defaults for everything new. Regression gate **16/16 byte-identical**
+  against `REGRESSION_BASELINE_20260719`.
+
+  **Deliberately out of scope**, listed here as future options: A-Z jump bar, thumbnail
+  browser, library-explorer tree, lyrics panel, per-tab layout configuration, and
+  drag-from-table-to-queue.
 - **A real Windows installer** (`desktop/installer/attune.iss` NEW, `desktop/build_installer.py`
   NEW). Inno Setup 6, per-user (`PrivilegesRequired=lowest`, no UAC, installs under
   `{localappdata}\Programs\Attune`), packages the whole one-dir PyInstaller tree from
