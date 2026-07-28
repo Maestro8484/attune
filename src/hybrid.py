@@ -130,6 +130,22 @@ class HybridEngine:
     # feature.py stores chroma means at offsets 40:52 in the 79-dim vector
     CHROMA_SLICE = (40, 52)
     LIB_DIM = 79            # expected librosa descriptor length (see features.FEATURE_DIM)
+    # features.py's FEATURE_GROUPS['texture'] = (71, 78), ordered centroid/bandwidth/
+    # rolloff/zcr/rms_mean/rms_std/flatness -> rms_mean (loudness) is offset 71+4 = 75.
+    # This is radio_next()'s energy-arc axis: TEACHER_MECHANICS.md B.3 measured it as one
+    # of MusicIP's most strongly-held corridor axes (ratio 0.563 vs a matched-CLAP-distance
+    # control, second only to brightness/texture).
+    RMS_MEAN_INDEX = 75
+
+    # radio_next() energy-arc tuning (see that method's docstring for the corridor math).
+    # Measured empirically against the prod-sized library (_scratch-journey, 21,236 tracks,
+    # seed pool idx 100, variety=3, n=20): period=20/sigma=0.35 gives rise/fall/wave
+    # Spearman rho vs. the target curve of 0.82 / -0.85 / 0.87, and holds a 'flat' pull
+    # to a mean |deviation| of 0.25 (population std=1) from the seed's own energy --
+    # period=40/sigma=0.8 only reached rho=0.41 for rise (too loose a corridor, and too
+    # long a period to show a clear trend within one n=20 batch).
+    ARC_PERIOD = 20         # tracks per full rise/fall/wave cycle
+    ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
 
     def __init__(self, db_path, weights=None):
         self.w = dict(DEFAULT_WEIGHTS)
@@ -213,6 +229,24 @@ class HybridEngine:
         self.meta = {p: {"artist": meta[p][0], "album": meta[p][1], "title": meta[p][2],
                          "genre": meta[p][3], "year": meta[p][4]} for p in meta}
 
+        # radio_next()'s energy-arc axis: z-scored rms_mean (loudness), computed from
+        # lib_vec (EVERY analyzed track, not libN) so the corridor works whether or not
+        # the 'lib' weight/pool-restriction is active -- independent of self.use_lib by
+        # design. NaN for a pool track with no librosa vector (e.g. lib=0 widened the pool
+        # to CLAP-only tracks); radio_next() treats NaN as "unknown, don't bias".
+        if lib_vec:
+            raw_e = np.array([v[self.RMS_MEAN_INDEX] for v in lib_vec.values()])
+            mu_e, sd_e = raw_e.mean(), raw_e.std()
+            sd_e = sd_e if sd_e > 1e-9 else 1e-9
+            self.energy = np.array(
+                [(lib_vec[p][self.RMS_MEAN_INDEX] - mu_e) / sd_e if p in lib_vec else np.nan
+                 for p in paths])
+            lo, hi = np.nanpercentile(self.energy, [10, 90])
+            self._energy_lo, self._energy_hi = float(lo), float(hi)
+        else:
+            self.energy = np.full(len(paths), np.nan)
+            self._energy_lo, self._energy_hi = -1.0, 1.0   # unreachable: no energy data
+
     def _score(self, si):
         w = self.w
         s = w["clap"] * (self.X @ self.X[si])
@@ -273,6 +307,94 @@ class HybridEngine:
                 continue
             out.append(self.paths[j]); recent.append(a)
             if len(out) >= size:
+                break
+        return out
+
+    def radio_next(self, seed, n=20, exclude=None, variety=0.0, artist_spacing=3,
+                   arc="flat", pos=0, rng=None):
+        """Journey/Radio mode: one batch of the next `n` tracks for an infinite queue,
+        stateless (caller tracks `exclude` + `pos` across calls).
+
+        Reimplements MusicIP Mixer's actual variety mechanism, per the overnight
+        teacher-loop reverse-engineering (TEACHER_MECHANICS.md B.1/B.7): variety is
+        NOT a diversity/packing constraint, it is i.i.d. Bernoulli thinning of a fixed
+        rank list -- `p = 1/(1+variety)` per candidate, single ordered scan, no lookback,
+        no walk relative to the previous pick. That is exactly what's below: the SAME
+        _score(seed) ranking mix() uses, the SAME artist-spacing drop-for-good walk
+        (mix()'s GOTCHA applies here too -- a spacing violator is skipped for good, not
+        deferred), plus `exclude` (already played/queued) folded into the skip set.
+
+        variety<=0 degenerates to a DETERMINISTIC top-k walk -- no coin flip, no energy
+        bias -- so radio_next(seed, n, exclude=[], variety=0, arc=<anything>) is exactly
+        mix(seed, size=n)'s walk (same order, same spacing), which is what the byte-
+        identical /api/mix regression gate (and this feature's own verification #1)
+        checks against. The energy-arc corridor is an IMPROVEMENT over the teacher (which
+        has no corridor at all, see TEACHER_MECHANICS.md B.3's finding that MusicIP DOES
+        hold acoustic axes but not by any disclosed corridor mechanism): it only ever
+        acts as a second, independent Bernoulli-style accept/reject layered on top of the
+        variety coin, so it never fires in the deterministic v<=0 path either.
+
+        arc: 'flat' holds near the SEED's own energy (steady); 'rise'/'fall' sweep
+        linearly across the pool's 10th-90th percentile band over ARC_PERIOD tracks;
+        'wave' is a sine over the same band/period. `pos` phases the arc across
+        repeated calls (t = pos + tracks already accepted in THIS call).
+
+        rng: optional numpy Generator (or anything with .random()) for deterministic
+        tests; a fresh np.random.default_rng() is used if not given -- radio is meant
+        to vary call to call, unlike mix()'s pinned rank order.
+        """
+        canon = self.resolve(seed)
+        if canon is None:
+            return None
+        si = self.idx[canon]
+        order = np.argsort(-self._score(si))
+        rng = rng if rng is not None else np.random.default_rng()
+
+        excl = {si}
+        for e in (exclude or []):
+            ei = self._as_index(e)
+            if ei is not None:
+                excl.add(ei)
+
+        variety = max(0.0, float(variety))
+        p_variety = 1.0 / (1.0 + variety)
+
+        seed_energy = self.energy[si]
+        lo, hi = self._energy_lo, self._energy_hi
+        mid, amp = (lo + hi) / 2.0, (hi - lo) / 2.0
+
+        def _target(t):
+            frac = (t % self.ARC_PERIOD) / self.ARC_PERIOD
+            if arc == "rise":
+                return lo + (hi - lo) * frac
+            if arc == "fall":
+                return hi - (hi - lo) * frac
+            if arc == "wave":
+                return mid + amp * np.sin(2 * np.pi * frac)
+            # 'flat' (or any unrecognised value -- fail toward the safe/inert default):
+            # hold at the seed's own energy, or the corridor midpoint if unknown.
+            return seed_energy if not np.isnan(seed_energy) else mid
+
+        out, recent = [], []
+        for j in order:
+            j = int(j)
+            if j in excl:
+                continue
+            if variety > 0:
+                if rng.random() >= p_variety:
+                    continue                      # variety coin: permanent skip, no lookback
+                ej = self.energy[j]
+                if not np.isnan(ej):
+                    target = _target(pos + len(out))
+                    z = (ej - target) / self.ARC_SIGMA
+                    accept_prob = float(np.exp(-0.5 * z * z))
+                    if rng.random() >= accept_prob:
+                        continue                  # corridor coin: also a permanent skip
+            a = self.artist[j]
+            if a and a in recent[-artist_spacing:]:
+                continue
+            out.append(self.paths[j]); recent.append(a)
+            if len(out) >= n:
                 break
         return out
 
