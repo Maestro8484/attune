@@ -5,6 +5,7 @@
 
 const Prefs = (() => {
   const THEMES = [
+    { id: 'bee',      name: 'Bee',      sw: ['#1a1c20', '#212429', '#3d84c6', '#d0a032'] },
     { id: 'attune',   name: 'Attune',   sw: ['#17191c', '#22252a', '#f0a92e', '#00e800'] },
     { id: 'obsidian', name: 'Obsidian', sw: ['#0e1014', '#151922', '#6d8cff', '#8b5cf6'] },
     { id: 'aurora',   name: 'Aurora',   sw: ['#060a08', '#0b120e', '#00e07f', '#37cdbe'] },
@@ -21,13 +22,15 @@ const Prefs = (() => {
     store.set('theme', id);
   }
   function applyThemeEarly() {
-    // The house identity is the default. A stored theme only wins once the user has
-    // EXPLICITLY picked one (themeChosen) — earlier builds persisted 'obsidian' on
-    // every boot, which would otherwise pin old installs to the pre-identity look.
-    applyTheme(store.get('themeChosen', false) ? store.get('theme', 'attune') : 'attune');
+    // The house default is now 'bee' (the MusicBee-style flat skin); 'attune' remains a
+    // first-class choice, one click away. The GUARD is unchanged: a stored theme only
+    // wins once the user has EXPLICITLY picked one (themeChosen) — earlier builds
+    // persisted 'obsidian' on every boot, which would otherwise pin old installs to a
+    // look nobody chose. An existing themeChosen install therefore keeps its theme.
+    applyTheme(store.get('themeChosen', false) ? store.get('theme', 'bee') : 'bee');
   }
   function paintThemeGrid() {
-    const cur = store.get('theme', 'attune');
+    const cur = store.get('theme', 'bee');
     $('themeGrid').innerHTML = THEMES.map(t => `
       <div class="themecard ${t.id === cur ? 'on' : ''}" data-theme="${t.id}">
         <div class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</div>
@@ -99,7 +102,7 @@ const Prefs = (() => {
       scan_on_launch: $('prefScanLaunch').checked,
       watch_folders: $('prefWatch').checked,
       library_folders: collectFolders(),
-      theme: store.get('theme', 'attune'),
+      theme: store.get('theme', 'bee'),
     };
     try {
       const j = await jpost('/api/settings', patch);
@@ -369,12 +372,29 @@ const Prefs = (() => {
     store.set('mini', on);
   }
 
+  /* ------------------------------------------------------------- right rail
+     Collapse state persists like every other layout knob. With NO stored value the
+     rail is on at >=1100px and collapsed below, so a narrow window does not open
+     with three columns fighting over the width. */
+  function applyRail(on) {
+    document.body.classList.toggle('norail', !on);
+    store.set('rail', on);
+    const b = $('btnRail'); if (b) b.classList.toggle('on', on);
+    if (on && typeof queueChanged === 'function') queueChanged();
+  }
+  function initRail() {
+    const stored = store.get('rail', null);
+    applyRail(stored === null ? innerWidth >= 1100 : !!stored);
+  }
+
   /* ---------------------------------------------------------------- splitters */
   function bindSplitters() {
     const grid = $('grid');
-    const leftW = store.get('leftw', 270);
+    const leftW = store.get('leftw', 230);
+    const rightW = store.get('rightw', 300);
     const facetH = store.get('faceth', 210);
     grid.style.setProperty('--leftw', leftW + 'px');
+    grid.style.setProperty('--rightw', rightW + 'px');
     $('facets').style.flexBasis = facetH + 'px';
     document.documentElement.style.setProperty('--faceth', facetH + 'px');
 
@@ -403,6 +423,11 @@ const Prefs = (() => {
       const h = Math.min(Math.max(e.clientY - top, 80), 420);
       $('facets').style.flexBasis = h + 'px';
     }, () => store.set('faceth', parseInt($('facets').style.flexBasis)));
+    // same pattern as splitLeft, measured from the grid's right edge instead
+    drag($('splitRight'), e => {
+      const w = Math.min(Math.max(grid.getBoundingClientRect().right - e.clientX, 200), 560);
+      grid.style.setProperty('--rightw', w + 'px');
+    }, () => store.set('rightw', parseInt(grid.style.getPropertyValue('--rightw'))));
   }
 
   /* ---------------------------------------------------------------- wiring */
@@ -410,6 +435,7 @@ const Prefs = (() => {
     $('btnPrefs').onclick = open;
     $('prefsSave').onclick = save;
     $('btnMini').onclick = () => toggleMini();
+    $('btnRail').onclick = () => applyRail(document.body.classList.contains('norail'));
     $('miniExpand').onclick = () => toggleMini(false);
     $('tagSave').onclick = saveTags;
     $('btnRescan').onclick = rescan;
@@ -499,6 +525,7 @@ const Prefs = (() => {
   function init() {
     bind();
     bindSplitters();
+    initRail();
     if (store.get('mini', false)) toggleMini(true);
     // if a scan is already running (started before this page load), surface it
     jget('/api/scan/status').then(st => { if (st.running) startScanPoll(); }).catch(() => {});
