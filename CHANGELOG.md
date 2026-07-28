@@ -5,6 +5,40 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0] — unreleased (initial public cut)
 
+### Added
+- **A real Windows installer** (`desktop/installer/attune.iss` NEW, `desktop/build_installer.py`
+  NEW). Inno Setup 6, per-user (`PrivilegesRequired=lowest`, no UAC, installs under
+  `{localappdata}\Programs\Attune`), packages the whole one-dir PyInstaller tree from
+  `desktop/build.py` (`Attune.exe` + `_internal\` + the nested `analyzer\AttuneAnalyzer.exe`)
+  under lzma2/max solid compression. Start Menu shortcut always; a desktop shortcut and
+  "start Attune when Windows starts" (an HKCU `Run` value) are both opt-in, unchecked
+  tasks. Uninstall removes the install dir, Start Menu group, desktop icon, and the `Run`
+  key; it never touches `%APPDATA%\Attune\settings.json` (`src/config.py`) or a user's
+  library DB — no `[UninstallDelete]` section reaches into `{userappdata}`, which is the
+  entire preservation mechanism. Fixed `AppId` (a hardcoded GUID) so future versions
+  upgrade in place rather than installing side-by-side. `build_installer.py` is a thin
+  ISCC driver (locates `ISCC.exe` in the three standard install locations, takes
+  `--dist`/`--out`, no new dependencies) — the actual packaging logic all lives in Inno
+  Setup itself, not reinvented here. No icon file exists anywhere under `desktop/` yet, so
+  `SetupIconFile` is omitted (falls back to Inno's default icon) rather than inventing one.
+  **Observed:** compiled clean (169 s, `AttuneSetup-0.1.0.exe`, 496.8 MB from a 1.1 GB / 4,032-file
+  source tree) against the real `dist/Attune` build. `/VERYSILENT /NOICONS` install into a
+  scratch dir: exit 0, 4,034 files (source count + the two uninstaller artifacts),
+  `Attune.exe` and `analyzer\AttuneAnalyzer.exe` both present. Smoke-launched the installed
+  copy: window opened, `/api/boot` reported ready, `/api/lib/stats` returned 200 with real
+  library stats (21,236 tracks), closed cleanly (`CloseMainWindow`), port released, no
+  orphaned processes. Confirmed `%APPDATA%\Attune\settings.json` byte-identical
+  (SHA-256 match) and same mtime before and after — the app's own `db_path` write-back only
+  fires on a mismatch, and the installed copy resolved the same already-configured DB path,
+  so nothing wrote. Silent uninstall: exit 0, install dir gone, `settings.json` hash still
+  matching. Reinstall-then-uninstall repeated clean. Separately verified with
+  `/TASKS="startupicon"`: the HKCU `Run` value is created pointing at the installed
+  `Attune.exe` and is removed by uninstall. Port discovery required reading
+  `desktop/app_desktop.py`: the dev-server doc's "likely fixed" port assumption doesn't
+  hold for the desktop build — it binds `("127.0.0.1", 0)` and lets the OS assign an
+  ephemeral port every launch, so the smoke test found it via
+  `Get-NetTCPConnection -OwningProcess` rather than a fixed number.
+
 ### Fixed
 - **Three dead controls found by the S10 GUI audit** (`web/static/{studio.js,studio.css}`):
   (1) *More/Less Like This Artist ignored a multi-row selection* — only the right-clicked
