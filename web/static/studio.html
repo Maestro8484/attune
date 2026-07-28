@@ -4,6 +4,10 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Attune Studio</title>
+<!-- Favicon as an inline data: SVG — no new file ships, and /favicon.ico stops 404ing.
+     Colours are literal (a link href cannot read CSS vars); the mark is the bee accent
+     on the bee base, so it reads on both light and dark browser chrome. -->
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2032%2032'%3E%3Crect%20width='32'%20height='32'%20rx='7'%20fill='%231a1c20'/%3E%3Cpath%20d='M21%206.2v12.3a3.9%203.9%200%201%201-2-3.4V10l-8%202v8.9a3.9%203.9%200%201%201-2-3.4V10.4z'%20fill='%233d84c6'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="/studio.css">
 </head>
 <body>
@@ -42,6 +46,7 @@
     <input id="q" type="search" placeholder="Search all  ( / )" autocomplete="off">
   </label>
 
+  <button id="btnRail" class="iconbtn" title="Show / hide the right rail (Up Next · Track Info)">▥</button>
   <button id="btnMini" class="iconbtn" title="Mini player (Ctrl+Shift+M)">▭</button>
   <button id="btnPrefs" class="iconbtn" title="Preferences (Ctrl+,)">☰</button>
 </header>
@@ -225,7 +230,9 @@
 
 <main id="grid">
 
-  <!-- left: tree + art + transport -->
+  <!-- left: the Navigator (MusicBee's left sidebar) — nothing else lives here now.
+       Art/LCD/visualizer/transport moved OUT: art to #rightRail's Track Info tab,
+       LCD+wave+transport+vis+rating+volume to the global #bottomBar. -->
   <aside id="left">
     <div class="pane treepane">
       <div class="paneHead">Filters / Playlists</div>
@@ -252,48 +259,6 @@
         <li class="grouphead">Playlists <b id="plN">0</b></li>
       </ul>
       <ul id="plList" class="tree pl"></ul>
-    </div>
-
-    <div class="pane artpane">
-      <div id="art" class="art"><span class="noart">♪</span></div>
-      <div class="lcd" id="lcd" title="Attune display">
-        <div class="lcdRow1">
-          <span class="lcdTime" id="lcdTime">0:00</span>
-          <span class="lcdTrackWrap"><span class="lcdTrack" id="lcdTrack">ATTUNE :: ready</span></span>
-        </div>
-        <div class="lcdRow2">
-          <b id="lcdKbps">--- kbps</b>
-          <b id="lcdKhz">-- kHz</b>
-          <b id="lcdFlags"></b>
-          <span class="spacer"></span>
-          <b id="npPlays"></b>
-        </div>
-      </div>
-      <div class="npMeta">
-        <span class="stars" id="npStars" title="Rate">☆☆☆☆☆</span>
-        <span class="heart" id="npHeart" title="Love">♥</span>
-        <span class="spacer"></span>
-        <span class="t" id="npArtistSmall"></span>
-      </div>
-      <canvas id="vis" height="44" title="Visualizer — click to change mode"></canvas>
-      <audio id="audio" preload="auto"></audio>
-      <audio id="audioB" preload="auto"></audio>
-      <div class="transport">
-        <button id="tShuf" title="Shuffle queue (S)">⤨</button>
-        <button id="tPrev" title="Previous (Z)">⏮</button>
-        <button id="tPlay" class="play" title="Play/Pause (Space)">▶</button>
-        <button id="tStop" title="Stop (V)">⏹</button>
-        <button id="tNext" title="Next (B)">⏭</button>
-        <button id="tRep" title="Repeat: off / all / one (R)">🔁</button>
-        <button id="tDj" title="Auto-DJ: keep the queue full with similar tracks (D)">∞</button>
-        <button id="tEq" title="Equalizer (E)">EQ</button>
-        <div class="r2">
-          <span id="tCur" class="t">0:00</span>
-          <canvas id="wave" height="22" title="Seek — the waveform draws in as the track decodes"></canvas>
-          <span id="tDur" class="t">0:00</span>
-          <span class="vol">🔊<input id="tVol" type="range" min="0" max="1" step="0.01" value="0.9"></span>
-        </div>
-      </div>
     </div>
   </aside>
 
@@ -352,7 +317,88 @@
       <div id="pager" class="pager"></div>
     </div>
   </section>
+
+  <div class="vsplit" id="splitRight"></div>
+
+  <!-- right rail: MusicBee's signature right sidebar — Playing Tracks ("Up Next") +
+       Track Information as two tabs. The queue has exactly ONE source of truth
+       (Player.q); #upNext is a second VIEW of it, repainted from the same queue-change
+       hook that repaints the transport, and the Now Playing main view keeps working
+       unchanged. Collapsible from the toolbar (#btnRail), resizable via #splitRight. -->
+  <aside id="rightRail">
+    <div class="pane railpane">
+      <div class="railTabs" id="railTabs">
+        <button data-rail="queue" class="on">Up Next <b id="railQN">0</b></button>
+        <button data-rail="info">Track Info</button>
+      </div>
+
+      <div class="railBody" id="railQueue">
+        <ul id="upNext" class="upnext"></ul>
+        <div id="upNextEmpty" class="railEmpty">Nothing queued yet.</div>
+      </div>
+
+      <div class="railBody railInfo" id="railInfo" hidden>
+        <div id="art" class="art"><span class="noart">♪</span></div>
+        <div class="tiMeta">
+          <div class="tiTitle" id="tiTitle">—</div>
+          <div class="tiArtist" id="tiArtist"></div>
+          <div class="tiRow"><span class="k">Album</span><span class="t" id="npArtistSmall"></span></div>
+          <div class="tiRow"><span class="k">Genre</span><span class="t" id="tiGenre"></span></div>
+          <div class="tiRow"><span class="k">Year</span><span class="t" id="tiYear"></span></div>
+        </div>
+      </div>
+    </div>
+  </aside>
 </main>
+
+<!-- global player bar (MusicBee's bottom Player Controls), in its documented
+     left-to-right order: transport | display panel | rating · spectrum · volume · EQ.
+     The display panel is the Winamp throwback zone: LCD marquee + waveform seek,
+     green-on-black in every theme (see --lcd-* in studio.css). -->
+<div id="bottomBar">
+  <div class="transport">
+    <button id="tShuf" title="Shuffle queue (S)">⤨</button>
+    <button id="tPrev" title="Previous (Z)">⏮</button>
+    <button id="tPlay" class="play" title="Play/Pause (Space)">▶</button>
+    <button id="tStop" title="Stop (V)">⏹</button>
+    <button id="tNext" title="Next (B)">⏭</button>
+    <button id="tRep" title="Repeat: off / all / one (R)">🔁</button>
+    <button id="tDj" title="Auto-DJ: keep the queue full with similar tracks (D)">∞</button>
+    <button id="tRadio" title="Radio — an infinite journey from Now Playing (J)">📻</button>
+  </div>
+
+  <div class="displayPanel">
+    <div class="lcd" id="lcd" title="Attune display">
+      <div class="lcdRow1">
+        <span class="lcdTime" id="lcdTime">0:00</span>
+        <span class="lcdTrackWrap"><span class="lcdTrack" id="lcdTrack">ATTUNE :: ready</span></span>
+      </div>
+      <div class="lcdRow2">
+        <b id="lcdKbps">--- kbps</b>
+        <b id="lcdKhz">-- kHz</b>
+        <b id="lcdFlags"></b>
+        <span class="spacer"></span>
+        <b id="npPlays"></b>
+      </div>
+    </div>
+    <div class="waveRow">
+      <span id="tCur" class="t">0:00</span>
+      <canvas id="wave" height="20" title="Seek — the waveform draws in as the track decodes"></canvas>
+      <span id="tDur" class="t">0:00</span>
+    </div>
+  </div>
+
+  <div class="barRight">
+    <span class="stars" id="npStars" title="Rate">☆☆☆☆☆</span>
+    <span class="heart" id="npHeart" title="Love">♥</span>
+    <canvas id="vis" height="40" title="Visualizer — click to change mode"></canvas>
+    <span class="vol">🔊<input id="tVol" type="range" min="0" max="1" step="0.01" value="0.9"></span>
+    <button id="tEq" title="Equalizer (E)">EQ</button>
+  </div>
+
+  <audio id="audio" preload="auto"></audio>
+  <audio id="audioB" preload="auto"></audio>
+</div>
 
 <!-- EQ panel -->
 <div id="eqPanel" hidden>

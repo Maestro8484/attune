@@ -778,6 +778,58 @@ async function showNowPlaying() {
   $('viewSub').textContent = `${q.length} queued · ${hms(secs)}`;
 }
 
+/* ---------------------------------------------------- right rail: Up Next + Info
+   The queue has ONE owner: Player.q. #upNext is a second VIEW of it, never a second
+   copy — it re-reads Player.q/Player.pos on every paint, and every queue mutation
+   already funnels through paintTransport() (plus moveInQueue/shuffleQueue), which
+   calls queueChanged() here. showNowPlaying() (the main-view queue) is untouched.  */
+let _upNextT = 0, _upNextSeq = 0;
+
+function queueChanged() {                      // called from player.js on any q change
+  clearTimeout(_upNextT);
+  _upNextT = setTimeout(renderUpNext, 60);     // coalesce bursts (queueAdd of 20 ids)
+}
+
+function railIsShowingQueue() {
+  return !document.body.classList.contains('norail') && !$('railQueue').hidden;
+}
+
+async function renderUpNext() {
+  const list = $('upNext');
+  if (!list || typeof Player === 'undefined') return;
+  const q = Player.q, pos = Player.pos;
+  $('railQN').textContent = q.length;
+  if (!railIsShowingQueue()) return;            // collapsed or on the Info tab: no fetch
+  if (!q.length) { list.innerHTML = ''; $('upNextEmpty').hidden = false; return; }
+  $('upNextEmpty').hidden = true;
+  const seq = ++_upNextSeq;
+  let byI;
+  try {
+    const j = await jget('/api/lib/rows?' + [...new Set(q)].map(i => `i=${i}`).join('&'));
+    byI = new Map(j.rows.map(r => [r.i, r]));
+  } catch { return; }                           // transient — the next change repaints
+  if (seq !== _upNextSeq) return;               // a newer render already won
+  list.innerHTML = q.map((i, k) => {
+    const r = byI.get(i);
+    if (!r) return '';
+    const cls = k === pos ? 'playing' : (k < pos ? 'done' : '');
+    return `<li data-k="${k}" class="${cls}">` +
+      `<span class="n">${k === pos ? '▶' : k + 1}</span>` +
+      `<span class="qm"><span class="qt">${esc(r.title)}</span>` +
+      `<span class="qa">${esc(r.artist)}</span></span>` +
+      `<button class="qx" title="Remove from queue">✕</button></li>`;
+  }).join('');
+}
+
+function setRailTab(id) {
+  store.set('railTab', id);
+  $('railTabs').querySelectorAll('button').forEach(b =>
+    b.classList.toggle('on', b.dataset.rail === id));
+  $('railQueue').hidden = id !== 'queue';
+  $('railInfo').hidden = id !== 'info';
+  if (id === 'queue') renderUpNext();           // the tab was not rendering while hidden
+}
+
 async function showPlaylist(name) {
   S.view = 'playlist'; S.playlist = name;
   document.querySelectorAll('#tree li').forEach(l => l.classList.remove('on'));
@@ -1025,9 +1077,7 @@ async function showWhy(i, x, y) {
         <span class="track"><span class="fill ${v < 0 ? 'neg' : ''}"
           style="width:${Math.abs(v) / max * 100}%"></span></span>
         <span class="v">${v.toFixed(3)}</span></div>`).join('');
-    el.style.left = Math.min(x, innerWidth - 360) + 'px';
-    el.style.top = Math.min(y, innerHeight - 220) + 'px';
-    el.hidden = false;
+    placeFloating(el, x, y);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -1192,14 +1242,28 @@ async function refine(focusI, msg) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* ------------------------------------------------------- floating-layer placement
+   Every fixed-position floater (#ctx, #colMenu, .why) used to be clamped against a
+   HARDCODED height budget -- #ctx assumed 430px while the menu had grown to 683px, so
+   it hung 253px off the bottom of an 800px viewport with no scroll and no edge flip.
+   A budget cannot track content. Measure instead: unhide off-screen, read the real
+   box, then place it. Paired with `max-height:calc(100vh - 16px); overflow:auto` in
+   the CSS, so a floater taller than the whole window scrolls rather than clipping. */
+function placeFloating(el, x, y, pad = 6) {
+  el.style.left = '-9999px';
+  el.style.top = '0px';
+  el.hidden = false;                       // must be laid out before it can be measured
+  const w = el.offsetWidth, h = el.offsetHeight;
+  el.style.left = Math.max(pad, Math.min(x, innerWidth - w - pad)) + 'px';
+  el.style.top = Math.max(pad, Math.min(y, innerHeight - h - pad)) + 'px';
+}
+
 /* ------------------------------------------------------------------ column chooser */
 function openColMenu(x, y) {
   const m = $('colMenu');
   m.innerHTML = COLS.map(c =>
     `<li data-col="${c.id}"><span class="ck">${visCols.has(c.id) ? '✓' : ''}</span>${c.label}</li>`).join('');
-  m.style.left = Math.min(x, innerWidth - 180) + 'px';
-  m.style.top = Math.min(y, innerHeight - 320) + 'px';
-  m.hidden = false;
+  placeFloating(m, x, y);
 }
 
 /* ------------------------------------------------------------------ wiring */
@@ -1356,6 +1420,30 @@ function bindEvents() {
   });
   $('btnBackLib').onclick = () => loadLibrary(false);
 
+  // right rail: tabs, queue rows, per-row remove
+  $('railTabs').addEventListener('click', e => {
+    const b = e.target.closest('button[data-rail]'); if (!b) return;
+    setRailTab(b.dataset.rail);
+  });
+  setRailTab(store.get('railTab', 'queue'));
+  $('upNext').addEventListener('click', e => {
+    const li = e.target.closest('li[data-k]'); if (!li) return;
+    if (e.target.closest('.qx')) {
+      const i = Player.q[+li.dataset.k];
+      if (i != null) {
+        Player.removeFromQueue([i]);
+        if (S.view === 'nowplaying') showNowPlaying();
+      }
+      return;
+    }
+    $('upNext').querySelectorAll('li.sel').forEach(x => x.classList.remove('sel'));
+    li.classList.add('sel');
+  });
+  $('upNext').addEventListener('dblclick', e => {
+    const li = e.target.closest('li[data-k]'); if (!li) return;
+    Player.playAt(+li.dataset.k);
+  });
+
   // queue tools
   $('qClear').onclick = () => { Player.clearQueue(); showNowPlaying(); };
   $('qShuffle').onclick = () => { Player.shuffleQueue(); showNowPlaying(); };
@@ -1482,9 +1570,7 @@ function bindEvents() {
       `<i data-s="${n}" class="${n <= (row.rating || 0) ? 'on' : ''}">${n <= (row.rating || 0) ? '★' : '☆'}</i>`).join('');
     ctx.querySelector('[data-act="love"] span').textContent =
       row.loved ? '♥ Un-love' : '♥ Love';
-    ctx.style.left = Math.min(e.clientX, innerWidth - 240) + 'px';
-    ctx.style.top = Math.min(e.clientY, innerHeight - 430) + 'px';
-    ctx.hidden = false;
+    placeFloating(ctx, e.clientX, e.clientY);
   });
   ctx.addEventListener('click', async e => {
     const star = e.target.closest('#ctxStars i');
