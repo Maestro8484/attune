@@ -221,6 +221,9 @@
   <li data-act="reveal">Open File Location</li>
   <li data-act="copy">Copy Artist — Title</li>
   <li class="sep"></li>
+  <li data-act="sendsel">Send Selection to Folder…</li>
+  <li data-act="sendmix">Send Mix to Folder…</li>
+  <li class="sep"></li>
   <li data-act="locate">Locate file…</li>
   <li data-act="delete"><span>Remove from library…</span></li>
 </ul>
@@ -579,7 +582,9 @@
     <div class="modalBody">
       <div class="fsbar">
         <button id="fsUp" title="Up one level">↑ Up</button>
-        <span id="fsPath" class="fspath"></span>
+        <input id="fsPath" class="fspath" type="text" spellcheck="false" autocomplete="off"
+               placeholder="This PC" title="Type or paste a path, then Enter">
+        <button id="fsNewFolder" type="button" title="Create a new folder here">+ New folder</button>
       </div>
       <div class="fslist" id="fsList"></div>
     </div>
