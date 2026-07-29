@@ -952,12 +952,25 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     rc_spec.loader.exec_module(recipes)
     recipes.register(app, {"db_path": db_path, "lib": lib, "cfg": cfgmod, "locked": _locked})
 
+    # ---- structured logging, first slice (applog.py) -- AUDIT_FABLE_2026-07-28.md S2
+    # item 9. Loaded here, before scanjob's registration, so the ScanJob instance gets
+    # its logger from the start (see scanjob.py's register() docstring for why the
+    # logger is handed in rather than scanjob loading applog itself). The read-only
+    # /api/diag/logs* HTTP routes this same module defines are registered separately,
+    # in their own block at the very end of this function.
+    al_spec = importlib.util.spec_from_file_location(
+        "attune_applog", os.path.join(HERE, "applog.py"))
+    applog = importlib.util.module_from_spec(al_spec)
+    al_spec.loader.exec_module(applog)
+    scan_logger = applog.configure_scan_logger(cfgmod.config_dir())
+
     # ---- rescan: the existing incremental pipeline behind a button (scanjob.py)
     sj_spec = importlib.util.spec_from_file_location(
         "attune_scanjob", os.path.join(HERE, "scanjob.py"))
     scanjob = importlib.util.module_from_spec(sj_spec)
     sj_spec.loader.exec_module(scanjob)
-    scan_job = scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load})
+    scan_job = scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load,
+                                      "logger": scan_logger})
 
     # ---- auto-scan: honors scan_on_launch (previously dead) and, if `watchdog` is
     # installed, live-watches library_folders so new/changed audio triggers the same
@@ -977,6 +990,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     ej_spec.loader.exec_module(exportjob)
     exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks,
                              "locked": _locked})
+
+    # ==================================================================================
+    # ---- diagnostics: read-only structured-log viewer (applog.py) -- AUDIT_FABLE_
+    # 2026-07-28.md S2 item 9, "prove the pattern on one path before spreading." The
+    # scan logger itself was already built and handed to scanjob.register() above; this
+    # is only the two GET routes that read it back. Kept in its own block at the very
+    # end of create_app() on purpose, so a parallel stream editing the settings/export
+    # routes elsewhere in this file doesn't collide here.
+    applog.register(app, {"config_dir": cfgmod.config_dir})
+    # ==================================================================================
 
     return app
 
