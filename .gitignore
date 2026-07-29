@@ -21,6 +21,7 @@ data/
 *.sqlite
 validation_paths.txt
 validation_report.json
+lastfm_resolution_report.json
 
 # Captured MusicIP output / ground truth = derived from your personal library. Private.
 groundtruth/
