@@ -57,6 +57,7 @@ const Prefs = (() => {
       $('prefScanLaunch').checked = !!serverSettings.scan_on_launch;
       $('prefWatch').checked = !!serverSettings.watch_folders;
       paintFolders(serverSettings.library_folders || []);
+      paintEnvOverrides(j.env_overrides || {});
     }).catch(e => { $('prefsMsg').className = 'msg err'; $('prefsMsg').textContent = e.message; });
     // playback tab mirrors the player's persisted knobs
     $('prefXfade').value = store.get('xfade', 0);
@@ -64,6 +65,27 @@ const Prefs = (() => {
     $('prefRg').checked = store.get('rg', false);
   }
   function close() { $('prefsWrap').hidden = true; }
+
+  /* A .env file next to the app outranks these fields by design, and nothing used to say
+     so: you could edit a root here, save it, restart, and find the old value back, with no
+     explanation anywhere (MORNING_REPORT_2026-07-29.md §5.2). The server reports which keys
+     a .env is currently shadowing (GET /api/settings -> env_overrides); this says it on the
+     field itself and shows the value actually in force. */
+  const ENV_NOTE = { local_library_root: ['envLocalRoot', 'prefLocalRoot'],
+                     unc_library_root:   ['envUncRoot',   'prefUncRoot'],
+                     plex_library_root:  ['envPlexRoot',  'prefPlexRoot'] };
+  function paintEnvOverrides(overrides) {
+    for (const [key, [noteId, inputId]] of Object.entries(ENV_NOTE)) {
+      const note = $(noteId), input = $(inputId);
+      if (!note) continue;
+      const val = overrides[key];
+      note.hidden = !val;
+      input.classList.toggle('shadowed', !!val);
+      if (val) note.textContent = `A .env file is setting this and wins over anything you `
+        + `type here: currently "${val}". Remove it from .env to control this from `
+        + `Preferences.`;
+    }
+  }
 
   function paintFolders(folders, containerId = 'libFolders') {
     $(containerId).innerHTML = folders.map((f, k) => `

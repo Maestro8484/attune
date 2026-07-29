@@ -128,6 +128,8 @@ class LibraryIndex:
             i = idx.get(p)
             if i is not None:
                 self.analyzed[i] = True
+        self.db_tracks = con.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        self.failures = self._load_failures(con, set(paths))
         con.close()
 
         # per-track genre TAGS (multi-valued) + folded sort/search keys
@@ -172,6 +174,60 @@ class LibraryIndex:
         row = con.execute("SELECT SUM(bytes) FROM tracks").fetchone()
         con.close()
         self.total_bytes = int(row[0] or 0)
+
+    # -- analysis failures: the tracks the library holds that never reached the mix pool.
+    @staticmethod
+    def _load_failures(con, pool):
+        """Every `tracks` row whose path is NOT in the mixable pool, newest DB order kept.
+
+        MEMBERSHIP IS THE FACT, the reason is a best-effort hint. The pool is built by
+        hybrid.py (CLAP vectors intersected with 79-dim librosa vectors, plus finiteness
+        and dimension checks this module deliberately does not duplicate -- pool contents
+        are mix semantics and gated by LAW 1). So "not in `pool`" is read straight off the
+        engine's own path list, and `why` is then reconstructed from the DB columns, with
+        an honest "cannot tell from the tables" when they look fine.
+
+        These rows were invisible everywhere before this: absent from the browser, the
+        counts, the facets, the folder tree and every smart view, while /api/lib/stats
+        reported a 100%-analyzed library because both its numbers came from the pool
+        (MORNING_REPORT_2026-07-29.md §4.1 -- 217 tracks on the operator's own library).
+
+        Read ONCE at construction, not per request: it needs a full pass over `tracks`,
+        and a freshly scanned track only shows up after a library reload in any case --
+        libreload.py rebuilds this whole index, so the list rebuilds with it."""
+        feat = {}
+        for p, err, hasvec, dim in con.execute(
+                "SELECT path, error, vec IS NOT NULL, dim FROM features"):
+            feat[p] = (err or "", bool(hasvec), dim)
+        clap = {p for (p,) in con.execute("SELECT path FROM clap WHERE vec IS NOT NULL")}
+        out = []
+        for p, artist, album, title, genre, year, secs in con.execute(
+                "SELECT path, artist, album, title, genre, year, seconds FROM tracks"):
+            if p in pool:
+                continue
+            err, hasvec, dim = feat.get(p, ("", False, 0))
+            why = []
+            if p not in clap:
+                why.append("no CLAP embedding")
+            if not hasvec:
+                why.append(f"librosa analysis failed: {err}" if err else "no librosa features")
+            elif err:
+                why.append(f"librosa reported: {err}")
+            elif dim and dim != 79:
+                why.append(f"librosa vector is {dim}-dim, not the 79 the engine expects")
+            out.append({
+                "path": p,
+                "file": os.path.basename(p),
+                "artist": artist or "",
+                "album": album or "",
+                "title": title or os.path.splitext(os.path.basename(p))[0],
+                "genre": genre or "",
+                "year": int(year or 0) or None,
+                "seconds": int(secs or 0),
+                "length": _seconds_to_len(secs),
+                "why": "; ".join(why) or "cannot tell from the analysis tables",
+            })
+        return out
 
     # -- track number: not in mixer.db. Read from tags on demand, only for rows the user
     #    is actually looking at (<=200 at a time), then cache. Falls back to the leading
@@ -439,6 +495,17 @@ def register(app, ctx):
         return jsonify(
             songs=lib.n, analyzed=analyzed,
             missing=sum(lib.missing),
+            # `songs` is the MIXABLE POOL and always was; these two say so out loud.
+            # db_tracks is what the library actually holds, failed is the difference --
+            # tracks that never made the pool. Reporting only the pool made a library with
+            # 217 unusable tracks read as "21,236 songs, 21,236 analyzed", i.e. perfect
+            # (MORNING_REPORT §4.1). The UI shows both whenever they disagree.
+            pool=lib.n, db_tracks=lib.db_tracks, failed=len(lib.failures),
+            # how many tracks have ever been looked for on disk (libverify.py fills
+            # checked_at). 0 means the Missing Files view is empty because nobody has
+            # run the check, NOT because every file is present -- the view could not say
+            # which, since nothing in the window started a check (MORNING_REPORT §4.2).
+            verified=sum(1 for t in lib.checked_at if t),
             hours=round(lib.total_seconds / 3600.0, 1),
             gb=round(lib.total_bytes / 1e9, 1),
             genres=len({t for g in lib.gtags for t in g}),
@@ -454,8 +521,31 @@ def register(app, ctx):
                 "local": getattr(ctx["mapper"], "local_root", "") or "",
                 "unc": getattr(ctx["mapper"], "unc_root", "") or "",
                 "plex": getattr(ctx["mapper"], "plex_root", "") or "",
+                # a candidate for an UNSET local root, to show and let the operator accept.
+                # Never applied by itself -- ruling (a), MORNING_REPORT §5.1. Empty when the
+                # library has no single folder every track sits under.
+                "local_suggested": ctx.get("root_suggestion") or "",
             },
+            # {"ok": n, "total": n} -- how many pool tracks the local root can actually
+            # rewrite. ok < total means the root is set but does not cover the library, so
+            # some paths will silently keep their local form on every export.
+            root_coverage=ctx.get("root_coverage") or {},
         )
+
+    @bp.get("/api/lib/failures")
+    @locked
+    def lib_failures():
+        """The tracks the library holds that never made the mixable pool.
+
+        Loopback-only, and for the same reason app.py's /api/fs/dirs and applog.py's
+        /api/diag/logs are: the rows carry full local file paths. Naming the file IS the
+        point of this view -- these tracks appear nowhere else, so "which file is it" is
+        the one question it has to answer -- and the LAN server must not answer it for
+        another machine (app.py's Plex route strips paths for exactly this reason)."""
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(error="only available on the Attune machine itself"), 403
+        return jsonify(total=len(lib.failures), pool=lib.n, db_tracks=lib.db_tracks,
+                       rows=lib.failures)
 
     def _multi(key):
         v = request.args.getlist(key)
@@ -688,22 +778,26 @@ def register(app, ctx):
             return jsonify(ok=False, error=str(e)), 400
 
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
+        # Same one call the download route uses (app.py's /api/export/m3u), so the two
+        # buttons cannot disagree about the same mix any more (MORNING_REPORT §5.2). It
+        # never raises: a path Attune cannot rewrite honestly keeps its LOCAL form and is
+        # counted in `report`, which goes back to the client as `fallback` (ruling (a),
+        # §5.1). This route used to 400 the whole save instead.
+        converted, report = ctx["mapper"].convert_all(tracks, flavor)
         lines = ["#EXTM3U"]
-        try:
-            for p in tracks:
-                m = eng.meta.get(p, {})
-                lines.append(f"#EXTINF:{lib.seconds[eng.idx[p]] if p in eng.idx else -1},"
-                             f"{oneline(m.get('artist') or '?')} - "
-                             f"{oneline(m.get('title') or os.path.basename(p))}")
-                lines.append(ctx["mapper"].convert(p, flavor))
-        except ValueError as e:                       # unconfigured flavor root
-            return jsonify(ok=False, error=str(e)), 400
+        for p, out in zip(tracks, converted):
+            m = eng.meta.get(p, {})
+            lines.append(f"#EXTINF:{lib.seconds[eng.idx[p]] if p in eng.idx else -1},"
+                         f"{oneline(m.get('artist') or '?')} - "
+                         f"{oneline(m.get('title') or os.path.basename(p))}")
+            lines.append(out)
         try:
             with open(dest, "w", encoding="utf-8", newline="\n") as fh:
                 fh.write("\n".join(lines) + "\n")
         except OSError as e:
             return jsonify(ok=False, error=f"write failed: {e}"), 500
-        return jsonify(ok=True, path=dest, name=os.path.basename(dest), count=len(tracks))
+        return jsonify(ok=True, path=dest, name=os.path.basename(dest),
+                       count=len(tracks), fallback=report)
 
     @bp.get("/studio")
     def studio():

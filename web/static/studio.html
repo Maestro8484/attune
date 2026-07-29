@@ -250,6 +250,11 @@
         <li data-smart="mostplayed"><span class="ti">↻</span> Most Played</li>
         <li data-smart="neverplayed"><span class="ti">·</span> Never Played</li>
         <li data-smart="missing"><span class="ti">⚠</span> Missing Files <b id="missingN">0</b></li>
+        <!-- Tracks the library holds that analysis never got through, so they are in no
+             mix and no other view. Hidden while the count is 0 (see paintStats). -->
+        <li data-view="failures" hidden title="Tracks in your library that analysis could
+            not finish, so they are in no mix and nowhere else in this window"><span
+            class="ti">✖</span> Not Mixable <b id="failedN">0</b></li>
         <li class="grouphead">Tools</li>
         <li data-view="diagnostics"><span class="ti">▨</span> Diagnostics</li>
         <li class="grouphead" id="foldersHead">Folders <span class="fold" id="foldersTog">▸</span></li>
@@ -297,6 +302,15 @@
           <button id="qClear" title="Clear the queue">Clear</button>
           <button id="qShuffle" title="Shuffle the queue">Shuffle</button>
           <button id="qSave" title="Save queue as playlist">Save…</button>
+        </span>
+        <!-- Missing Files only. The check behind this button (POST /api/lib/verify) shipped
+             with the view itself but had no way in from the window, so the table it fills
+             was permanently empty and a mix could still serve a track whose audio is gone. -->
+        <span id="verifyTools" hidden>
+          <button id="btnVerify" title="Look for every track's file on disk. Reads only —
+            nothing is moved, deleted or re-tagged">Check files now</button>
+          <button id="btnVerifyCancel" hidden>⏹ Stop</button>
+          <span id="verifyMsg" class="hint"></span>
         </span>
         <span class="spacer"></span>
         <span class="viewToggle">
@@ -578,20 +592,24 @@
               built-in ONNX encoder, under Attune's own Python — no second environment.</span></div></div>
         <div class="prefrow"><span class="k">Local library root</span>
           <div class="v"><input type="text" id="prefLocalRoot" placeholder="e.g. D:\Music">
-            <span class="hint">Path prefix as stored in the database (export path style:
-              local). Left blank, Attune detects it from the library itself. Needs
-              restart.</span></div></div>
+            <span class="hint">The folder your music sits under, spelled the way the
+              library stores it (export path style: local). Never guessed: left blank,
+              every other path style falls back to local paths and says so. Needs
+              restart.</span>
+            <span class="hint warn" id="envLocalRoot" hidden></span></div></div>
         <div class="prefrow"><span class="k">UNC library root</span>
           <div class="v"><input type="text" id="prefUncRoot" placeholder="e.g. \\NAS\Music">
             <span class="hint">Network path for playlists played on other devices on the
               LAN (export path style: UNC, the default for playlist export). Never
               guessed — leave blank and that path style falls back to local paths until
-              set. Needs restart.</span></div></div>
+              set. Needs restart.</span>
+            <span class="hint warn" id="envUncRoot" hidden></span></div></div>
         <div class="prefrow"><span class="k">Plex library root</span>
           <div class="v"><input type="text" id="prefPlexRoot" placeholder="e.g. /music">
             <span class="hint">Path prefix as your Plex server sees the library (export
               path style: Plex). Plex's own connection details (server URL, token) stay
-              in .env — this is only a path. Needs restart.</span></div></div>
+              in .env — this is only a path. Needs restart.</span>
+            <span class="hint warn" id="envPlexRoot" hidden></span></div></div>
       </div>
     </div>
     <div class="modalFoot">
