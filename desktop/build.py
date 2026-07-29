@@ -91,7 +91,7 @@ GUI_DATA = [
 
 # imported dynamically / not statically visible (watchdog picks its platform backend
 # by conditional import; autoscan.py itself is loaded by file path)
-GUI_HIDDEN = ["mutagen", "requests", "numpy", "watchdog"]
+GUI_HIDDEN = ["mutagen", "requests", "numpy", "watchdog", "logging.handlers"]
 GUI_COLLECT_ALL = ["onnxruntime"]          # learned engine; everything else is analysis
 # The analyzer stack must NEVER land in the GUI bundle — that is the entire point of
 # the split. torch/transformers are the reference encoder (embed.py runs under the
