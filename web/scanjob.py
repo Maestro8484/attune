@@ -37,6 +37,7 @@ Endpoints:
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 import sqlite3
@@ -87,8 +88,14 @@ class ScanJob:
     """At most one scan runs at a time; state is read lock-free by /status (GIL-safe
     reads of plain attributes; the deque bounds memory)."""
 
-    def __init__(self, db_path):
+    def __init__(self, db_path, logger=None):
         self.db_path = db_path
+        # Structured logging, first slice (AUDIT_FABLE_2026-07-28.md S2 item 9): a
+        # logger routed into <config_dir()>/logs/scan.log by applog.py, handed in by
+        # register() below. Falls back to a bare, handler-less logger (a silent no-op
+        # -- stdlib logging drops records with no handlers anywhere up the hierarchy)
+        # so ScanJob stays usable standalone (e.g. from a test) without wiring applog.
+        self.logger = logger or logging.getLogger("attune.scan")
         self.thread = None
         self.proc = None
         self.cancelled = False
@@ -108,10 +115,12 @@ class ScanJob:
         with _START_LOCK:
             if self.running:
                 raise RuntimeError("a scan is already running")
-            self.__init__(self.db_path)     # reset state
+            self.__init__(self.db_path, self.logger)     # reset state, keep the logger
             self.running = True
             self.started = int(time.time())
             self.before = _db_counts(self.db_path)
+            self.logger.info("scan started: folders=%s ml_python=%s",
+                             folders, ml_python or "(standalone/analyzer)")
             self.thread = threading.Thread(
                 target=self._run, args=(list(folders), ml_python), daemon=True)
             self.thread.start()
@@ -122,6 +131,7 @@ class ScanJob:
         self.progress = None
         t0 = time.time()
         self.lines.append(f"── {name}: {' '.join(os.path.basename(a) for a in argv[:2])} …")
+        self.logger.info("stage start: %s  argv=%s", name, argv)
         try:
             self.proc = subprocess.Popen(
                 argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
@@ -129,6 +139,7 @@ class ScanJob:
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except OSError as e:
             self.lines.append(f"failed to start: {e}")
+            self.logger.error("stage %s failed to start: %s", name, e)
             self.stages_done.append({"name": name, "rc": -1, "seconds": 0})
             return -1
         for line in self.proc.stdout:
@@ -136,13 +147,15 @@ class ScanJob:
             if not line:
                 continue
             self.lines.append(line)
+            self.logger.info("[%s] %s", name, line)
             m = _PROG_RE.search(line)
             if m:
                 self.progress = (int(m.group(1)), int(m.group(2)))
         rc = self.proc.wait()
         self.proc = None
-        self.stages_done.append({"name": name, "rc": rc,
-                                 "seconds": round(time.time() - t0, 1)})
+        seconds = round(time.time() - t0, 1)
+        self.stages_done.append({"name": name, "rc": rc, "seconds": seconds})
+        self.logger.info("stage done: %s rc=%s seconds=%s", name, rc, seconds)
         return rc
 
     def _run(self, folders, ml_python):
@@ -226,8 +239,17 @@ class ScanJob:
             self.finished = int(time.time())
             self.running = False
             self.stage = ""
+            new_tracks = max(0, (self.after.get("tracks", 0) or 0)
+                             - (self.before.get("tracks", 0) or 0))
+            if self.cancelled:
+                self.logger.info("scan cancelled: new_tracks=%s", new_tracks)
+            elif self.error:
+                self.logger.error("scan failed: %s", self.error)
+            else:
+                self.logger.info("scan completed: new_tracks=%s", new_tracks)
 
     def cancel(self):
+        self.logger.info("cancel requested (stage=%s)", self.stage or "(none running)")
         self.cancelled = True
         p = self.proc
         if p and p.poll() is None:
@@ -253,12 +275,18 @@ class ScanJob:
 
 
 def register(app, ctx):
-    """ctx: dict(db_path, load_settings=callable->dict)."""
+    """ctx: dict(db_path, load_settings=callable->dict, logger=Optional[logging.Logger]).
+
+    `logger` is the 'attune.scan' logger applog.py configures against
+    <config_dir()>/logs/scan.log (AUDIT_FABLE_2026-07-28.md S2 item 9) -- app.py builds
+    it once (applog.configure_scan_logger) and hands it in here, the same way it hands
+    in every other shared dependency (db_path, load_settings) rather than having this
+    module reach for applog on its own."""
     # Resolve to an absolute path NOW, in the app's cwd. The scan stages run as
     # subprocesses with cwd=SRC (attune/src), so a relative --db (e.g. the launcher's
     # "mixer-ng/data/mixer.db") would resolve against SRC and fail to open. abspath
     # here binds it to the app's working dir, where it is already known to resolve.
-    job = ScanJob(os.path.abspath(ctx["db_path"]))
+    job = ScanJob(os.path.abspath(ctx["db_path"]), ctx.get("logger"))
     load_settings = ctx["load_settings"]
     bp = Blueprint("scanjob", __name__)
 
