@@ -1021,8 +1021,15 @@ async function copyBrowse() {
   const picked = await Prefs.pickFolder(copyDest || '');
   if (picked) { copyDest = picked; $('copyDest').value = picked; }
 }
-async function startCopy() {
-  const ids = currentExportIds();
+// `overrideIds`, when a real array, wins over the on-screen currentExportIds() — this
+// is how the context-menu "Send to Folder" entries (below) target exactly the clicked
+// selection or the whole mix regardless of what happens to be selected on screen,
+// without a second copy pipeline: same /api/export/copy job, same status polling.
+// Guarded with Array.isArray because the export panel binds this straight to
+// btnCopy.onclick, which calls it with a MouseEvent as the first argument — a bare
+// `overrideIds || currentExportIds()` would treat that event object as the id list.
+async function startCopy(overrideIds) {
+  const ids = Array.isArray(overrideIds) ? overrideIds : currentExportIds();
   if (!ids.length) return copyErr('Nothing to export');
   if (!copyDest) return copyErr('Pick a destination folder first');
   const folder = $('plName').value.trim() || 'Attune mix';
@@ -1061,6 +1068,21 @@ async function pollCopy() {
 }
 function startCopyPoll() { if (copyTimer) return; copyTimer = setInterval(pollCopy, 800); pollCopy(); }
 function stopCopyPoll() { clearInterval(copyTimer); copyTimer = 0; }
+
+// "Send to Folder" (right-click context menu, both scopes) — opens the SAME export
+// panel and runs the SAME copy job as the "Take it with you" button above, just with
+// an explicit `ids` list instead of currentExportIds(): scope lives entirely in which
+// ids the caller passes in, not in a second pipeline.
+async function sendToFolder(ids) {
+  if (!ids.length) return toast('Nothing to send', true);
+  const picked = await Prefs.pickFolder(copyDest || '');
+  if (!picked) return;
+  copyDest = picked; $('copyDest').value = picked;
+  $('optionsPanel').hidden = true;
+  $('exportPanel').hidden = false;
+  updateSelStatus();
+  await startCopy(ids);
+}
 
 /* ------------------------------------------------------------------ why-this-pick */
 async function showWhy(i, x, y) {
@@ -1630,6 +1652,13 @@ function bindEvents() {
       case 'reveal': jpost('/api/reveal', { i }).catch(err => toast(err.message, true)); break;
       case 'locate': locateFile(i); break;
       case 'delete': deleteTracks(selectedIds().length ? selectedIds() : [i]); break;
+      // "Send to Folder", both scopes (P0 operator request #1). Appended here rather
+      // than interleaved above so this stays a clean, separately-mergeable addition.
+      case 'sendsel': sendToFolder(selectedIds().length ? selectedIds() : [i]); break;
+      case 'sendmix':
+        if (!S.mix.length) { toast('Create a mix first', true); break; }
+        sendToFolder(S.mix);
+        break;
     }
   });
   // live filter chips: click a chip to undo that one filter, "Clear all" to drop them all
