@@ -421,7 +421,12 @@ body.norail #splitRight, body.norail #rightRail { display:none; }
   border-radius:6px; padding:2px 8px; cursor:pointer; font-size:11px; color:var(--muted); }
 .fbClear:hover { border-color:var(--accent); color:var(--fg); }
 
-.tableWrap { flex:1; overflow:auto; position:relative; }
+/* .tableWrap used to be the direct flex-column child of .tablepane; it now sits inside
+   .tableRow (a flex ROW) alongside the A-Z bar / Diagnostics panel, which is why it needs
+   min-width:0 -- without it a flex row item won't shrink below its content's natural
+   width, and a long unbroken cell value could push #azBar off the right edge. */
+.tableRow { flex:1 1 auto; display:flex; min-height:0; }
+.tableWrap { flex:1 1 auto; overflow:auto; position:relative; min-width:0; }
 table { border-collapse:separate; border-spacing:0; width:100%; }
 thead th { position:sticky; top:0; z-index:2; background:var(--panel2);
   border-bottom:1px solid var(--line); text-align:left; font-weight:600; font-size:11px;
@@ -482,6 +487,53 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 #viewSub .steer { color:var(--accent); font-weight:600; }
 #viewSub .chip { padding:0 8px; font-size:11px; cursor:pointer; margin-left:2px; }
 .empty { padding:32px; text-align:center; color:var(--dim); }
+#diagUnavailable { flex:1 1 auto; }
+
+/* A-Z jump bar — a slim strip of single-letter buttons beside the Library list. Author
+   `display:flex` beats the UA [hidden] rule at equal specificity (author always wins a
+   tie against user-agent styles), so — same pattern as .railBody[hidden] above — the
+   [hidden] override has to be spelled out explicitly or the hidden attribute is inert. */
+.azBar { flex:0 0 22px; display:flex; flex-direction:column; justify-content:space-between;
+  padding:4px 0; background:var(--panel2); border-left:1px solid var(--line); }
+.azBar[hidden] { display:none; }
+.azBar button { flex:1 1 0; min-height:0; background:none; border:0; color:var(--dim);
+  font-size:9px; line-height:1; cursor:pointer; padding:0; }
+.azBar button:hover { color:var(--fg); background:var(--hover); }
+.azBar button.on { color:var(--accent); font-weight:700; }
+.azBar.busy { opacity:.6; pointer-events:none; }
+
+/* Diagnostics — read-only server log viewer: file list left, tailed lines right. */
+.diagView { flex:1 1 auto; display:flex; min-width:0; }
+.diagView[hidden] { display:none; }
+.diagFiles { flex:0 0 240px; display:flex; flex-direction:column; min-height:0;
+  border-right:1px solid var(--line); overflow:auto; }
+.diagFilesHead { padding:7px 10px; font-size:11px; text-transform:uppercase; letter-spacing:.6px;
+  color:var(--muted); border-bottom:1px solid var(--line); background:var(--panel2);
+  display:flex; justify-content:space-between; align-items:center; flex:0 0 auto; }
+.diagFilesHead button { background:var(--panel); border:1px solid var(--line); border-radius:6px;
+  padding:2px 7px; cursor:pointer; font-size:12px; color:var(--fg); }
+.diagFilesHead button:hover { border-color:var(--accent); }
+.diagDir { padding:5px 10px; font-size:10px; color:var(--dim); word-break:break-all;
+  border-bottom:1px solid var(--line); }
+.diagFileList { list-style:none; margin:0; padding:3px; overflow:auto; flex:1; }
+.diagFileList li { padding:5px 8px; border-radius:5px; cursor:pointer; }
+.diagFileList li:hover { background:var(--hover); }
+.diagFileList li.on { background:var(--sel); }
+.diagFileList .dn { display:block; font-size:12px; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+.diagFileList .dm { display:block; font-size:10px; color:var(--dim); }
+.diagTail { flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; }
+.diagTailHead { display:flex; align-items:center; gap:8px; padding:6px 10px;
+  border-bottom:1px solid var(--line); background:var(--panel2); flex:0 0 auto; font-size:12px; }
+#diagTailName { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.diagLines { display:flex; align-items:center; gap:5px; color:var(--muted); font-size:11px; }
+.diagLines select { background:var(--panel2); border:1px solid var(--line); border-radius:5px;
+  color:var(--fg); padding:2px 4px; font-size:11px; }
+.diagTailBody { flex:1; margin:0; overflow:auto; padding:8px 10px;
+  font:11px/1.5 ui-monospace,Consolas,monospace; white-space:pre-wrap; word-break:break-all;
+  background:var(--bg); }
+.diagTailTruncated { padding:4px 10px; border-top:1px solid var(--line); flex:0 0 auto; }
+
 .pager { display:flex; gap:6px; align-items:center; padding:5px 10px;
   border-top:1px solid var(--line); background:var(--panel2); color:var(--muted);
   font-size:12px; flex:0 0 auto; min-height:30px; }
