@@ -7,8 +7,11 @@ Two targets, one path-map:
 
 The three path roots (LOCAL_LIBRARY_ROOT / UNC_LIBRARY_ROOT / PLEX_LIBRARY_ROOT) live in
 settings.json (Preferences -> Advanced) as of PROPOSAL_EXPORT_ROOTS_2026-07-28.md -- see
-mapper_from_settings() and derive_local_root(). A .env file is a dev override for those
-same three, plus wherever Plex's real connection secrets live:
+mapper_from_settings(). None of the three is ever guessed: an unset root, or a track
+stored outside it, REFUSES the rewrite and the export keeps local paths with a notice
+(ruling (a), MORNING_REPORT_2026-07-29.md §5.1 -- see PathMapper and convert_all).
+suggest_local_root() exists only to SHOW the operator a candidate; nothing applies it.
+A .env file is a dev override for those same three, plus where Plex's real secrets live:
   PLEX_URL, PLEX_ACCOUNT_TOKEN, PLEX_SECTION_KEY, PLEX_MACHINE_ID  (never in settings.json)
 mapper_from_env()/load_env() below still exist for the CLI, which is a dev tool run from a
 workspace checkout and keeps reading straight from .env.
@@ -81,62 +84,126 @@ def load_env(explicit=None):
 class PathMapper:
     """Rewrite a local library path to a chosen flavor by swapping the root prefix.
 
-    If a path doesn't sit under local_root (e.g. a stray path left over from an earlier
-    setup on a different drive/mount), it falls back to whatever follows the library's
-    leaf folder name, so a mirrored tree still lines up.
+    NOTHING HERE IS EVER GUESSED (ruling (a), 2026-07-29 -- MORNING_REPORT §5.1). Two
+    cases refuse the rewrite instead of producing something plausible:
+
+      * local_root is not set at all -> refuse. It used to be derived from the common
+        prefix of the DB's own paths, which on the operator's real library came out one
+        level too deep and sent 21,236 of 21,236 exports to a wrong network path while
+        the server reported success. A loud refusal beats a silent wrong answer.
+      * a single path does not sit under local_root and does not match the library's
+        leaf folder either -> refuse THAT path. The old code pasted the whole local path
+        after the target root, which is how a drive letter ended up in the middle of a
+        UNC path (\\\\DiskStation\\music\\Music Library\\M:\\Music Library\\...).
+
+    Refusal is a ValueError. convert_all() turns it into "this track kept its local path,
+    and here is why", so an export still completes and the UI can say what happened.
     """
 
     def __init__(self, local_root, unc_root=None, plex_root=None):
-        self.local_root = local_root.rstrip("\\/")
+        self.local_root = (local_root or "").rstrip("\\/")
         self.unc_root = (unc_root or "").rstrip("\\/")
         self.plex_root = (plex_root or "").rstrip("/")
 
     def _relative(self, path):
-        """Return the path tail *after* the library root, as forward-slash segments."""
+        """Return the path tail *after* the library root, as forward-slash segments.
+
+        Raises ValueError when the tail cannot be established honestly -- see the class
+        docstring. Never returns the whole path as a "tail"."""
+        if not self.local_root:
+            raise ValueError(
+                "your local library root is not set, and Attune will not guess it. "
+                "Set it in Preferences, Advanced: it is the folder your music sits "
+                "under, spelled exactly the way the library stores it.")
         norm = path.replace("\\", "/")
         root = self.local_root.replace("\\", "/")
         nl, rl = norm.lower(), root.lower()
         # require an exact root or a real path boundary after it, so a sibling like
         # '.../Music Library Backup/...' is NOT treated as inside '.../Music Library'.
         if nl == rl or nl.startswith(rl + "/"):
-            tail = norm[len(root):]
-        else:
-            # not under local_root (e.g. an old, un-rekeyed drive/mount): fall back to
-            # whatever follows the library's own leaf folder name (derived, not hardcoded).
-            leaf = rl.rstrip("/").rsplit("/", 1)[-1]
-            i = nl.rfind(leaf + "/") if leaf else -1
-            tail = norm[i + len(leaf) + 1:] if i >= 0 else norm
-        return tail.lstrip("/")
+            return norm[len(root):].lstrip("/")
+        # not under local_root (e.g. an old, un-rekeyed drive/mount): fall back to
+        # whatever follows the library's own leaf folder name (derived, not hardcoded).
+        leaf = rl.rstrip("/").rsplit("/", 1)[-1]
+        i = nl.rfind(leaf + "/") if leaf else -1
+        if i < 0:
+            raise ValueError(
+                f"this track is not stored under your local library root "
+                f"({self.local_root}), so its path cannot be rewritten")
+        return norm[i + len(leaf) + 1:].lstrip("/")
 
     def to_local(self, path):
         return path
 
     def to_unc(self, path):
         if not self.unc_root:
-            raise ValueError("UNC_LIBRARY_ROOT is not set — cannot write UNC playlist paths")
+            raise ValueError("the network folder other players see is not set yet, "
+                             "so playlist paths cannot point at it "
+                             "(Preferences, Advanced: UNC library root)")
         return self.unc_root + "\\" + self._relative(path).replace("/", "\\")
 
     def to_plex(self, path):
         if not self.plex_root:
-            raise ValueError("PLEX_LIBRARY_ROOT is not set — cannot map to Plex paths")
+            raise ValueError("the library path your Plex server uses is not set yet, "
+                             "so playlist paths cannot point at it "
+                             "(Preferences, Advanced: Plex library root)")
         return self.plex_root + "/" + self._relative(path)
+
+    def coverage(self, paths):
+        """How many of `paths` this mapper can actually rewrite: {"ok": n, "total": n}.
+
+        The half of ruling (a) that refusing-to-guess does NOT cover: a root the operator
+        typed themselves, one level off. Those paths sit under it, so every rewrite
+        succeeds and every result is wrong -- the same silent failure as the old derived
+        guess, just hand-entered. Counting up front turns it into something the window can
+        say before an export happens, and it is a string prefix test per track.
+
+        Counted with _relative(), not a prefix test of our own, so this can never disagree
+        with what a real export will do."""
+        ok = 0
+        for p in paths:
+            try:
+                self._relative(p)
+                ok += 1
+            except ValueError:
+                pass
+        return {"ok": ok, "total": len(paths)}
 
     def convert(self, path, flavor):
         return {"local": self.to_local, "unc": self.to_unc, "plex": self.to_plex}[flavor](path)
 
-    def convert_safe(self, path, flavor):
-        """Like convert(), but never raises for an unconfigured root: falls back to LOCAL
-        paths instead of hard-failing. An unconfigured UNC/Plex root used to 400 the whole
-        export with an empty file (PROPOSAL_EXPORT_ROOTS_2026-07-28.md, Ruling 2 Amended
-        item 3) -- callers should never see ValueError from this path anymore.
+    def convert_all(self, paths, flavor):
+        """Convert a whole playlist's paths at once, and report ONCE what happened.
 
-        Returns (converted_path, used_flavor); used_flavor differs from `flavor` only when
-        a fallback happened, so the caller can report it."""
-        if flavor == "unc" and not self.unc_root:
-            return self.to_local(path), "local"
-        if flavor == "plex" and not self.plex_root:
-            return self.to_local(path), "local"
-        return self.convert(path, flavor), flavor
+        Never raises. Any path this mapper cannot rewrite honestly -- an unconfigured
+        target root, an unset local root, a track stored outside the local root -- is
+        handed back as the LOCAL path, and the report says so. That is ruling (a) of
+        MORNING_REPORT §5.1: refuse to rewrite, hand back local paths, be visible about
+        it. An unconfigured root used to 400 the whole export with an empty file
+        (PROPOSAL_EXPORT_ROOTS_2026-07-28.md, Ruling 2 Amended item 3); a wrong local
+        root used to succeed silently, which was worse.
+
+        Returns (converted_paths, report):
+          requested       the flavor asked for
+          used            'unc'/'plex'/'local' -- or 'mixed' when only some paths fell back
+          fallback        True if any path kept its local form
+          fallback_count  how many, out of `total`
+          reason          the first refusal's own message, for the UI to show verbatim
+
+        Both export routes (download .m3u8 and save-to-playlist-folder) go through this
+        one method, so they can no longer disagree about the same mix -- MORNING_REPORT
+        §5.2's "two adjacent buttons disagree"."""
+        out, reason, fell_back = [], "", 0
+        for p in paths:
+            try:
+                out.append(self.convert(p, flavor))
+            except ValueError as e:
+                out.append(self.to_local(p))
+                fell_back += 1
+                reason = reason or str(e)
+        used = flavor if not fell_back else ("local" if fell_back == len(out) else "mixed")
+        return out, {"requested": flavor, "used": used, "fallback": bool(fell_back),
+                     "fallback_count": fell_back, "total": len(out), "reason": reason}
 
 
 # ------------------------------------------------------------------------- m3u8
@@ -245,23 +312,37 @@ def _load_hybrid():
 def mapper_from_env(cfg):
     # CLI-only path (see main() below). The web app builds its mapper through
     # mapper_from_settings() instead, so settings.json (Preferences) is consulted too.
-    # LOCAL_LIBRARY_ROOT should match the path prefix as stored in your DB; the generic
-    # default is only a placeholder — set it in .env for exports to map correctly.
-    return PathMapper(cfg.get("LOCAL_LIBRARY_ROOT", "C:\\Music"),
+    # LOCAL_LIBRARY_ROOT must match the path prefix as stored in your DB. Unset is left
+    # unset -- the old "C:\Music" placeholder default made a wrong rewrite look like a
+    # working one, which is the exact failure ruling (a) closed off; the CLI now exits
+    # with the mapper's own message instead.
+    return PathMapper(cfg.get("LOCAL_LIBRARY_ROOT", ""),
                       cfg.get("UNC_LIBRARY_ROOT"), cfg.get("PLEX_LIBRARY_ROOT"))
 
 
-def derive_local_root(paths, folders=None):
-    """Best-effort default for local_library_root when nothing configured it: the common
-    directory prefix across the DB's own track paths. A DB with tracks necessarily has
-    paths, unlike `library_folders`, which is empty on today's real settings.json
-    (verified 2026-07-28 -- PROPOSAL_EXPORT_ROOTS_2026-07-28.md §3). `folders` is
-    consulted only as a SECONDARY source, when the path-based derivation comes up empty.
+def suggest_local_root(paths, folders=None):
+    """A SUGGESTION for local_library_root, to show the operator. NEVER applied.
 
-    Returns '' if nothing usable is found (no paths, or paths that share no common
-    directory at all -- e.g. libraries split across multiple drive letters)."""
-    sample = [p for p in paths if p][:5000]      # a shared prefix across a few thousand
-                                                   # tracks is as good as checking all of them
+    Was `derive_local_root`, and was wired in as a silent default until ruling (a) of
+    MORNING_REPORT §5.1 (2026-07-29) took that job away from it. Two changes came with
+    the demotion:
+
+      * it reads EVERY path, not the first 5,000. The 5,000 cap is precisely what made
+        the old default wrong on the operator's library -- the first few thousand paths
+        were all albums, so the "common" prefix came out as ...\\Music Library\\Albums
+        and every single export went to a wrong network path.
+      * a suggestion that does not cover the whole library is no suggestion, so anything
+        short of a prefix EVERY path sits under returns ''.
+
+    Returns '' when there is no such prefix -- including the real case of one stray track
+    on another drive (measured 2026-07-29: 21,452 of 21,453 paths under
+    L:\\_MUSIC\\Music Library, one under M:\\). '' means "Attune has nothing honest to
+    offer here, ask the operator", which is the whole point of ruling (a).
+
+    `folders` (settings.json's library_folders) is a SECONDARY source, used only when
+    there are no paths at all -- it is empty on today's real settings.json (verified
+    2026-07-28, PROPOSAL_EXPORT_ROOTS_2026-07-28.md §3)."""
+    sample = [p for p in paths if p]
     if not sample:
         sample = [f for f in (folders or []) if f]
     if not sample:
@@ -275,18 +356,20 @@ def derive_local_root(paths, folders=None):
     return common if os.path.isdir(common) else os.path.dirname(common)
 
 
-def mapper_from_settings(settings, env_cfg, paths=None):
+def mapper_from_settings(settings, env_cfg):
     """Build the PathMapper the web app actually uses. settings.json (Preferences) is the
     home for the three export roots; env_cfg (a loaded .env, see load_env()) is a dev
     override that still wins over settings.json day to day -- there's no CLI leg here,
-    so this is env_cfg > settings.json > derived default, the non-CLI tail of
-    config.effective()'s chain. UNC and Plex are never guessed -- only local_library_root
-    has a derived fallback (see derive_local_root)."""
-    local = (env_cfg.get("LOCAL_LIBRARY_ROOT") or settings.get("local_library_root")
-            or derive_local_root(paths or [], settings.get("library_folders")))
-    unc = env_cfg.get("UNC_LIBRARY_ROOT") or settings.get("unc_library_root") or ""
-    plex = env_cfg.get("PLEX_LIBRARY_ROOT") or settings.get("plex_library_root") or ""
-    return PathMapper(local or "C:\\Music", unc, plex)
+    so this is env_cfg > settings.json, the non-CLI tail of config.effective()'s chain.
+
+    There is no third leg any more. None of the three roots is guessed, derived or
+    defaulted (ruling (a), MORNING_REPORT §5.1): unset means unset, and PathMapper
+    refuses to rewrite rather than inventing a plausible root. `paths` used to be
+    threaded in here for the derivation -- callers now pass the DB's paths to
+    suggest_local_root() themselves if they want something to SHOW the operator."""
+    return PathMapper(env_cfg.get("LOCAL_LIBRARY_ROOT") or settings.get("local_library_root") or "",
+                      env_cfg.get("UNC_LIBRARY_ROOT") or settings.get("unc_library_root") or "",
+                      env_cfg.get("PLEX_LIBRARY_ROOT") or settings.get("plex_library_root") or "")
 
 
 def plex_from_env(cfg, mapper):

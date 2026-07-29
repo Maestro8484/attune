@@ -228,6 +228,10 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .btnrow button:disabled { opacity:.4; cursor:default; filter:none; }
 .msg { font-size:12px; min-height:16px; }
 .msg.ok { color:var(--ok); } .msg.err { color:var(--err); }
+/* a hint that is carrying a warning, not just context: an export about to hand back local
+   paths because a root is unset, and the like (see showRoot/exportDownload in studio.js) */
+.hint.warn, .msg.warn { color:var(--warn); }
+.hint.err { color:var(--err); }
 .expsep { margin:12px 0 6px; padding-top:9px; border-top:1px solid var(--line);
   color:var(--muted); font-size:11px; font-weight:600; letter-spacing:.02em; }
 .row button.rowbtn { flex:0 0 auto; background:var(--panel2); border:1px solid var(--line);
@@ -450,10 +454,14 @@ tbody tr.rowOut { transition: opacity .18s ease, transform .18s ease;
   opacity:0; transform:translateX(28px); pointer-events:none; }
 tbody tr.playing td.c-title::before { content:"▶ "; color:var(--accent); }
 tbody tr.seed td.c-title::before { content:"✦ "; color:var(--accent2); }
-tbody tr.missing { opacity:.45; font-style:italic; }
+tbody tr.missing, tbody tr.unmixable { opacity:.45; font-style:italic; }
 /* "Hide missing files" toggle (client-side only -- the query behind the row is
-   unchanged, this purely hides the row; see #hideMissing in studio.js) */
-body.hideMissing tbody tr.missing { display:none; }
+   unchanged, this purely hides the row; see #hideMissing in studio.js).
+   NOT inside the Missing Files view itself: every row there is missing by definition, so
+   the toggle used to empty the one screen whose whole job is listing them (studio.js sets
+   .inMissingView). Same reason the Not Mixable view dims with .unmixable instead of
+   .missing -- it wants the greyed-out look, not the hide. */
+body.hideMissing:not(.inMissingView) tbody tr.missing { display:none; }
 tbody tr.dragover td { border-top:2px solid var(--accent); }
 .c-track { width:52px; text-align:right; font-variant-numeric:tabular-nums; }
 .c-len { width:60px; text-align:right; font-variant-numeric:tabular-nums; }
@@ -617,6 +625,9 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
   width:100%;
 }
 .prefrow input[type=range] { accent-color:var(--accent); }
+/* a field a .env file is currently overriding: still editable, but what you type here is
+   not what the app is using (see paintEnvOverrides in prefs.js) */
+.prefrow input.shadowed { border-color:var(--warn); }
 .folderlist { display:flex; flex-direction:column; gap:4px; }
 .folderlist .fr { display:flex; gap:6px; }
 .folderlist .fr input { flex:1; }

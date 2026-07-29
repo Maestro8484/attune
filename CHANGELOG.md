@@ -6,6 +6,50 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Attune stops guessing your library folder, and says so instead** (`src/export.py`,
+  `web/app.py`, `web/studio.py`, `web/static/studio.js`, `web/static/studio.html`,
+  `web/static/prefs.js`), per the operator's ruling (a) on
+  `MORNING_REPORT_2026-07-29.md` §5.1. The derived local root shipped one release earlier
+  came out one folder too deep on the real library and sent **21,236 of 21,236** exports to
+  a wrong network path while the server reported success. Now: no root is ever derived or
+  defaulted, `PathMapper` refuses a rewrite it cannot make honestly (unset local root, or a
+  track that sits outside it), the export still completes with LOCAL paths, and both export
+  buttons say what happened — `X-Attune-Export-Fallback-Count` / `-Total` / `-Reason`
+  headers on `GET /api/export/m3u`, a `fallback` object on `POST /api/export/m3u_dir`.
+  A whole local path can no longer be pasted after the target root (that is where
+  `\\DiskStation\music\Music Library\M:\Music Library\...` came from). Two additions the
+  ruling implies: `PathMapper.coverage()` counts how many tracks a root that IS set can
+  actually rewrite, so a root typed one folder off is caught up front rather than silently
+  producing 17,244 wrong paths; and `suggest_local_root()` (was `derive_local_root`) now
+  reads every path instead of the first 5,000 and is only ever SHOWN, never applied.
+  **Observed** against a scratch copy of the live DB with no `.env` and no configured
+  roots: HTTP 200 with all paths local and `X-Attune-Export-Fallback: 1`; with UNC set but
+  the local root still unset, still a refusal (a rewrite needs both); with both set, 0
+  fallbacks and correct UNC paths, including the one stray `M:` track in the library;
+  with the old too-deep root, a refusal instead of a pasted path; and the two export
+  buttons writing byte-identical path lists for the same mix. Coverage measured at
+  21,236/21,236 for the correct root, 17,244/21,236 for the old guess, 0 for a bogus one.
+- **"Not Mixable": the tracks the library holds that never reached a mix** (`web/studio.py`,
+  `web/static/studio.js`, `web/static/studio.html`, `web/static/studio.css`), per
+  `MORNING_REPORT_2026-07-29.md` §4.1. `GET /api/lib/stats` now reports `db_tracks` and
+  `failed` beside the pool count, so a library with unusable tracks can no longer read as
+  100% analyzed; a loopback-only `GET /api/lib/failures` lists them with the reason
+  analysis gave and the file path; and a sidebar view shows them, appearing only when the
+  count is non-zero. Pool contents are untouched — that is mix semantics, gated by LAW 1.
+  **Observed** on the real library: 217 rows, 21,453 tracks against a 21,236 pool, reasons
+  read off the analysis tables. 199 of the 217 turned out to be a sync tool's own backup
+  folder (`_SYNCAPP\Versioning`) whose files no longer exist; 18 are real library tracks.
+- **The file check behind Missing Files can now be started** (`web/studio.py`,
+  `web/static/studio.js`, `web/static/studio.html`, `web/static/studio.css`), per the
+  operator's ruling on `MORNING_REPORT_2026-07-29.md` §4.2 (view only, no pool change).
+  The verify pass has existed since S13 but nothing in the window ever ran it, so
+  `filestate` stayed empty and the view sat at 0 — which reads as "all your files are
+  there" and actually meant "nobody looked". A "Check files now" button with live progress
+  and a stop control, plus a `verified` count in stats so an empty list says which of the
+  two it is. Fixed alongside: "Hide missing files" used to empty the Missing Files view
+  itself. **Observed** on a scratch copy of the live DB: 21,236 checked, **22 missing**,
+  the same 22 the report measured; the view lists them; the hide toggle no longer empties
+  it while still hiding missing rows everywhere else.
 - **Export roots move to settings.json + Preferences, unconfigured flavors degrade
   gracefully** (`src/config.py`, `src/export.py`, `web/app.py`, `web/static/prefs.js`,
   `web/static/studio.html`), per `PROPOSAL_EXPORT_ROOTS_2026-07-28.md`'s ruling and its
@@ -13,7 +57,10 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   `plex_library_root`) are the new home for the paths that used to live only in `.env`;
   `.env` stays a dev override plus Plex's real connection secrets. `local_library_root`
   additionally derives from the DB's own track-path common prefix when nothing configures
-  it (`export.derive_local_root`); UNC and Plex are never guessed. A one-time migration
+  it (`export.derive_local_root`) — **superseded 2026-07-29: that derivation was wrong on
+  the real library and has been removed; see ruling (a) at the top of this section.
+  `derive_local_root` is now `suggest_local_root` and is only ever shown, never applied** —
+  UNC and Plex are never guessed. A one-time migration
   copies existing `.env` values into settings.json on first run after this build. The
   actual bug fix: `GET /api/export/m3u` for an unconfigured UNC/Plex root used to 400 with
   an empty file — it now falls back to local paths and reports the fallback via
@@ -136,6 +183,39 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   reader: 5 entries, exactly those sizes.
 
 ### Fixed
+- **Download .m3u8 could not see the server's own warnings** (`web/static/studio.js`). It
+  navigated the browser to the export URL, and a plain navigation cannot read a response
+  header, so the button quietly handed over local paths while the Save-to-folder button
+  beside it reported the same situation honestly. It now fetches and saves the blob, the
+  shape `web/app.py`'s own /mix page already used. **Observed with real clicks:** the
+  download reports the flavour actually used, and a fallback shows as a warning.
+- **The live `scan.log` showed as 0 B in Diagnostics** (`web/applog.py`). `list_logs` read
+  `DirEntry.stat()`, which on Windows comes from the cached directory entry — and Windows
+  does not update it while a handle is open for writing, so the one log anybody wants to
+  read reported 0 bytes and a frozen timestamp. Now `os.stat(e.path)`. **Observed,
+  reproduced 3/3 on a live `RotatingFileHandler`:** `DirEntry.stat()` 0 bytes,
+  `os.stat()` 4,540 bytes, same file, same moment. (The earlier "buffered until it
+  flushes" reading in `MORNING_REPORT_2026-07-29.md` §5.2 was wrong: the bytes are on
+  disk the whole time.)
+- **An A-Z letter no artist starts with emptied the table with no explanation**
+  (`web/static/studio.js`). The binary search converges on where the letter would be and
+  loads whatever is there, or nothing at all past the end of the list. It now says which
+  happened, and a later successful jump restores the ordinary count line instead of
+  leaving the previous letter's message behind. **Observed with real clicks** on a
+  filtered library: "Z" gives "No artist starts with Z" in both the subtitle and the empty
+  state, then "L" loads 67 rows and the subtitle returns to "67 songs · 4.8 h".
+- **The export path-style hint named the wrong place and said nothing about what would
+  happen** (`web/static/studio.js`). It read "Not configured in .env" when Preferences is
+  the documented home, and never mentioned that an unset root means the playlist keeps
+  local paths. It now says what the paths will read, in operator language, and warns when
+  a root that IS set does not cover the whole library. **Observed:** correct root and
+  path text for all three styles on the live configuration.
+- **Preferences root fields were silently outranked by `.env`** (`web/app.py`,
+  `web/static/prefs.js`, `web/static/studio.html`, `web/static/studio.css`). A dev `.env`
+  beats settings.json by design, and nothing said so: you could edit a root, save, restart
+  and find the old value back. `GET /api/settings` now reports `env_overrides`, and each
+  shadowed field says which value is actually in force. **Observed with real clicks** on
+  the operator's own machine: all three root fields flagged, each quoting the `.env` value.
 - **Saving a new auto-playlist under an existing name destroyed the old one silently**
   (`web/smartlists.py`). `sl_save` used `INSERT OR REPLACE` on a UNIQUE name, so a
   name collision quietly overwrote curated rules with no undo. It now mirrors

@@ -127,16 +127,38 @@ async function pollReload() {
   // refresh everything the reload just changed underneath us
   try {
     S.stats = await jget('/api/lib/stats');
-    const s = S.stats;
-    $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
-    $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
-      `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
-    $('missingN').textContent = fmt(s.missing || 0);
+    paintStats(S.stats);
   } catch (e) { console.error('[reload] stats refresh', e); }
   try {
     if (S.view === 'library') await loadLibrary(false);
   } catch (e) { console.error('[reload] library refresh', e); }
   setTimeout(() => { $('reloadBanner').hidden = true; }, 2500);
+}
+
+/* ---------------------------------------------------------------- header counts
+   ONE writer for the header/status-bar numbers -- boot and the post-reload repaint used
+   to keep their own copy of the same four lines.
+
+   `songs` is the MIXABLE POOL, and always was. When the library holds MORE than that, the
+   difference is tracks analysis never got through, and both numbers get said out loud:
+   reporting only the pool is what made a library with 217 unusable tracks read as
+   "21,236 songs, 21,236 analyzed", i.e. perfect (MORNING_REPORT_2026-07-29.md §4.1). */
+function paintStats(s) {
+  const failed = s.failed || 0;
+  $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)` +
+    (failed ? ` · ${fmt(failed)} not mixable` : '');
+  $('sLib').title = failed
+    ? `Your library holds ${fmt(s.db_tracks)} tracks. ${fmt(s.songs)} of them can go in a `
+      + `mix; ${fmt(failed)} could not be analyzed — see "Not Mixable" in the sidebar.`
+    : 'Every track in your library can go in a mix.';
+  $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
+    `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums` +
+    (failed ? ` · library holds ${fmt(s.db_tracks)}` : '');
+  $('missingN').textContent = fmt(s.missing || 0);
+  $('failedN').textContent = fmt(failed);
+  // nothing to show, no sidebar entry -- it appears the moment a scan leaves something behind
+  const li = document.querySelector('#tree li[data-view="failures"]');
+  if (li) li.hidden = !failed;
 }
 
 /* ------------------------------------------------------------------ params */
@@ -413,6 +435,13 @@ function renderRows(rows, opts = {}) {
   $('diagView').hidden = true;
   $('diagUnavailable').hidden = true;
   $('azBar').hidden = !(S.view === 'library' && !S.folder);
+  // Missing Files owns two pieces of chrome: its "Check files now" button, and a body class
+  // that stops the "Hide missing files" toggle from emptying the one view whose entire job
+  // is listing missing files (see studio.css). Both live here, at the same choke point the
+  // A-Z bar and the Diagnostics panel use, so every view transition clears them for free.
+  const inMissing = S.view === 'library' && S.smart === 'missing' && !S.folder;
+  $('verifyTools').hidden = !inMissing;
+  document.body.classList.toggle('inMissingView', inMissing);
   S.rows = rows;
   // Crash/restart slice 3: "the mix the user last had open" means literally that -- only
   // persisted while Mix is the view actually on screen, matching slices 1-2 (window
@@ -451,6 +480,7 @@ function rowsHtml(rows, opts = {}) {
     // "More Like This" anchors: pinned under the seed with the green edge + badge
     if (S.view === 'mix' && r.i !== seed && S.liked.includes(r.i)) cls.push('pinned');
     if (r.missing) cls.push('missing');
+    if (r.unmixable) cls.push('unmixable');
     const tune = S.view === 'mix' && S.stats.engine === 'v2' &&
                  r.i >= 0 && r.i !== seed;
     const tds = cols.map(c => {
@@ -458,7 +488,11 @@ function rowsHtml(rows, opts = {}) {
       const cell = cellHtml(c, r) + (tune && c.id === 'title' ? tuneHtml(r.i) : '');
       return `<td class="${c.cls}${extra}">${cell}</td>`;
     }).join('');
-    return `<tr data-i="${r.i}" ${draggable ? 'draggable="true"' : ''} class="${cls.join(' ')}">${tds}</tr>`;
+    // r.tip: hover text for the whole row. Set by the Not Mixable view, which has to be
+    // able to answer "which file is this?" — those tracks appear in no other view, so the
+    // path is the only handle on them.
+    const tip = r.tip ? ` title="${esc(r.tip)}"` : '';
+    return `<tr data-i="${r.i}"${tip} ${draggable ? 'draggable="true"' : ''} class="${cls.join(' ')}">${tds}</tr>`;
   }).join('');
 }
 function appendRows(rows) {
@@ -501,6 +535,7 @@ function setTableMode(grid) {
   // always immediately followed by a renderRows() call from the caller, which handles it.
   if (grid) {
     $('azBar').hidden = true; $('diagView').hidden = true; $('diagUnavailable').hidden = true;
+    $('verifyTools').hidden = true; document.body.classList.remove('inMissingView');
     store.set('lastMix', null);      // the album grid is a Library presentation, not Mix
   }
   $('btnViewList').classList.toggle('on', !grid);
@@ -541,6 +576,21 @@ async function loadLibrary(resetOffset) {
   setHeaderSort();
   const hrs = (j.seconds / 3600).toFixed(1);
   $('viewSub').textContent = `${fmt(j.total)} songs · ${hrs} h`;
+  // Missing Files: an empty table there means one of two completely different things --
+  // "every file is where it should be" or "nobody has ever looked" -- and it used to show
+  // the same blank either way, because nothing in the window could start the check.
+  // (The button + the CSS guard are handled centrally in renderRows().)
+  if (S.smart === 'missing') {
+    const checked = (S.stats && S.stats.verified) || 0;
+    $('viewSub').textContent = !checked
+      ? 'Nothing has been checked yet, so this list is empty for that reason and no other. '
+        + 'Press "Check files now".'
+      : (!j.total
+          ? `All ${fmt(checked)} checked tracks were found on disk.`
+          : `${fmt(j.total)} of ${fmt(checked)} checked tracks are gone from disk. They stay `
+            + `in the library and can still turn up in a mix — right-click a row to relink `
+            + `it to its new home, or remove it.`);
+  }
   renderPager();
   loadFacets();
 }
@@ -717,6 +767,21 @@ async function jumpToLetter(letter) {
     $('tableWrap').scrollTop = 0;
     renderPager();
     bar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.l === letter));
+    // A letter no artist starts with converges on the offset where it WOULD be and loads
+    // whatever sits there -- or nothing at all, past the end of the list. Either way the
+    // letter is a lie, so say so instead of leaving a table that looks broken.
+    const landed = j.rows.length ? azBucket(j.rows[0].artist) : '';
+    if (letter !== '#' && landed !== letter) {
+      $('viewSub').textContent = landed
+        ? `No artist starts with "${letter}" — showing "${landed}" instead.`
+        : `No artist starts with "${letter}".`;
+      $('empty').textContent = `No artist starts with "${letter}".`;
+    } else {
+      // put the ordinary count line back: a previous jump may have left a "no artist
+      // starts with X" message sitting there, and this jump did land.
+      $('viewSub').textContent = `${fmt(j.total)} songs · ${(j.seconds / 3600).toFixed(1)} h`;
+      $('empty').textContent = 'Nothing here.';
+    }
   } catch (e) { toast(e.message, true); }
   finally { bar.classList.remove('busy'); }
 }
@@ -1074,6 +1139,32 @@ async function showPlaylist(name) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* The tracks your library holds that analysis never got through. They are in no mix, no
+   facet, no folder and no other view -- before this there was no screen anywhere that
+   admitted they existed (MORNING_REPORT_2026-07-29.md §4.1). Rows come back with i = -1
+   because they have no pool index: nothing to play, nothing to mix from, nothing to
+   select, which every row handler already understands from the playlist view's
+   not-found rows. The reason sits in the Status column, the full path in the row tooltip. */
+async function showFailures() {
+  S.view = 'failures'; S.smart = ''; S.folder = null;
+  document.querySelectorAll('#tree li[data-smart],#folderTree li,#plList li,#slList li')
+    .forEach(l => l.classList.remove('on'));
+  markTree('failures');
+  $('viewLabel').textContent = 'Not Mixable';
+  $('btnBackLib').hidden = false; $('pager').innerHTML = '';
+  $('queueTools').hidden = true;
+  try {
+    const j = await jget('/api/lib/failures');
+    renderRows(j.rows.map(r => ({
+      i: -1, track: 0, title: r.title, length: r.length, artist: r.artist,
+      album: r.album, genre: r.genre, year: r.year, rating: 0, plays: 0,
+      seconds: r.seconds, status: r.why, unmixable: true, tip: r.path })));
+    $('viewSub').textContent = `${fmt(j.total)} of ${fmt(j.db_tracks)} tracks could not be `
+      + `analyzed, so they are in no mix. ${fmt(j.pool)} tracks are mixable. `
+      + `Re-scan a track to try again; hover a row for its file path.`;
+  } catch (e) { toast(e.message, true); }
+}
+
 async function loadPlaylists() {
   const j = await jget('/api/playlists');
   $('plN').textContent = j.playlists.length;
@@ -1111,6 +1202,7 @@ function refreshView() {
   else if (S.view === 'mix') showMix();
   else if (S.view === 'nowplaying') showNowPlaying();
   else if (S.view === 'playlist' && S.playlist) showPlaylist(S.playlist);
+  else if (S.view === 'failures') showFailures();
 }
 
 /* ------------------------------------------------------------------ selection */
@@ -1160,6 +1252,51 @@ async function loveTrack(i, loved) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* -- the file check behind the Missing Files view.
+   libverify.py has run this pass since S13, but nothing in the window ever started it, so
+   `filestate` stayed empty on the operator's real library: the view sat at 0, which reads
+   as "all your files are there" and was actually "nobody looked" -- while 22 tracks in the
+   live pool pointed at audio that is gone (MORNING_REPORT_2026-07-29.md §4.2). Ruled
+   2026-07-29: surface it here, and do NOT change what the pool contains (mix semantics,
+   LAW 1). Reads only: os.stat per track, nothing moved, deleted or re-tagged. */
+let verifyTimer = 0;
+function verifyMsg(text, cls = 'hint') { const el = $('verifyMsg'); el.className = cls; el.textContent = text; }
+
+async function startVerify() {
+  $('btnVerify').disabled = true;
+  try {
+    await jpost('/api/lib/verify', {});
+  } catch (e) { $('btnVerify').disabled = false; return verifyMsg(e.message, 'hint err'); }
+  $('btnVerifyCancel').hidden = false;
+  clearInterval(verifyTimer);
+  verifyTimer = setInterval(pollVerify, 800);
+  pollVerify();
+}
+
+async function pollVerify() {
+  let st;
+  try { st = await jget('/api/lib/verify/status'); }
+  catch (e) { clearInterval(verifyTimer); $('btnVerify').disabled = false; return; }
+  if (st.running) {
+    const pct = st.total ? Math.round(100 * st.checked / st.total) : 0;
+    return verifyMsg(`Checking… ${fmt(st.checked)} of ${fmt(st.total)} (${pct}%) · `
+      + `${fmt(st.missing)} missing so far`);
+  }
+  clearInterval(verifyTimer);
+  verifyTimer = 0;
+  $('btnVerify').disabled = false;
+  $('btnVerifyCancel').hidden = true;
+  if (st.error) return verifyMsg('Check failed: ' + st.error, 'hint err');
+  if (!st.total && !st.checked) return;            // nothing has run in this session
+  verifyMsg(st.cancelled
+    ? `Stopped after ${fmt(st.checked)} of ${fmt(st.total)} · ${fmt(st.missing)} missing`
+    : `Checked ${fmt(st.checked)} tracks · ${fmt(st.missing)} missing`);
+  // the pass writes lib.missing in place, so the smart view and the counts are already
+  // live -- just re-read them
+  try { S.stats = await jget('/api/lib/stats'); paintStats(S.stats); } catch {}
+  if (S.view === 'library' && S.smart === 'missing') loadLibrary(true);
+}
+
 /* ------------------------------------------------------------------ missing files */
 // "Locate file…" — reuses the SAME server-side folder browser the Library-folder
 // picker uses (Prefs.pickFolder), in file-picking mode (Prefs.pickFile): browse to
@@ -1204,6 +1341,19 @@ async function deleteTracks(ids) {
 }
 
 /* ------------------------------------------------------------------ export */
+/* One sentence for "some or all of these paths could not be rewritten", used by BOTH export
+   buttons. The server hands back local paths rather than refusing the whole export or
+   inventing a root (ruling (a), MORNING_REPORT §5.1) -- so the export succeeding is not the
+   whole story, and this is the part the operator has to see. */
+function fallbackNote(rep) {
+  if (!rep || !rep.fallback) return '';
+  const all = rep.fallback_count >= rep.total;
+  return (all ? `All ${rep.total} paths stayed local`
+              : `${rep.fallback_count} of ${rep.total} paths stayed local`)
+    + ` instead of ${rep.requested === 'unc' ? 'network' : rep.requested} form`
+    + (rep.reason ? `: ${rep.reason}` : '.');
+}
+
 async function exportSaveDir() {
   const ids = currentExportIds();
   if (!ids.length) return toast('Nothing to export', true);
@@ -1211,16 +1361,50 @@ async function exportSaveDir() {
   try {
     const j = await jpost('/api/export/m3u_dir',
       { ids, name, flavor: $('flavor').value });
-    $('exportMsg').className = 'msg ok';
-    $('exportMsg').textContent = `Wrote ${j.count} tracks → ${j.name}`;
+    const note = fallbackNote(j.fallback);
+    $('exportMsg').className = note ? 'msg warn' : 'msg ok';
+    $('exportMsg').textContent = `Wrote ${j.count} tracks → ${j.name}` + (note ? `. ${note}` : '');
     loadPlaylists();
   } catch (e) { $('exportMsg').className = 'msg err'; $('exportMsg').textContent = e.message; }
 }
-function exportDownload() {
+
+/* Fetched, not navigated to. A plain `window.location = url` download cannot read a
+   response header, so the server's X-Attune-Export-Fallback* report was invisible here and
+   this button quietly handed over local paths while the Save-to-folder button beside it
+   said what happened (MORNING_REPORT §5.2). Same fetch-then-blob shape app.py's own /mix
+   page already uses. */
+async function exportDownload() {
   const seed = S.seed ?? firstSelected();
   if (seed == null) return toast('Create a mix first', true);
   const p = mixParams(); p.set('i', seed); p.set('flavor', $('flavor').value);
-  window.location = '/api/export/m3u?' + p;
+  $('exportMsg').className = 'msg'; $('exportMsg').textContent = 'Building playlist…';
+  try {
+    const r = await fetch('/api/export/m3u?' + p);
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      $('exportMsg').className = 'msg err';
+      $('exportMsg').textContent = d.error || `export failed (HTTP ${r.status})`;
+      return;
+    }
+    const blob = await r.blob();
+    const m = /filename="([^"]+)"/.exec(r.headers.get('Content-Disposition') || '');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : 'Attune-mix.m3u8';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    const note = fallbackNote({
+      fallback: r.headers.get('X-Attune-Export-Fallback') === '1',
+      fallback_count: +r.headers.get('X-Attune-Export-Fallback-Count') || 0,
+      total: +r.headers.get('X-Attune-Export-Total') || 0,
+      requested: r.headers.get('X-Attune-Export-Flavor-Requested') || '',
+      reason: r.headers.get('X-Attune-Export-Fallback-Reason') || '',
+    });
+    $('exportMsg').className = note ? 'msg warn' : 'msg ok';
+    $('exportMsg').textContent = note || `Downloaded ${a.download}`;
+  } catch (e) {
+    $('exportMsg').className = 'msg err'; $('exportMsg').textContent = e.message;
+  }
 }
 async function exportPlex() {
   const seed = S.seed ?? firstSelected();
@@ -1632,7 +1816,7 @@ function bindEvents() {
     const li = e.target.closest('li[data-view]'); if (!li) return;
     if (li.dataset.view === 'library') { S.smart = ''; S.folder = null; }
     ({ library: () => loadLibrary(true), mix: showMix, nowplaying: showNowPlaying,
-       diagnostics: showDiagnostics })[li.dataset.view]();
+       diagnostics: showDiagnostics, failures: showFailures })[li.dataset.view]();
   });
 
   // A-Z jump bar
@@ -1640,6 +1824,21 @@ function bindEvents() {
     const b = e.target.closest('button[data-l]'); if (!b) return;
     jumpToLetter(b.dataset.l);
   });
+
+  // Missing Files: run the file check / stop it
+  $('btnVerify').onclick = startVerify;
+  $('btnVerifyCancel').onclick = async () => {
+    try { await jpost('/api/lib/verify/cancel', {}); } catch (e) { verifyMsg(e.message, 'hint err'); }
+  };
+  // a check started before this page loaded (a refresh mid-pass) -- surface it, same as
+  // the library reload and the copy job above
+  jget('/api/lib/verify/status').then(st => {
+    if (!st.running) return;
+    $('btnVerify').disabled = true;
+    $('btnVerifyCancel').hidden = false;
+    clearInterval(verifyTimer);
+    verifyTimer = setInterval(pollVerify, 800);
+  }).catch(() => {});
 
   // diagnostics: file list selection, refresh, line-count change
   $('diagFileList').addEventListener('click', e => {
@@ -1780,10 +1979,45 @@ function bindEvents() {
     if (!p.hidden) updateSelStatus();
   };
   pop('btnOptions', 'optionsPanel'); pop('btnExport', 'exportPanel');
+  // What the paths in the exported playlist will actually say, before you press anything.
+  // Attune never guesses a root (ruling (a), MORNING_REPORT §5.1): if one is missing, the
+  // export keeps LOCAL paths, and this line has to say so up front -- and name Preferences,
+  // which is where the roots live now. It used to read "Not configured in .env", which was
+  // the wrong place and said nothing about what would happen.
   const showRoot = () => {
     const r = (S.stats && S.stats.roots) || {};
-    const v = r[$('flavor').value];
-    $('flavorRoot').textContent = v ? 'Paths will read: ' + v + '\\…' : 'Not configured in .env';
+    const flavor = $('flavor').value;
+    const el = $('flavorRoot');
+    const target = r[flavor] || '';
+    const missing = [];
+    if (flavor !== 'local' && !target)
+      missing.push(flavor === 'unc' ? 'the network folder other players see'
+                                    : 'the library path your Plex server uses');
+    // every rewrite is relative to the local root, so an unset local root breaks unc/plex too
+    if (flavor !== 'local' && !r.local) missing.push('your own library folder');
+    if (flavor === 'local') {
+      el.className = 'hint';
+      el.textContent = 'Paths will read exactly as your library stores them.';
+    } else if (!missing.length) {
+      // the root is set -- but does it cover the library? A root one folder off rewrites
+      // every path it does cover and gets all of them wrong, which is the failure refusing
+      // to guess cannot catch (see PathMapper.coverage).
+      const cov = (S.stats && S.stats.root_coverage) || {};
+      const short = cov.total && cov.ok < cov.total;
+      const tail = target + (flavor === 'plex' ? '/…' : '\\…');   // Plex paths are POSIX
+      el.className = short ? 'hint warn' : 'hint';
+      el.textContent = short
+        ? `Paths will read: ${tail} — but only ${fmt(cov.ok)} of ${fmt(cov.total)} tracks `
+          + `sit under your library folder, so ${fmt(cov.total - cov.ok)} will keep local `
+          + `paths. Check the Local library root in Preferences, Advanced.`
+        : 'Paths will read: ' + tail;
+    } else {
+      el.className = 'hint warn';
+      el.textContent = `Paths will stay local: Attune still needs ${missing.join(' and ')}. `
+        + `Set it in Preferences, Advanced`
+        + (r.local_suggested && !r.local ? ` (your music looks like it lives under ${r.local_suggested})` : '')
+        + '.';
+    }
   };
   $('flavor').addEventListener('change', showRoot);
   showRoot._run = showRoot;
@@ -2017,10 +2251,7 @@ async function initCore() {
     $('mipControls').hidden = s.engine !== 'musicip';
     $('v2Controls').hidden = s.engine === 'musicip';
     $('btnPlex').disabled = !s.plex;
-    $('sLib').textContent = `Songs: ${fmt(s.songs)} (${fmt(s.analyzed)} analyzed)`;
-    $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
-      `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums`;
-    $('missingN').textContent = fmt(s.missing || 0);
+    paintStats(s);
   } catch (e) { console.error('[core] header', e); }
 
   // Recipes load before the flavor dispatch (the applied default writes the dials the

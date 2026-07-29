@@ -110,7 +110,16 @@ def configure_scan_logger(config_dir):
 
 def list_logs(config_dir):
     """[{name, size, mtime}], newest first. [] (not an error) if the dir doesn't exist
-    yet -- that's the normal state before any scan has ever run."""
+    yet -- that's the normal state before any scan has ever run.
+
+    os.stat(e.path), NOT e.stat(): on Windows a DirEntry's stat comes from the cached
+    FindFirstFile directory entry, and Windows does not update a file's directory entry
+    while a handle is open for writing. So the log being written RIGHT NOW -- the only one
+    anybody wants to look at -- reported size 0 and a frozen timestamp, which read as
+    "logging is broken" (MORNING_REPORT_2026-07-29.md §5.2). Measured 2026-07-29 on a live
+    RotatingFileHandler: DirEntry.stat() 0 bytes, os.stat() 4,540 bytes, same file, same
+    moment. os.stat() opens the file itself and sees the truth. A handful of files per
+    listing, so the extra syscalls cost nothing."""
     d = logs_dir(config_dir)
     if not os.path.isdir(d):
         return []
@@ -119,7 +128,7 @@ def list_logs(config_dir):
         for e in it:
             try:
                 if e.is_file(follow_symlinks=False):
-                    st = e.stat()
+                    st = os.stat(e.path)
                     out.append({"name": e.name, "size": st.st_size, "mtime": st.st_mtime})
             except OSError:
                 continue   # unreadable entry -- skip, don't fail the whole listing

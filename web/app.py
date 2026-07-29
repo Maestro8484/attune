@@ -230,7 +230,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     settings = cfgmod.load()
     _migrate_env_roots_once(cfgmod, settings, cfg)
     settings = cfgmod.load()            # re-read: the migration may have just written roots
-    mapper = export.mapper_from_settings(settings, cfg, eng.paths)
+    mapper = export.mapper_from_settings(settings, cfg)
+    # A candidate local root to SHOW in the UI when the operator has not set one. Never
+    # applied to a rewrite (ruling (a), MORNING_REPORT §5.1) -- it exists so the notice on
+    # a refused export can name a folder instead of only saying "not configured". '' when
+    # the library has no single prefix, which is the honest answer often enough to matter.
+    root_suggestion = export.suggest_local_root(eng.paths, settings.get("library_folders"))
+    # How much of the library the configured local root actually covers. A root that is
+    # SET but wrong (typed a level too deep, say) rewrites every path it does cover and
+    # gets every one of them wrong -- refusing to guess cannot catch that, counting can.
+    # Measured once here over the whole pool; a prefix test per track.
+    root_coverage = mapper.coverage(eng.paths) if mapper.local_root else {"ok": 0, "total": len(eng.paths)}
     plex_holder = {}                    # lazily-built PlexExporter (indexes Plex on first use)
     plex_configured = bool(mapper.plex_root) and all(
         cfg.get(k) for k in ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID"))
@@ -714,27 +724,36 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         except ValueError:
             return jsonify(error="bad request"), 400
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
+        # convert_all() never raises: a path it cannot rewrite honestly keeps its LOCAL
+        # form and is counted in the report (ruling (a), MORNING_REPORT §5.1). The body
+        # below is the playlist file itself, not JSON, so the report goes out as response
+        # headers -- which is why the client fetches this URL instead of navigating to it
+        # (a plain navigation cannot read them; MORNING_REPORT §5.2).
+        converted, report = mapper.convert_all(tracks, flavor)
         lines = ["#EXTM3U"]
-        used_flavor = flavor
-        # convert_safe() never raises for an unconfigured root -- it falls back to local
-        # paths instead of 400ing the whole export (PROPOSAL_EXPORT_ROOTS_2026-07-28.md,
-        # Ruling 2 Amended item 3). The body below is the playlist file itself, not JSON,
-        # so the fallback is reported via response headers instead of a JSON field.
-        for p in tracks:
+        for p, out in zip(tracks, converted):
             m = eng.meta.get(p, {})
             artist = oneline(m.get("artist") or "?")
             title = oneline(m.get("title") or os.path.basename(p))
             lines.append(f"#EXTINF:-1,{artist} - {title}")
-            converted, used_flavor = mapper.convert_safe(p, flavor)
-            lines.append(converted)
+            lines.append(out)
         body = "\n".join(lines) + "\n"
         stem = eng.meta.get(eng.paths[i], {}).get("title") or "mix"
         safe = "".join(c for c in stem if c.isalnum() or c in " -_").strip()[:60] or "mix"
         resp = Response(body, mimetype="audio/x-mpegurl",
                         headers={"Content-Disposition": f'attachment; filename="Attune-{safe}.m3u8"'})
-        resp.headers["X-Attune-Export-Flavor-Requested"] = flavor
-        resp.headers["X-Attune-Export-Flavor-Used"] = used_flavor
-        resp.headers["X-Attune-Export-Fallback"] = "1" if used_flavor != flavor else "0"
+        resp.headers["X-Attune-Export-Flavor-Requested"] = report["requested"]
+        resp.headers["X-Attune-Export-Flavor-Used"] = report["used"]
+        resp.headers["X-Attune-Export-Fallback"] = "1" if report["fallback"] else "0"
+        resp.headers["X-Attune-Export-Fallback-Count"] = str(report["fallback_count"])
+        resp.headers["X-Attune-Export-Total"] = str(report["total"])
+        # header values must be single-line and latin-1-encodable (werkzeug's own rule):
+        # the sentence is ours (see PathMapper) but it quotes a library path, which can
+        # hold anything, so normalise rather than trust it.
+        if report["reason"]:
+            resp.headers["X-Attune-Export-Fallback-Reason"] = (
+                report["reason"].replace("\r", " ").replace("\n", " ")
+                .encode("latin-1", "replace").decode("latin-1"))
         return resp
 
     @app.post("/api/export/plex")
@@ -758,6 +777,12 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         title = f"Attune — like {labels[i]}"
         try:
             res = plex_holder["plex"].create_playlist(title, tracks)
+        except ValueError as e:
+            # a refused path rewrite is a configuration problem, not a Plex outage --
+            # don't dress it up as a 502 (ruling (a), MORNING_REPORT §5.1). There is no
+            # local-path fallback to offer here: a Plex playlist is only meaningful in
+            # paths Plex itself can resolve.
+            return jsonify(ok=False, error=str(e)), 400
         except Exception as e:                      # network / Plex API failure
             return jsonify(ok=False, error=f"Plex error: {e}"), 502
         # don't leak full local library paths in the HTTP response — basenames only
@@ -770,11 +795,21 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # keys need a process restart to take effect (honestly, instead of pretending).
     # cfgmod is already loaded above (it also builds the export mapper) -- reused here.
 
+    # settings keys a .env can shadow, and the .env name that does it. A dev .env OUTRANKS
+    # settings.json by design (see export.mapper_from_settings) -- but nothing said so, so
+    # on a machine with a .env the Preferences root fields could be edited, saved, and have
+    # no effect: clear one, restart, it comes back (MORNING_REPORT §5.2). GET reports which
+    # keys are currently shadowed so the panel can say it on the field itself.
+    ENV_SHADOWED = (("local_library_root", "LOCAL_LIBRARY_ROOT"),
+                    ("unc_library_root", "UNC_LIBRARY_ROOT"),
+                    ("plex_library_root", "PLEX_LIBRARY_ROOT"))
+
     @app.get("/api/settings")
     def get_settings():
         s = cfgmod.load()
         return jsonify(settings=s, path=cfgmod.settings_path(),
-                       restart_keys=sorted(cfgmod.RESTART_KEYS))
+                       restart_keys=sorted(cfgmod.RESTART_KEYS),
+                       env_overrides={sk: cfg[ek] for sk, ek in ENV_SHADOWED if cfg.get(ek)})
 
     @app.post("/api/settings")
     def post_settings():
@@ -921,6 +956,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "eng": eng,
         "labels": labels,
         "mapper": mapper,
+        "root_suggestion": root_suggestion,
+        "root_coverage": root_coverage,
         "playlist_dir": playlist_dir,
         "engine_name": engine_name,
         "plex_configured": plex_configured,
