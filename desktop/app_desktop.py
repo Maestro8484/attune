@@ -24,6 +24,7 @@ import importlib.util
 import os
 import sys
 import threading
+import time
 import urllib.request
 
 from werkzeug.serving import make_server
@@ -90,6 +91,97 @@ def _find_playlists():
         if c and os.path.isdir(c):
             return os.path.abspath(c)
     return None
+
+
+## ---- window geometry (crash/restart safety, slice 1) ------------------------------
+# The existing solution is src/config.py's settings.json -- the ONE settings store
+# already shared by the desktop app, the LAN server, and the analyzer (see
+# _load_config below) -- and this reuses it rather than inventing a second store.
+# It is NOT the browser's localStorage `store` that player.js/studio.js use for
+# in-page UI state: window geometry is native OS window chrome, set before the page
+# exists and read after the window (and its JS) is gone, so it has to be saved from
+# Python. config.py's own docstring already carves out desktop-only settings (the
+# "theme" key is the precedent) as fair game for this file.
+
+_DEFAULT_GEOMETRY = (None, None, 1360, 880)   # x, y, width, height -- pywebview's own
+                                               # OS-placed default; same size main()
+                                               # used before this feature existed.
+_MIN_W, _MIN_H = 900, 620                      # matches webview.create_window's min_size
+
+
+def _load_window_geometry(settings):
+    """Turn settings['window_geometry'] into (x, y, width, height) for
+    webview.create_window, or the built-in default if it is missing, malformed, or
+    would open off every attached screen (monitor unplugged, resolution shrank, or a
+    stale (-32000, -32000) minimized-to-taskbar position). Pure w.r.t. any live
+    window -- callable and testable without ever opening one; only reads
+    webview.screens, which pywebview answers without a window existing.
+    """
+    geo = settings.get("window_geometry") if isinstance(settings, dict) else None
+    if not isinstance(geo, dict):
+        return _DEFAULT_GEOMETRY
+    try:
+        x, y, w, h = geo["x"], geo["y"], geo["width"], geo["height"]
+    except (KeyError, TypeError):
+        return _DEFAULT_GEOMETRY
+    if not all(isinstance(v, int) and not isinstance(v, bool) for v in (x, y, w, h)):
+        return _DEFAULT_GEOMETRY
+    w = max(_MIN_W, min(w, 8000))
+    h = max(_MIN_H, min(h, 8000))
+    try:
+        screens = webview.screens
+    except Exception:
+        screens = []
+    # "On screen" = the saved rect overlaps at least one attached monitor's bounds, so
+    # the title bar is always somewhere grabbable. Off every screen -> fall back rather
+    # than opening invisibly.
+    on_screen = any(x < s.x + s.width and x + w > s.x and
+                     y < s.y + s.height and y + h > s.y
+                     for s in screens)
+    if not on_screen:
+        print(f"  window_geometry {geo} is off every attached screen -- using defaults")
+        return _DEFAULT_GEOMETRY
+    return x, y, w, h
+
+
+def _current_geometry(window):
+    """The live OS window rect, in the same shape saved to settings.json."""
+    return {"x": window.x, "y": window.y, "width": window.width, "height": window.height}
+
+
+def _bind_geometry_persistence(window, cfg):
+    """Save geometry on resize/move (throttled) and once more, unconditionally, on
+    close -- crash/restart slice 1's "persist on close/resize".
+
+    pywebview 6.2.1's Window exposes events.resized / events.moved / events.closing
+    (webview/event.py, webview/window.py) -- this uses that surface directly rather
+    than polling. events.closing is built with should_lock=True, so its handlers run
+    SYNCHRONOUSLY on the thread that is already closing the window (a final geometry
+    read is guaranteed to land before the window is gone); events.resized/moved are
+    NOT should_lock, so pywebview dispatches each firing on its own new thread --
+    WinForms fires Resize repeatedly through a drag, so multiple handler threads can
+    be in flight concurrently. A lock plus a minimum interval keeps that from turning
+    into a write per pixel of drag; a failed save is swallowed so it can never block
+    the window from closing.
+    """
+    lock = threading.Lock()
+    state = {"last": 0.0}
+    min_interval = 0.8
+
+    def _save(force=False):
+        with lock:
+            now = time.monotonic()
+            if not force and now - state["last"] < min_interval:
+                return
+            state["last"] = now
+        try:
+            cfg.update({"window_geometry": _current_geometry(window)})
+        except Exception as e:
+            print(f"  window geometry save failed: {e}")
+
+    window.events.resized += lambda *_a: _save()
+    window.events.moved += lambda *_a: _save()
+    window.events.closing += lambda *_a: _save(force=True)
 
 
 def _port_open(host, port, timeout=0.25):
@@ -319,8 +411,11 @@ def main():
         except BaseException as e:              # SystemExit included — report, never hang
             gate.error = f"Couldn't start the engine: {e}"
 
-    webview.create_window("Attune Studio", f"http://127.0.0.1:{port}/",
-                          width=1360, height=880, min_size=(900, 620))
+    win_x, win_y, win_w, win_h = _load_window_geometry(settings)
+    window = webview.create_window("Attune Studio", f"http://127.0.0.1:{port}/",
+                          width=win_w, height=win_h, x=win_x, y=win_y,
+                          min_size=(_MIN_W, _MIN_H))
+    _bind_geometry_persistence(window, cfg)
     # webview.start(func) runs func on a worker thread only AFTER the GUI is up --
     # pywebview's own documented idiom. Starting the loader any earlier makes it
     # contend for the GIL with window creation and delays the very thing we want
