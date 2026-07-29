@@ -5,11 +5,13 @@ Two targets, one path-map:
                   (local drive / UNC share / Plex server path).
   * Plex        — creates a real playlist on your Plex server via its HTTP API.
 
-Everything is config-driven from a .env file (no secrets in code). Keys used:
-  LOCAL_LIBRARY_ROOT   e.g.  D:\\Music              (paths as stored in the DB)
-  UNC_LIBRARY_ROOT     e.g.  \\\\NAS\\Music           (for playlists played on other LAN devices)
-  PLEX_LIBRARY_ROOT    e.g.  /music                 (paths as your Plex server sees them)
-  PLEX_URL, PLEX_ACCOUNT_TOKEN, PLEX_SECTION_KEY, PLEX_MACHINE_ID
+The three path roots (LOCAL_LIBRARY_ROOT / UNC_LIBRARY_ROOT / PLEX_LIBRARY_ROOT) live in
+settings.json (Preferences -> Advanced) as of PROPOSAL_EXPORT_ROOTS_2026-07-28.md -- see
+mapper_from_settings() and derive_local_root(). A .env file is a dev override for those
+same three, plus wherever Plex's real connection secrets live:
+  PLEX_URL, PLEX_ACCOUNT_TOKEN, PLEX_SECTION_KEY, PLEX_MACHINE_ID  (never in settings.json)
+mapper_from_env()/load_env() below still exist for the CLI, which is a dev tool run from a
+workspace checkout and keeps reading straight from .env.
 
 The library is a mirror: the tree BELOW the root is identical across local / NAS /
 Plex, so translation is a pure root-prefix swap (+ slash normalisation).
@@ -32,10 +34,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 def find_env(explicit=None):
     """Locate a .env: explicit arg → $ATTUNE_ENV → walk up from cwd → None if not found.
 
-    No repo-root fallback exists: a process whose cwd is outside the workspace (e.g.
-    a scheduled task starting in System32, or an installed copy under Program Files)
-    gets no .env and therefore no UNC/Plex export roots. Root-caused S12 2026-07-28
-    (nightly gate 400); the settings-based fix is a queued design item."""
+    Export roots (LOCAL/UNC/PLEX_LIBRARY_ROOT) no longer depend on this chain finding
+    anything -- they live in settings.json now (see mapper_from_settings()), which every
+    install can always find regardless of cwd. What's left behind this search is a dev
+    override for those same three roots, plus Plex's actual connection secrets
+    (PLEX_URL, PLEX_ACCOUNT_TOKEN, ...), which never move out of .env.
+
+    No repo-root or app-root fallback is added on purpose
+    (PROPOSAL_EXPORT_ROOTS_2026-07-28.md §5): once settings.json is the answer for an
+    installed app, a developer's .env sitting near that install would otherwise silently
+    override the user's own Preferences, and precedence would depend on install layout --
+    the original bug wearing a different hat. This is why a process whose cwd is outside
+    the workspace (a scheduled task starting in System32, an installed copy under Program
+    Files) still finds no .env: that's correct, not a gap."""
     for cand in (explicit, os.environ.get("ATTUNE_ENV")):
         if cand and os.path.exists(cand):
             return cand
@@ -112,6 +123,20 @@ class PathMapper:
 
     def convert(self, path, flavor):
         return {"local": self.to_local, "unc": self.to_unc, "plex": self.to_plex}[flavor](path)
+
+    def convert_safe(self, path, flavor):
+        """Like convert(), but never raises for an unconfigured root: falls back to LOCAL
+        paths instead of hard-failing. An unconfigured UNC/Plex root used to 400 the whole
+        export with an empty file (PROPOSAL_EXPORT_ROOTS_2026-07-28.md, Ruling 2 Amended
+        item 3) -- callers should never see ValueError from this path anymore.
+
+        Returns (converted_path, used_flavor); used_flavor differs from `flavor` only when
+        a fallback happened, so the caller can report it."""
+        if flavor == "unc" and not self.unc_root:
+            return self.to_local(path), "local"
+        if flavor == "plex" and not self.plex_root:
+            return self.to_local(path), "local"
+        return self.convert(path, flavor), flavor
 
 
 # ------------------------------------------------------------------------- m3u8
@@ -218,17 +243,64 @@ def _load_hybrid():
 
 
 def mapper_from_env(cfg):
+    # CLI-only path (see main() below). The web app builds its mapper through
+    # mapper_from_settings() instead, so settings.json (Preferences) is consulted too.
     # LOCAL_LIBRARY_ROOT should match the path prefix as stored in your DB; the generic
     # default is only a placeholder — set it in .env for exports to map correctly.
     return PathMapper(cfg.get("LOCAL_LIBRARY_ROOT", "C:\\Music"),
                       cfg.get("UNC_LIBRARY_ROOT"), cfg.get("PLEX_LIBRARY_ROOT"))
 
 
+def derive_local_root(paths, folders=None):
+    """Best-effort default for local_library_root when nothing configured it: the common
+    directory prefix across the DB's own track paths. A DB with tracks necessarily has
+    paths, unlike `library_folders`, which is empty on today's real settings.json
+    (verified 2026-07-28 -- PROPOSAL_EXPORT_ROOTS_2026-07-28.md §3). `folders` is
+    consulted only as a SECONDARY source, when the path-based derivation comes up empty.
+
+    Returns '' if nothing usable is found (no paths, or paths that share no common
+    directory at all -- e.g. libraries split across multiple drive letters)."""
+    sample = [p for p in paths if p][:5000]      # a shared prefix across a few thousand
+                                                   # tracks is as good as checking all of them
+    if not sample:
+        sample = [f for f in (folders or []) if f]
+    if not sample:
+        return ""
+    try:
+        common = os.path.commonpath(sample)
+    except ValueError:      # mixed drive letters on Windows -> no common path at all
+        return ""
+    # commonpath of a single file (or of paths that already share their full directory)
+    # returns that file's own path, not its parent directory -- fall back to dirname.
+    return common if os.path.isdir(common) else os.path.dirname(common)
+
+
+def mapper_from_settings(settings, env_cfg, paths=None):
+    """Build the PathMapper the web app actually uses. settings.json (Preferences) is the
+    home for the three export roots; env_cfg (a loaded .env, see load_env()) is a dev
+    override that still wins over settings.json day to day -- there's no CLI leg here,
+    so this is env_cfg > settings.json > derived default, the non-CLI tail of
+    config.effective()'s chain. UNC and Plex are never guessed -- only local_library_root
+    has a derived fallback (see derive_local_root)."""
+    local = (env_cfg.get("LOCAL_LIBRARY_ROOT") or settings.get("local_library_root")
+            or derive_local_root(paths or [], settings.get("library_folders")))
+    unc = env_cfg.get("UNC_LIBRARY_ROOT") or settings.get("unc_library_root") or ""
+    plex = env_cfg.get("PLEX_LIBRARY_ROOT") or settings.get("plex_library_root") or ""
+    return PathMapper(local or "C:\\Music", unc, plex)
+
+
 def plex_from_env(cfg, mapper):
-    need = ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID", "PLEX_LIBRARY_ROOT")
+    """Build a PlexExporter. PLEX_URL/ACCOUNT_TOKEN/MACHINE_ID are connection secrets and
+    only ever come from .env (they never move to settings.json). The library-path root is
+    read off `mapper.plex_root` instead of straight off `cfg`, so a root configured only
+    in Preferences (settings.json) still satisfies this check -- mapper is already
+    resolved through mapper_from_settings()'s env-then-settings chain by the caller."""
+    need = ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID")
     missing = [k for k in need if not cfg.get(k)]
+    if not mapper.plex_root:
+        missing.append("PLEX_LIBRARY_ROOT (.env) or plex_library_root (Preferences)")
     if missing:
-        raise SystemExit(f"Plex export needs these .env keys: {', '.join(missing)}")
+        raise SystemExit(f"Plex export needs: {', '.join(missing)}")
     return PlexExporter(cfg["PLEX_URL"], cfg["PLEX_ACCOUNT_TOKEN"],
                         cfg.get("PLEX_SECTION_KEY", "1"), cfg["PLEX_MACHINE_ID"], mapper)
 

@@ -538,6 +538,22 @@
             <span class="hint">Optional. Points at a heavy analyze venv (librosa + torch)
               for the reference encoder. Empty = Rescan analyzes audio torch-free with the
               built-in ONNX encoder, under Attune's own Python — no second environment.</span></div></div>
+        <div class="prefrow"><span class="k">Local library root</span>
+          <div class="v"><input type="text" id="prefLocalRoot" placeholder="e.g. D:\Music">
+            <span class="hint">Path prefix as stored in the database (export path style:
+              local). Left blank, Attune detects it from the library itself. Needs
+              restart.</span></div></div>
+        <div class="prefrow"><span class="k">UNC library root</span>
+          <div class="v"><input type="text" id="prefUncRoot" placeholder="e.g. \\NAS\Music">
+            <span class="hint">Network path for playlists played on other devices on the
+              LAN (export path style: UNC, the default for playlist export). Never
+              guessed — leave blank and that path style falls back to local paths until
+              set. Needs restart.</span></div></div>
+        <div class="prefrow"><span class="k">Plex library root</span>
+          <div class="v"><input type="text" id="prefPlexRoot" placeholder="e.g. /music">
+            <span class="hint">Path prefix as your Plex server sees the library (export
+              path style: Plex). Plex's own connection details (server URL, token) stay
+              in .env — this is only a path. Needs restart.</span></div></div>
       </div>
     </div>
     <div class="modalFoot">
@@ -670,6 +686,30 @@
   </div>
 </div>
 
+<!-- Path-style export flavor: remembers the operator's last choice across sessions.
+     Uses this page's own store.get/set('attune.'+key) key convention (see studio.js)
+     so a later native implementation there would pick up the same stored value with no
+     migration. Lives here, not in studio.js, because this build's file surface does not
+     include studio.js (P5A / PROPOSAL_EXPORT_ROOTS_2026-07-28.md item 6). Runs before
+     studio.js's own #flavor change listener binds (studio.js is loaded next, and that
+     listener is wired later still, from initCore() in boot.js), so the restored value
+     is what that listener and the startup dispatch both see. -->
+<script>
+(function () {
+  var KEY = 'attune.flavor';
+  var VALID = ['unc', 'local', 'plex'];
+  var sel = document.getElementById('flavor');
+  if (!sel) return;
+  try {
+    var raw = localStorage.getItem(KEY);
+    var saved = raw ? JSON.parse(raw) : null;
+    if (VALID.indexOf(saved) !== -1) sel.value = saved;
+  } catch (e) {}
+  sel.addEventListener('change', function () {
+    try { localStorage.setItem(KEY, JSON.stringify(sel.value)); } catch (e) {}
+  });
+})();
+</script>
 <script src="/studio.js"></script>
 <script src="/static/player.js"></script>
 <script src="/static/prefs.js"></script>

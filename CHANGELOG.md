@@ -6,6 +6,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Export roots move to settings.json + Preferences, unconfigured flavors degrade
+  gracefully** (`src/config.py`, `src/export.py`, `web/app.py`, `web/static/prefs.js`,
+  `web/static/studio.html`), per `PROPOSAL_EXPORT_ROOTS_2026-07-28.md`'s ruling and its
+  same-day amendment. Three new settings keys (`local_library_root`, `unc_library_root`,
+  `plex_library_root`) are the new home for the paths that used to live only in `.env`;
+  `.env` stays a dev override plus Plex's real connection secrets. `local_library_root`
+  additionally derives from the DB's own track-path common prefix when nothing configures
+  it (`export.derive_local_root`); UNC and Plex are never guessed. A one-time migration
+  copies existing `.env` values into settings.json on first run after this build. The
+  actual bug fix: `GET /api/export/m3u` for an unconfigured UNC/Plex root used to 400 with
+  an empty file — it now falls back to local paths and reports the fallback via
+  `X-Attune-Export-*` response headers (the route's body is the playlist file itself, not
+  JSON). Playlist export's default flavor stays `unc`, unchanged, per the amendment. The
+  path-style dropdown (`#flavor` in Preferences -> Export) now remembers your last choice
+  across sessions via `localStorage`. **Observed** over HTTP against a scratch copy of
+  `mixer.db`: a fresh, fully-unconfigured install returns HTTP 200 (not 400) for
+  `flavor=unc` and `flavor=plex`, with `X-Attune-Export-Fallback: 1` and a body
+  byte-identical to the same request with `flavor=local`; with roots configured (via a
+  scratch `.env`), `flavor=unc`/`plex` return `X-Attune-Export-Fallback: 0` and correctly
+  remapped paths; the migration writes settings.json once and is idempotent on a second
+  run; `POST /api/settings` accepts and round-trips the three new keys with
+  `needs_restart` correctly listing all three. Sticky-flavor restore-on-load and
+  persist-on-change were each confirmed via a real browser navigation/reload against the
+  live page, not a simulated event.
 - **"Send to folder", from the right-click menu, in two scopes** (`web/static/studio.js`
   context menu, `web/static/studio.html`): **Send selection** copies exactly the rows you
   have selected; **Send whole mix** copies the mix. Both route through the **existing**
