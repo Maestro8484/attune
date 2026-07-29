@@ -6,6 +6,85 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **"Send to folder", from the right-click menu, in two scopes** (`web/static/studio.js`
+  context menu, `web/static/studio.html`): **Send selection** copies exactly the rows you
+  have selected; **Send whole mix** copies the mix. Both route through the **existing**
+  S8 export-copy job, which already handles destination containment, FAT-safe names,
+  collisions and the relative `.m3u8`. `web/exportjob.py` is byte-identical to before
+  this change: the two scopes are just which `ids` array the client sends, so there is
+  no second copy pipeline. **Observed** over HTTP against a scratch DB: selection scope
+  into an empty folder produced exactly the three selected tracks plus the playlist and
+  nothing else; whole-mix produced 20 tracks plus the playlist. Note both scopes write
+  an `.m3u8`, because the underlying job always does.
+- **Folder picker behaves like Explorer** (`web/static/prefs.js`, `web/static/studio.html`,
+  `web/static/studio.css`, `web/app.py`), in every context the one shared picker opens
+  (first-run wizard, Preferences -> Library, export destinations). The path is now a real
+  `<input>`, so it is selectable and copyable, and typing or pasting a path navigates
+  there (Enter commits, Escape reverts). New **"+ New folder"** with inline rename, backed
+  by two new loopback-guarded endpoints `POST /api/fs/mkdir` and `POST /api/fs/rename`.
+  Both reduce the supplied name to a single path component and then prove containment on
+  the resolved real path, the same pattern `exportjob.py` already used. **Observed:**
+  a name of `../../escaped` and a name of `C:/Windows/evil` each landed inside the parent
+  folder as a plain leaf, `C:\Windows\evil` was never created, and renaming a drive root
+  is refused with a 400.
+- **The desktop window reopens where you left it** (`desktop/app_desktop.py`,
+  `src/config.py` new `window_geometry` key). Position and size persist to the existing
+  settings.json (the one store the desktop app, server and analyzer already share) via
+  pywebview's own `resized` / `moved` events, throttled, with a synchronous save on
+  `closing`. Geometry that is off every attached monitor, malformed, or too small falls
+  back to the previous hardcoded default instead of opening invisibly. **Observed** by a
+  real launch, move, close, relaunch cycle: the window reopened at exactly the moved
+  rect, and a hand-written off-screen `(-32000,-32000)` reopened at the default.
+- **Seek position survives a restart**, alongside the queue that already did
+  (`web/static/player.js`). Throttled so a playing track is not writing constantly, and
+  the restore only applies when the saved track still matches the one being restored.
+  Still paused on boot: Attune never starts making noise by itself.
+- **A real installer icon** (`desktop/installer/attune.ico`, wired at
+  `desktop/installer/attune.iss`). Rasterized from the app's own inline favicon artwork,
+  multi-resolution 256/64/48/32/16 at 32bpp. **This is a placeholder; final art is the
+  operator's call.** Verified by parsing the committed `.ico` back with an independent
+  reader: 5 entries, exactly those sizes.
+
+### Fixed
+- **Saving a new auto-playlist under an existing name destroyed the old one silently**
+  (`web/smartlists.py`). `sl_save` used `INSERT OR REPLACE` on a UNIQUE name, so a
+  name collision quietly overwrote curated rules with no undo. It now mirrors
+  `recipes.py`: a plain `INSERT`, `sqlite3.IntegrityError` caught, and a clear 400.
+  Editing an existing list by id is unaffected. **Observed:** second save of the same
+  name returned 400 and the original rules were still intact afterwards.
+- **Now Playing went stale after queue edits** (`web/static/studio.js`). Adding to the
+  queue repainted only the right-rail Up Next, never the open Now Playing table, so the
+  view you were looking at silently disagreed with the queue. All three call sites
+  (context menu Play Next, context menu Add to Queue, and the `q` shortcut) now repaint
+  it. **Observed with real clicks:** with Now Playing open, Add to Queue took the table
+  from one row to two in place, with no view switch.
+- **A cancelled scan reported itself as failed** (`web/scanjob.py`). Cancelling
+  terminates the child process, which returns a nonzero code, and all three stage guards
+  tested that code alone, so the app told users who had just pressed Cancel that the scan
+  had failed. Each guard now checks `self.cancelled` first. **Observed** by starting a
+  real scan against a throwaway folder, cancelling mid-run, and reading status: cancelled
+  true, error empty.
+- **Smart views re-sorted themselves when you scrolled past row 200**
+  (`web/static/studio.js`). `loadLibrary` respected a smart view's natural sort until the
+  user clicked a header, but `maybeLoadMore` set the sort unconditionally, so paging
+  crossed into a different ordering mid-scroll. The guard is now factored into one helper
+  used by both. **Observed** against Recently Added: the two pages are contiguous in one
+  ordering across the boundary, where forcing the old behaviour jumped 28 hours and
+  reshuffled alphabetically.
+- **A duplicate track in the queue dragged playback onto the wrong copy**
+  (`web/static/player.js`). Removing or reordering re-derived the play position with
+  `indexOf`, which always finds the *first* occurrence, so editing a queue containing
+  duplicates could jump playback to a different slot. Position is now adjusted
+  positionally on both the remove and the reorder path. Per-slot queue identity remains
+  deliberately deferred. **Observed** across nine cases including the duplicate-before-
+  position repro, run through the real `player.js`.
+- **The Preferences engine dropdown was missing the learned engine**
+  (`web/static/studio.html`). `config.py`, `app.py` and `libreload.py` all wire four
+  engines while the dropdown offered three, so selecting the learned metric needed
+  hand-edited JSON. It is now selectable. It is still **not** the default: per the
+  project's first law that remains gated on a blind ear test.
+
+### Added (earlier in this release)
 - **"Mix from this"** — a button on the right rail's Track Info tab that starts a
   new mix seeded on the track you are hearing (`web/static/studio.{html,css,js}`).
   Same `doMix()` path as Create Mix with a different seed integer, so exports and
