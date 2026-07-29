@@ -22,6 +22,7 @@ import functools
 import importlib.util
 import mimetypes
 import os
+import re
 import sqlite3
 import threading
 
@@ -798,6 +799,82 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         if parent == path:
             parent = "" if os.name == "nt" else None
         return jsonify(path=path, parent=parent, dirs=dirs)
+
+    # ---- Folder picker: New Folder + rename, mini-file-explorer style. Same
+    # loopback guard as /api/fs/dirs (a this-machine action); same containment proof
+    # studio.py._safe_out and exportjob.py._resolve_target already use for writes
+    # under a user-picked root — sanitise the ONE new path component, then verify on
+    # the REALPATH that it still resolves inside its parent (sanitising alone is not a
+    # containment proof: 8.3 short names, symlinks/junctions can point elsewhere).
+    _FS_NAME_ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
+
+    def _fs_safe_name(name):
+        """One path component (a folder name) — basename only, so a value like
+        "..\\..\\x" or an absolute path can never smuggle in a directory change; illegal
+        NTFS/FAT chars replaced; trailing dots/spaces stripped (Windows silently drops
+        them, which would desync the created name from what the caller sees). "", "."
+        and ".." all collapse to "" so the caller rejects them."""
+        base = os.path.basename(str(name or "").strip())
+        base = _FS_NAME_ILLEGAL.sub("_", base).strip(" .")
+        return "" if base in ("", ".", "..") else base
+
+    def _fs_resolve_child(parent, name):
+        """`name` sanitised to one safe component, joined under `parent`, proven
+        contained on the realpath. Raises ValueError with a user-facing message."""
+        safe = _fs_safe_name(name)
+        if not safe:
+            raise ValueError("invalid folder name")
+        root = os.path.realpath(parent)
+        if not os.path.isdir(root):
+            raise ValueError(f"not a folder: {parent}")
+        target = os.path.realpath(os.path.join(root, safe))
+        if target == root or os.path.commonpath([root, target]) != root:
+            raise ValueError("invalid folder name")
+        return target, safe
+
+    @app.post("/api/fs/mkdir")
+    def fs_mkdir():
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(error="folder browsing is only available on the Attune machine itself"), 403
+        body = request.get_json(silent=True) or {}
+        parent = (body.get("path") or "").strip()
+        if not parent:
+            return jsonify(error="missing path"), 400
+        try:
+            target, safe = _fs_resolve_child(parent, body.get("name"))
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        if os.path.lexists(target):
+            return jsonify(error="a file or folder with that name already exists"), 409
+        try:
+            os.mkdir(target)
+        except OSError as e:
+            return jsonify(error=f"cannot create folder: {e}"), 403
+        return jsonify(ok=True, name=safe, path=target)
+
+    @app.post("/api/fs/rename")
+    def fs_rename():
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(error="folder browsing is only available on the Attune machine itself"), 403
+        body = request.get_json(silent=True) or {}
+        path = (body.get("path") or "").strip()
+        if not path or not os.path.isdir(path):
+            return jsonify(error="folder not found"), 404
+        src = os.path.realpath(path)
+        parent = os.path.dirname(src)
+        if not parent or parent == src:
+            return jsonify(error="cannot rename a drive root"), 400
+        try:
+            target, safe = _fs_resolve_child(parent, body.get("name"))
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        if os.path.lexists(target) and os.path.realpath(target) != src:
+            return jsonify(error="a file or folder with that name already exists"), 409
+        try:
+            os.rename(src, target)
+        except OSError as e:
+            return jsonify(error=f"cannot rename: {e}"), 403
+        return jsonify(ok=True, name=safe, path=target)
 
     # ---- Attune Studio: the MusicIP-shaped desktop view. Adds library facets, the
     # playlist-folder browser, album art and save-to-folder export. It reuses the routes

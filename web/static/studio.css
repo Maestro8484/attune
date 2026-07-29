@@ -572,16 +572,32 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
   border-radius:6px; cursor:pointer; padding:2px 8px; }
 /* folder picker (server-side directory browser) */
 .fsbar { display:flex; align-items:center; gap:8px; }
-.fsbar #fsUp { background:var(--panel2); border:1px solid var(--line); border-radius:6px;
-  cursor:pointer; padding:3px 10px; white-space:nowrap; }
-.fsbar #fsUp:disabled { opacity:.4; cursor:default; }
-.fspath { flex:1; font-size:12px; color:var(--muted); overflow:hidden; text-overflow:ellipsis;
-  white-space:nowrap; direction:rtl; text-align:left; }
+.fsbar #fsUp, .fsbar #fsNewFolder { background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; padding:3px 10px; white-space:nowrap; }
+.fsbar #fsUp:disabled, .fsbar #fsNewFolder:disabled { opacity:.4; cursor:default; }
+/* fsPath is a real <input> (address bar), not a label -- text is selectable/copyable
+   for free, and typing/pasting a path navigates there (see prefs.js). Kept visually
+   inert until focus so it doesn't look like every other bordered input in the modal. */
+input.fspath { flex:1; font-size:12px; color:var(--muted); overflow:hidden;
+  text-overflow:ellipsis; white-space:nowrap; direction:rtl; text-align:left;
+  background:transparent; border:1px solid transparent; border-radius:6px;
+  padding:3px 6px; font-family:inherit; }
+input.fspath:hover { border-color:var(--line); }
+input.fspath:focus { color:var(--fg); background:var(--panel2); border-color:var(--accent);
+  direction:ltr; outline:none; }
 .fslist { height:300px; overflow:auto; border:1px solid var(--line); border-radius:8px;
   background:var(--panel2); padding:4px; display:flex; flex-direction:column; gap:1px; }
-.fsrow { padding:5px 9px; border-radius:6px; cursor:pointer; white-space:nowrap;
-  overflow:hidden; text-overflow:ellipsis; }
+.fsrow { display:flex; align-items:center; gap:6px; padding:5px 9px; border-radius:6px;
+  cursor:pointer; }
 .fsrow:hover { background:var(--panel); }
+.fsrow .fsname { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fsrow .fsren { flex:0 0 auto; visibility:hidden; background:none; border:0;
+  color:var(--muted); cursor:pointer; padding:2px 6px; border-radius:4px; }
+.fsrow:hover .fsren { visibility:visible; }
+.fsrow .fsren:hover { color:var(--fg); background:var(--hover); }
+.fsrow.fsedit { cursor:default; padding:3px 6px; }
+.fseditinput { width:100%; background:var(--panel); border:1px solid var(--accent);
+  border-radius:5px; padding:3px 6px; font:inherit; color:var(--fg); }
 .themegrid { display:flex; gap:8px; flex-wrap:wrap; }
 .themecard { width:120px; border:2px solid var(--line); border-radius:10px; overflow:hidden;
   cursor:pointer; background:var(--panel2); }
