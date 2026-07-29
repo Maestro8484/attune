@@ -59,6 +59,7 @@ GUI_DATA = [
     ("web/recipes.py",         "attune/web"),
     ("web/libreload.py",       "attune/web"),
     ("web/libverify.py",       "attune/web"),
+    ("web/applog.py",          "attune/web"),
     ("src/config.py",          "attune/src"),
     # the Studio front-end: studio.html loads all five scripts + the stylesheet
     ("web/static/studio.html", "attune/web/static"),
