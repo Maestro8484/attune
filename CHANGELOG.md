@@ -30,6 +30,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   `needs_restart` correctly listing all three. Sticky-flavor restore-on-load and
   persist-on-change were each confirmed via a real browser navigation/reload against the
   live page, not a simulated event.
+- **Structured logging, first slice, server side** (`web/applog.py` new,
+  `web/scanjob.py`, `web/app.py`): `AUDIT_FABLE_2026-07-28.md` S2 item 9 — "prove the
+  pattern on one path before spreading." Uses stdlib `logging` +
+  `logging.handlers.RotatingFileHandler` (prior art, not a hand-rolled writer), one file
+  per component under `<config_dir()>/logs/`, capped at ~12 MB total via rotation
+  (2 MB x 6 files), directory created lazily on first write. Instruments scanjob's
+  already-captured subprocess output with timestamps and originating stage — job start,
+  every stage transition, completion, cancellation, error — without touching scan
+  behaviour, return values, or the S13 cancelled-vs-failed guard (applog only observes
+  via logging calls). Two new read-only endpoints, loopback-guarded like the existing
+  `/api/fs/dirs`: `GET /api/diag/logs` lists log files (empty list, not an error, if the
+  dir doesn't exist yet); `GET /api/diag/logs/tail?name=&lines=` returns the last N lines
+  (default 200, max 2000). `name` containment follows the same sanitise-then-verify-
+  on-realpath proof `app.py`'s folder picker already uses: a strict allow-list regex,
+  then a realpath check that also catches a dots-only name escaping via the parent dir.
+  No delete or write endpoint. This is the server half only; the browser Diagnostics
+  view is a separate stream building against this fixed contract. **Observed** over HTTP
+  against a scratch DB/scratch APPDATA: a real scan (3 copied tracks) produced real
+  `scan.log` lines from start through `scan completed: new_tracks=0` (already-imported,
+  idempotent re-run), visible via both endpoints; three containment probes — a `../`
+  traversal, an absolute Windows path, and a name with an embedded `/` — each returned
+  400 `{"error": "invalid log file name"}`, as did a legal-under-the-regex `..`; a
+  well-formed but absent name returned 400 `{"error": "no such log file"}`; a
+  non-integer `lines` returned 400 `{"error": "lines must be an integer"}`.
 - **"Send to folder", from the right-click menu, in two scopes** (`web/static/studio.js`
   context menu, `web/static/studio.html`): **Send selection** copies exactly the rows you
   have selected; **Send whole mix** copies the mix. Both route through the **existing**
