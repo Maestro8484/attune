@@ -27,6 +27,15 @@ DEFAULTS = {
     "engine": "auto",              # auto | v2 | musicip | learned  (auto = probe MusicIP, fall back v2)
     "musicip_url": "http://localhost:10002",
     "library_folders": [],         # watched/scanned music roots
+    "local_library_root": "",      # local drive path matching paths as stored in the DB
+                                   # (export flavor: local). '' = derived from the DB's own
+                                   # path prefix at startup (see export.derive_local_root).
+    "unc_library_root": "",        # \\server\share -- playlist paths for other LAN devices
+                                   # (export flavor: unc, the default). Never guessed.
+    "plex_library_root": "",       # path prefix as your Plex server sees the library
+                                   # (export flavor: plex). Never guessed. Plex's own
+                                   # connection secrets (PLEX_URL, PLEX_ACCOUNT_TOKEN, ...)
+                                   # stay in .env -- this is a path, not a credential.
     "ml_venv_python": "",          # python.exe of the heavy analyze venv ('' = analysis off)
     "scan_on_launch": False,       # run an incremental rescan when the app starts
     "watch_folders": False,        # live-watch library_folders; new/changed audio triggers an incremental scan
@@ -43,7 +52,8 @@ DEFAULTS = {
 }
 
 # keys that only take effect after the server process restarts
-RESTART_KEYS = {"db_path", "engine", "musicip_url"}
+RESTART_KEYS = {"db_path", "engine", "musicip_url",
+                "local_library_root", "unc_library_root", "plex_library_root"}
 
 
 def config_dir():
