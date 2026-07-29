@@ -35,6 +35,11 @@ DEFAULTS = {
                                    # the key must stay in DEFAULTS or the whole settings save 400s).
                                    # 'bee' matches the client default since the S11 MusicBee UI.
     "default_recipe": "",          # name of the recipe applied by Genius / preselected in Studio ('' = engine defaults)
+    "window_geometry": None,       # {"x","y","width","height"} of the desktop window at last
+                                   # close (app_desktop.py). None = not saved yet / invalid ->
+                                   # pywebview's own OS-placed default. Desktop-only native OS
+                                   # window chrome, not page state, so it can't live in the
+                                   # browser's localStorage the way `store` in studio.js does.
 }
 
 # keys that only take effect after the server process restarts

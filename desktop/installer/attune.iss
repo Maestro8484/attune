@@ -55,10 +55,15 @@ PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\Attune
 DefaultGroupName=Attune
 DisableProgramGroupPage=yes
-; No .ico shipped anywhere under desktop\ as of this writing (checked: no *.ico
-; in the repo). Omitting SetupIconFile falls back to Inno's default icon rather
-; than inventing an asset that isn't in the product. Revisit if/when one exists.
-; SetupIconFile=
+; attune.ico (next to this .iss) is a PLACEHOLDER, not final art -- that call is the
+; operator's. Derived from the app's own "bee" favicon, the inline data:image/svg+xml
+; at web/static/studio.html:10 (a dark rounded square, #1a1c20, with the bee-accent
+; blue, #3d84c6, paired-eighth-note glyph) -- decoded and rasterized with ImageMagick's
+; built-in rsvg delegate (already on this machine; nothing installed for this), packed
+; multi-resolution 256/64/48/32/16, 32bpp with alpha. Verified by parsing the .ico back
+; with a standalone struct-based reader (independent of ImageMagick's own `identify`):
+; 5 entries, exactly those five sizes, 38118 bytes total. Revisit when real art exists.
+SetupIconFile=attune.ico
 OutputBaseFilename=AttuneSetup-{#AppVersion}
 #if OutputDirOverride != ""
   OutputDir={#OutputDirOverride}

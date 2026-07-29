@@ -307,6 +307,24 @@ const Player = (() => {
   function persist() {
     store.set('queue', P.q); store.set('qpos', P.pos);
     store.set('shuffle', P.shuffle); store.set('repeat', P.repeat);
+    saveSeek(true);
+  }
+
+  // Seek position within the current track (crash/restart slice 2). Every persist()
+  // call above already covers a discrete state change (track switch, queue edit) and
+  // saves the exact offset for free at that moment; the timeupdate handler in bind()
+  // calls this UNFORCED so a still-playing track's offset is captured periodically
+  // too, throttled to MIN_SEEK_SAVE_MS -- never once per timeupdate tick.
+  const MIN_SEEK_SAVE_MS = 5000;
+  let lastSeekSaveAt = 0;
+  function saveSeek(force = false) {
+    const el = P.els[P.cur], i = currentPool();
+    if (!el || i < 0) return;
+    const now = Date.now();
+    if (!force && now - lastSeekSaveAt < MIN_SEEK_SAVE_MS) return;
+    lastSeekSaveAt = now;
+    store.set('seekTrack', i);
+    store.set('seekTime', el.currentTime || 0);
   }
 
   async function loadInto(elIdx, poolI, { autoplay = true } = {}) {
@@ -369,16 +387,23 @@ const Player = (() => {
   }
   function removeFromQueue(ids) {
     const set = new Set(ids);
-    const curI = currentPool();
     const removedOnce = new Set();
+    let removedBeforePos = 0;
     // Queue identity is the pool index, so a track queued twice shares one id. Drop only
-    // ONE occurrence per requested id (never the playing entry) — not every occurrence.
+    // ONE occurrence per requested id (never the playing entry) -- not every occurrence.
+    // P.pos is adjusted POSITIONALLY (count what was removed ahead of it), never by
+    // re-deriving via indexOf(value): with duplicates, indexOf always lands on the
+    // FIRST occurrence, which desyncs playback onto the wrong slot (audit item 12).
     P.q = P.q.filter((x, k) => {
       if (k === P.pos) return true;
-      if (set.has(x) && !removedOnce.has(x)) { removedOnce.add(x); return false; }
+      if (set.has(x) && !removedOnce.has(x)) {
+        removedOnce.add(x);
+        if (k < P.pos) removedBeforePos++;
+        return false;
+      }
       return true;
     });
-    P.pos = P.q.indexOf(curI);
+    P.pos -= removedBeforePos;
     paintTransport(); persist();
   }
   function clearQueue() {
@@ -387,12 +412,22 @@ const Player = (() => {
     P.pos = curI >= 0 ? 0 : -1;
     paintTransport(); persist();
   }
+  // Same indexOf(value) re-derive bug as removeFromQueue lived here too: reordering
+  // with a duplicate track in the queue would snap P.pos onto the first occurrence
+  // instead of following the slot that was actually playing. Fixed the same way --
+  // positionally, via the standard splice-index-adjustment: removing at `from` shifts
+  // everything after it left by one, inserting at `to` shifts everything at/after it
+  // right by one, and the moved slot itself lands at exactly `to`.
+  function movedQueuePos(pos, from, to) {
+    if (pos === from) return to;
+    const afterRemoval = pos > from ? pos - 1 : pos;
+    return afterRemoval >= to ? afterRemoval + 1 : afterRemoval;
+  }
   function moveInQueue(from, to) {
     if (from === to) return;
-    const curI = currentPool();
+    P.pos = movedQueuePos(P.pos, from, to);
     const [x] = P.q.splice(from, 1);
     P.q.splice(to, 0, x);
-    P.pos = P.q.indexOf(curI);
     persist(); queueDirty();
   }
   function shuffleArr(a) {
@@ -786,6 +821,7 @@ const Player = (() => {
         }
         reportPlayIfDue();
         maybePrepareNext();
+        saveSeek();
       });
       el.addEventListener('play', paintPlayBtn);
       el.addEventListener('pause', paintPlayBtn);
@@ -873,8 +909,22 @@ const Player = (() => {
       P.pos = pos;
       const i = P.q[pos];
       paintNowPlaying(i);
-      P.els[P.cur].src = `/audio?i=${i}`;
-      P.els[P.cur].preload = 'metadata';
+      const el = P.els[P.cur];
+      el.src = `/audio?i=${i}`;
+      el.preload = 'metadata';
+      // Seek position within this track (crash/restart slice 2) -- only if the last
+      // save actually belongs to the track we're restoring. A queue edit or track
+      // change that landed after the last throttled save leaves seekTrack pointing at
+      // a different pool index; that mismatch just means "start this track at 0:00",
+      // same as before this feature existed. Still paused, still never autoplaying.
+      const seekTrack = store.get('seekTrack', -1);
+      const seekTime = store.get('seekTime', 0);
+      if (seekTrack === i && seekTime > 0) {
+        el.addEventListener('loadedmetadata', function onMeta() {
+          el.removeEventListener('loadedmetadata', onMeta);
+          if (seekTime < el.duration) el.currentTime = seekTime;
+        });
+      }
     }
     paintTransport();
   }
