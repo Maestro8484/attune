@@ -277,9 +277,17 @@ def register(app, ctx):
                 con.execute("UPDATE smartlists SET name=?, rules=? WHERE id=?",
                             (name, rj, int(sid)))
             else:
-                cur = con.execute(
-                    "INSERT OR REPLACE INTO smartlists(name,rules,created) VALUES(?,?,?)",
-                    (name, rj, int(time.time())))
+                # Deliberately NOT "INSERT OR REPLACE": a name collision on a brand-new
+                # smart list most likely means the user meant to edit an EXISTING one
+                # (and should pick it from the list / pass its id), not silently blow
+                # away whatever already had that name. Surface a clear 400 instead.
+                try:
+                    cur = con.execute(
+                        "INSERT INTO smartlists(name,rules,created) VALUES(?,?,?)",
+                        (name, rj, int(time.time())))
+                except sqlite3.IntegrityError:
+                    return jsonify(ok=False,
+                                    error=f"a smart playlist named {name!r} already exists"), 400
                 sid = cur.lastrowid
             con.commit()
         except sqlite3.Error as e:

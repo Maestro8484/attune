@@ -480,6 +480,13 @@ function setTableMode(grid) {
   $('btnViewGrid').classList.toggle('on', grid);
 }
 
+// Shared by loadLibrary and maybeLoadMore so a smart view's natural sort (until the
+// user clicks a header) stays consistent across every page — paging past row 200
+// must not re-sort mid-scroll just because one call site forgot the guard.
+function applySortParams(p) {
+  if (!(S.smart && !S._userSorted)) { p.set('sort', S.sort); if (S.desc) p.set('desc', '1'); }
+}
+
 async function loadLibrary(resetOffset) {
   if (resetOffset) S.offset = 0;
   S.view = 'library';
@@ -498,7 +505,7 @@ async function loadLibrary(resetOffset) {
   const p = facetQS();
   if (S.smart) p.set('smart', S.smart);
   // let smart views apply their own natural sort unless the user has clicked a header
-  if (!(S.smart && !S._userSorted)) { p.set('sort', S.sort); if (S.desc) p.set('desc', '1'); }
+  applySortParams(p);
   p.set('offset', S.offset); p.set('limit', S.limit);
   const j = await jget('/api/lib/tracks?' + p);
   S.total = j.total;
@@ -613,7 +620,7 @@ async function maybeLoadMore() {
     S.offset += S.limit;
     const p = facetQS();
     if (S.smart) p.set('smart', S.smart);
-    p.set('sort', S.sort); if (S.desc) p.set('desc', '1');
+    applySortParams(p);
     p.set('offset', S.offset); p.set('limit', S.limit);
     const j = await jget('/api/lib/tracks?' + p);
     appendRows(j.rows);
@@ -1596,8 +1603,10 @@ function bindEvents() {
       case 'mix': doMix(i); break;
       case 'play': Player.playTrack(i); break;
       case 'playnext': Player.queueAdd(selectedIds().length ? selectedIds() : [i], { next: true });
+        if (S.view === 'nowplaying') showNowPlaying();
         toast('Playing next'); break;
       case 'queue': Player.queueAdd(selectedIds().length ? selectedIds() : [i]);
+        if (S.view === 'nowplaying') showNowPlaying();
         toast('Queued'); break;
       case 'love': loveTrack(i, !row.loved); break;
       case 'tags': Prefs.openTagEditor(i); break;
@@ -1671,7 +1680,11 @@ function bindEvents() {
     else if (e.key === ' ') { e.preventDefault(); Player.togglePlay(); }
     else if (k === 'q') {
       const ids = selectedIds();
-      if (ids.length) { Player.queueAdd(ids); toast(`Queued ${ids.length}`); }
+      if (ids.length) {
+        Player.queueAdd(ids);
+        if (S.view === 'nowplaying') showNowPlaying();
+        toast(`Queued ${ids.length}`);
+      }
     }
     else if (k === 'z') Player.prev();
     else if (k === 'v') Player.stop();
