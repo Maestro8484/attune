@@ -265,15 +265,23 @@ const Prefs = (() => {
     catch (e) { $('fsMsg').className = 'msg err'; $('fsMsg').textContent = e.message; return; }
     fsCurrent = j.path || '';
     fsUpTarget = (j.parent === null || j.parent === undefined) ? null : j.parent;
-    $('fsPath').textContent = fsCurrent || 'This PC';
+    // fsPath is a real <input>, not a label: the value is selectable/copyable by the
+    // browser for free, and it doubles as the address bar (see the keydown/paste
+    // wiring in bind()). Empty (top level) leaves the value blank so a bare Enter
+    // doesn't re-submit the literal placeholder text as a path.
+    $('fsPath').value = fsCurrent;
     $('fsUp').disabled = fsUpTarget === null;
     // In file mode there is no valid "choose the folder itself" outcome — only a
     // listed audio file resolves the picker (see the fsList click handler below).
     $('fsChoose').disabled = fsFileMode || !fsCurrent;
     $('fsChoose').title = fsFileMode ? 'Pick an audio file below' : '';
+    $('fsNewFolder').disabled = !fsCurrent;
     let html = j.dirs.length
       ? j.dirs.map(d =>
-          `<div class="fsrow" data-path="${esc(d.path)}" title="${esc(d.path)}">📁 ${esc(d.name)}</div>`).join('')
+          `<div class="fsrow" data-path="${esc(d.path)}" title="${esc(d.path)}">` +
+          `<span class="fsname">📁 ${esc(d.name)}</span>` +
+          `<button type="button" class="fsren" data-rename="${esc(d.path)}" data-name="${esc(d.name)}" title="Rename">✎</button>` +
+          `</div>`).join('')
       : '';
     // File mode (the relink "Locate file…" flow): also list audio files directly in
     // this folder — a sibling call to /api/fs/dirs, same loopback-guarded shape,
@@ -282,7 +290,8 @@ const Prefs = (() => {
       try {
         const jf = await jget('/api/fs/files?path=' + encodeURIComponent(fsCurrent));
         html += jf.files.map(f =>
-          `<div class="fsrow fsfile" data-file="${esc(f.path)}" title="${esc(f.path)}">🎵 ${esc(f.name)}</div>`).join('');
+          `<div class="fsrow fsfile" data-file="${esc(f.path)}" title="${esc(f.path)}">` +
+          `<span class="fsname">🎵 ${esc(f.name)}</span></div>`).join('');
       } catch { /* non-fatal — folder navigation still works */ }
     }
     $('fsList').innerHTML = html ||
@@ -315,6 +324,65 @@ const Prefs = (() => {
     fsFileMode = false;
     const r = fsResolve; fsResolve = null;
     if (r) r(result);
+  }
+
+  // ---- New folder / rename, mini-file-explorer style. Both end by re-running fsLoad
+  // (the same single listing path every navigation already uses — browser and desktop
+  // share it) rather than patching the DOM by hand, so the row set, sort order and
+  // disabled states never drift from the server's view of the folder.
+  // `onCommit` fires with a non-empty trimmed value on Enter or on blur (blur commits,
+  // matching Explorer); `onCancel` fires on Escape and never touches the server.
+  function _fsEditRow(row, initial, { onCommit, onCancel }) {
+    row.classList.add('fsedit');
+    row.innerHTML = '📁 <input type="text" class="fseditinput" spellcheck="false" autocomplete="off">';
+    const inp = row.querySelector('input');
+    inp.value = initial;
+    inp.focus();
+    inp.select();
+    let settled = false;
+    const finish = commit => {
+      if (settled) return;
+      settled = true;
+      const v = inp.value.trim();
+      if (commit && v) onCommit(v); else onCancel();
+    };
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); finish(true); }
+      else if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+    });
+    inp.addEventListener('blur', () => finish(true));
+  }
+  function fsNewFolder() {
+    if (!fsCurrent) return;                 // no parent to create inside (top level / drives)
+    const row = document.createElement('div');
+    row.className = 'fsrow';
+    $('fsList').prepend(row);
+    _fsEditRow(row, 'New folder', {
+      // Unlike rename, an UNCHANGED "New folder" is still a real name to create
+      // (Explorer's own default-accept behaviour) — onCommit always gets a name here.
+      onCommit: async name => {
+        row.remove();
+        try {
+          await jpost('/api/fs/mkdir', { path: fsCurrent, name });
+          fsLoad(fsCurrent);
+        } catch (e) { $('fsMsg').className = 'msg err'; $('fsMsg').textContent = e.message; }
+      },
+      onCancel: () => row.remove(),
+    });
+  }
+  function fsRenameRow(row) {
+    const oldPath = row.dataset.rename;
+    const oldName = row.dataset.name;
+    _fsEditRow(row, oldName, {
+      onCommit: async name => {
+        if (name === oldName) { fsLoad(fsCurrent); return; }  // no real change -> just repaint
+        try {
+          await jpost('/api/fs/rename', { path: oldPath, name });
+          fsLoad(fsCurrent);
+        } catch (e) { $('fsMsg').className = 'msg err'; $('fsMsg').textContent = e.message; }
+      },
+      onCancel: () => fsLoad(fsCurrent),
+    });
   }
 
   /* ---------------------------------------------------------------- tag editor */
@@ -472,12 +540,26 @@ const Prefs = (() => {
     $('wizStart').onclick = wizStart;
     // folder picker (its own close buttons resolve the pickFolder() promise)
     $('fsList').addEventListener('click', e => {
+      const ren = e.target.closest('.fsren');
+      if (ren) { e.stopPropagation(); fsRenameRow(ren.closest('.fsrow')); return; }
       const row = e.target.closest('.fsrow'); if (!row) return;
       if (row.classList.contains('fsfile')) { fsClose(row.dataset.file); return; }
       fsLoad(row.dataset.path);
     });
     $('fsUp').onclick = () => { if (fsUpTarget !== null) fsLoad(fsUpTarget); };
     $('fsChoose').onclick = () => { if (fsCurrent) fsClose(fsCurrent); };
+    $('fsNewFolder').onclick = fsNewFolder;
+    // fsPath doubles as an address bar: typing + Enter navigates there; a paste
+    // navigates immediately (read the value on the next tick, after the paste lands)
+    // without waiting for Enter, matching Explorer's address-bar paste behaviour.
+    // Same fsLoad() as clicking a row -- one navigation path for the whole modal.
+    $('fsPath').addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); fsLoad($('fsPath').value.trim()); $('fsPath').blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); $('fsPath').value = fsCurrent; $('fsPath').blur(); }
+    });
+    $('fsPath').addEventListener('paste', () => {
+      setTimeout(() => fsLoad($('fsPath').value.trim()), 0);
+    });
     $('fsCancel').onclick = () => fsClose(null);
     $('fsX').onclick = () => fsClose(null);
     $('fsWrap').addEventListener('mousedown', e => { if (e.target === $('fsWrap')) fsClose(null); });
