@@ -204,20 +204,23 @@ class ScanJob:
                                 _scan_argv(imp_python, "import-folder", d,
                                            "--db", self.db_path))
                 if rc != 0:
-                    self.error = f"import failed (rc={rc}) — see log tail"
+                    if not self.cancelled:
+                        self.error = f"import failed (rc={rc}) — see log tail"
                     return
             if self.cancelled:
                 return
             rc = self._exec("analyze", _scan_argv(heavy_python, "analyze",
                                                    "--db", self.db_path))
             if rc != 0:
-                self.error = f"analyze failed (rc={rc}) — see log tail"
+                if not self.cancelled:
+                    self.error = f"analyze failed (rc={rc}) — see log tail"
                 return
             if self.cancelled:
                 return
             rc = self._exec(embed_label, _embed_argv())
             if rc != 0:
-                self.error = f"embed failed (rc={rc}) — see log tail"
+                if not self.cancelled:
+                    self.error = f"embed failed (rc={rc}) — see log tail"
         finally:
             self.after = _db_counts(self.db_path)
             self.finished = int(time.time())
