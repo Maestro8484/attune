@@ -51,6 +51,9 @@ const Prefs = (() => {
       $('prefEngine').value = serverSettings.engine || 'auto';
       $('prefMipUrl').value = serverSettings.musicip_url || '';
       $('prefMlPython').value = serverSettings.ml_venv_python || '';
+      $('prefLocalRoot').value = serverSettings.local_library_root || '';
+      $('prefUncRoot').value = serverSettings.unc_library_root || '';
+      $('prefPlexRoot').value = serverSettings.plex_library_root || '';
       $('prefScanLaunch').checked = !!serverSettings.scan_on_launch;
       $('prefWatch').checked = !!serverSettings.watch_folders;
       paintFolders(serverSettings.library_folders || []);
@@ -99,6 +102,9 @@ const Prefs = (() => {
       engine: $('prefEngine').value,
       musicip_url: $('prefMipUrl').value.trim() || 'http://localhost:10002',
       ml_venv_python: $('prefMlPython').value.trim(),
+      local_library_root: $('prefLocalRoot').value.trim(),
+      unc_library_root: $('prefUncRoot').value.trim(),
+      plex_library_root: $('prefPlexRoot').value.trim(),
       scan_on_launch: $('prefScanLaunch').checked,
       watch_folders: $('prefWatch').checked,
       library_folders: collectFolders(),

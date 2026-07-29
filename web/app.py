@@ -151,6 +151,25 @@ def _load_libverify():
     return mod
 
 
+def _migrate_env_roots_once(cfgmod, settings, env_cfg):
+    """One-time carryover: the three export roots used to live only in .env; settings.json
+    is their home now (PROPOSAL_EXPORT_ROOTS_2026-07-28.md, rulings 1 and 4). If a settings
+    key is still empty and .env has the matching value, copy it in once so an operator's
+    working setup survives the move. Idempotent after the first run: once settings.json
+    holds a value this is a no-op, and env still outranks settings.json day to day (see
+    export.mapper_from_settings), so nothing changes for someone who keeps editing .env
+    by hand. Returns True if it wrote anything."""
+    patch = {}
+    for env_key, setting_key in (("LOCAL_LIBRARY_ROOT", "local_library_root"),
+                                 ("UNC_LIBRARY_ROOT", "unc_library_root"),
+                                 ("PLEX_LIBRARY_ROOT", "plex_library_root")):
+        if not settings.get(setting_key) and env_cfg.get(env_key):
+            patch[setting_key] = env_cfg[env_key]
+    if patch:
+        cfgmod.update(patch)
+    return bool(patch)
+
+
 def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
                playlist_dir=None):
     _check_db(db_path)
@@ -199,15 +218,22 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 return fn(*a, **kw)
         return _wrapper
 
-    # export: path-map (+ optional Plex), config auto-discovered from a .env
+    # export: path-map (+ optional Plex). Roots live in settings.json (Preferences ->
+    # Advanced); .env is a dev override that also still holds Plex's connection secrets.
+    # See PROPOSAL_EXPORT_ROOTS_2026-07-28.md for why (paths aren't secrets, secrets stay
+    # in .env) and its "RULING 2 AMENDED" section for why the unc default didn't change.
     exp_spec = importlib.util.spec_from_file_location("attune_export", os.path.join(SRC, "export.py"))
     export = importlib.util.module_from_spec(exp_spec)
     exp_spec.loader.exec_module(export)
-    cfg = export.load_env()
-    mapper = export.mapper_from_env(cfg)
+    cfgmod = _load_config()             # also reused below by the /api/settings routes
+    cfg = export.load_env()             # .env: Plex secrets + a dev override for the 3 roots
+    settings = cfgmod.load()
+    _migrate_env_roots_once(cfgmod, settings, cfg)
+    settings = cfgmod.load()            # re-read: the migration may have just written roots
+    mapper = export.mapper_from_settings(settings, cfg, eng.paths)
     plex_holder = {}                    # lazily-built PlexExporter (indexes Plex on first use)
-    plex_configured = all(cfg.get(k) for k in
-                          ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID", "PLEX_LIBRARY_ROOT"))
+    plex_configured = bool(mapper.plex_root) and all(
+        cfg.get(k) for k in ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID"))
 
     DEDUP_FIELDS = ("song", "title", "file")   # what counts as a "duplicate"
 
@@ -689,20 +715,27 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error="bad request"), 400
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
         lines = ["#EXTM3U"]
-        try:
-            for p in tracks:
-                m = eng.meta.get(p, {})
-                artist = oneline(m.get("artist") or "?")
-                title = oneline(m.get("title") or os.path.basename(p))
-                lines.append(f"#EXTINF:-1,{artist} - {title}")
-                lines.append(mapper.convert(p, flavor))
-        except ValueError as e:                     # a flavor whose root isn't configured
-            return jsonify(error=str(e)), 400
+        used_flavor = flavor
+        # convert_safe() never raises for an unconfigured root -- it falls back to local
+        # paths instead of 400ing the whole export (PROPOSAL_EXPORT_ROOTS_2026-07-28.md,
+        # Ruling 2 Amended item 3). The body below is the playlist file itself, not JSON,
+        # so the fallback is reported via response headers instead of a JSON field.
+        for p in tracks:
+            m = eng.meta.get(p, {})
+            artist = oneline(m.get("artist") or "?")
+            title = oneline(m.get("title") or os.path.basename(p))
+            lines.append(f"#EXTINF:-1,{artist} - {title}")
+            converted, used_flavor = mapper.convert_safe(p, flavor)
+            lines.append(converted)
         body = "\n".join(lines) + "\n"
         stem = eng.meta.get(eng.paths[i], {}).get("title") or "mix"
         safe = "".join(c for c in stem if c.isalnum() or c in " -_").strip()[:60] or "mix"
-        return Response(body, mimetype="audio/x-mpegurl",
+        resp = Response(body, mimetype="audio/x-mpegurl",
                         headers={"Content-Disposition": f'attachment; filename="Attune-{safe}.m3u8"'})
+        resp.headers["X-Attune-Export-Flavor-Requested"] = flavor
+        resp.headers["X-Attune-Export-Flavor-Used"] = used_flavor
+        resp.headers["X-Attune-Export-Fallback"] = "1" if used_flavor != flavor else "0"
+        return resp
 
     @app.post("/api/export/plex")
     @_locked
@@ -735,7 +768,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # ---- Settings: the one config source of truth (src/config.py). GET hands the
     # client its server-side settings; POST merges a partial update and reports which
     # keys need a process restart to take effect (honestly, instead of pretending).
-    cfgmod = _load_config()
+    # cfgmod is already loaded above (it also builds the export mapper) -- reused here.
 
     @app.get("/api/settings")
     def get_settings():
@@ -1333,12 +1366,38 @@ async function toggleWhy(i, li) {
   }
 }
 
-function exportM3u() {
+async function exportM3u() {
   if (cur.i === null) return;
+  const st = document.getElementById('xstatus');
   // the export routes rebuild the mix from these args -- omit them and you export a
   // DIFFERENT mix than the one on screen.
   const extra = ENGINE ? musicipParams() : (weightParams() + varietyParam() + flowParam());
-  window.location = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size + dedupParam() + extra;
+  const url = '/api/export/m3u?i=' + cur.i + '&size=' + cur.size + dedupParam() + extra;
+  // fetch instead of a plain navigation so a root-not-configured fallback (server falls
+  // back to local paths rather than 400ing -- see X-Attune-Export-Fallback) is visible
+  // here instead of silently downloading paths the operator didn't ask for.
+  try {
+    const r = await fetch(url);
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      if (st) st.textContent = '✗ ' + (d.error || 'export failed');
+      return;
+    }
+    const blob = await r.blob();
+    const dispo = r.headers.get('Content-Disposition') || '';
+    const m = /filename="([^"]+)"/.exec(dispo);
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = m ? m[1] : 'Attune-mix.m3u8';
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(a.href);
+    const usedFlavor = r.headers.get('X-Attune-Export-Flavor-Used');
+    if (st) st.textContent = r.headers.get('X-Attune-Export-Fallback') === '1'
+      ? `Exported with ${usedFlavor} paths (the requested flavor's root isn't configured yet).`
+      : '';
+  } catch (e) {
+    if (st) st.textContent = '✗ ' + e;
+  }
 }
 
 async function sendPlex() {
