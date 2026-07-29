@@ -401,8 +401,27 @@ function renderHead() {
 }
 
 /* ------------------------------------------------------------------ table */
+/* Every table-row view (library/mix/now-playing/playlist/smart auto-playlist -- the last
+   one lives in smartlist.js, which calls this directly) funnels through here. That makes
+   it the one choke point that can restore the ordinary table chrome: leaving the album
+   grid or the Diagnostics panel (setTableMode()/showDiagnostics(), below) self-heals
+   through ANY of those paths, without every caller needing to know grid/Diagnostics exist. */
 function renderRows(rows, opts = {}) {
+  document.querySelector('#tbl').hidden = false;
+  $('albumGrid').hidden = true;
+  $('tableWrap').classList.remove('gridmode');
+  $('diagView').hidden = true;
+  $('diagUnavailable').hidden = true;
+  $('azBar').hidden = !(S.view === 'library' && !S.folder);
   S.rows = rows;
+  // Crash/restart slice 3: "the mix the user last had open" means literally that -- only
+  // persisted while Mix is the view actually on screen, matching slices 1-2 (window
+  // geometry, throttled seek restore), which also restore whatever was true at the moment
+  // of closing rather than "the last mix that ever existed". Leaving Mix for any other
+  // view clears it right here, so a deliberate "back to Library" before quitting is
+  // honoured on the next launch instead of being overridden. See restoreLastMix() below.
+  store.set('lastMix', (S.view === 'mix' && S.seed != null && S.mix.length) ?
+    { seed: S.seed, mix: S.mix } : null);
   // mix view shows the inline More/Less Like This (tune) buttons; every other view hides them
   document.querySelector('#tbl').classList.toggle('mixview', S.view === 'mix');
   const tb = $('tbody');
@@ -476,6 +495,14 @@ function setTableMode(grid) {
   $('tableWrap').classList.toggle('gridmode', grid);
   document.querySelector('#tbl').hidden = grid;
   $('albumGrid').hidden = !grid;
+  // Entering grid is the one table-row-view transition that does NOT go through
+  // renderRows() (loadAlbums paints #albumGrid directly) -- so the A-Z bar/Diagnostics
+  // panel/lastMix flag need their own explicit clear here. Leaving grid (grid=false) is
+  // always immediately followed by a renderRows() call from the caller, which handles it.
+  if (grid) {
+    $('azBar').hidden = true; $('diagView').hidden = true; $('diagUnavailable').hidden = true;
+    store.set('lastMix', null);      // the album grid is a Library presentation, not Mix
+  }
   $('btnViewList').classList.toggle('on', !grid);
   $('btnViewGrid').classList.toggle('on', grid);
 }
@@ -636,6 +663,64 @@ function renderPager() {
     <span class="hint">— scroll for more</span>`;
 }
 
+/* ------------------------------------------------------------------ A-Z jump bar
+   Beside the Library list (see #azBar's hidden toggle in renderRows()/setTableMode() --
+   list only, never grid, never a folder, never a smart view's own natural order). Jumping
+   needs an exact ROW OFFSET into the server's sorted list, and there is no "give me the
+   offset for letter X" endpoint -- this stream owns studio.js only, not studio.py. So this
+   binary-searches the offset space instead, against the SAME /api/lib/tracks endpoint the
+   table already pages through (limit=1 probes, ~log2(21000) ≈ 15 round trips for the
+   current library), then loads the real page at the offset it converges on -- the target
+   row is genuinely fetched, never a jump to nothing. */
+const AZ_LETTERS = ['#', ...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'];
+
+function azBucket(name) {
+  const c = String(name || '').normalize('NFKD').replace(/\p{M}/gu, '')
+    .trim().toUpperCase()[0] || '';
+  return (c >= 'A' && c <= 'Z') ? c : '#';
+}
+
+function renderAzBar() {
+  const bar = $('azBar');
+  if (!bar || bar.children.length) return;      // build once
+  bar.innerHTML = AZ_LETTERS.map(l => `<button type="button" data-l="${l}">${l}</button>`).join('');
+}
+
+async function jumpToLetter(letter) {
+  if (S.view !== 'library' || S.viewMode === 'grid' || S.folder) return;
+  const bar = $('azBar');
+  bar.classList.add('busy');
+  try {
+    // A jump only makes sense against an artist-sorted, ascending list -- force it, the
+    // same as clicking the Artist column header would. S._userSorted stops a smart
+    // view's natural sort (applySortParams()) from clobbering it back on the next page.
+    S.sort = 'artist'; S.desc = false; S._userSorted = true;
+    setHeaderSort();
+    const p = facetQS();
+    if (S.smart) p.set('smart', S.smart);
+    p.set('sort', 'artist');
+    let lo = 0, hi = S.total;
+    if (letter !== '#') {
+      while (lo < hi) {
+        const mid = (lo + hi) >> 1;
+        const q = new URLSearchParams(p); q.set('offset', mid); q.set('limit', 1);
+        const j = await jget('/api/lib/tracks?' + q);
+        const bucket = j.rows[0] ? azBucket(j.rows[0].artist) : letter;
+        if (bucket < letter) lo = mid + 1; else hi = mid;
+      }
+    }
+    S.offset = lo;
+    const q = new URLSearchParams(p); q.set('offset', S.offset); q.set('limit', S.limit);
+    const j = await jget('/api/lib/tracks?' + q);
+    S.total = j.total;
+    renderRows(j.rows);
+    $('tableWrap').scrollTop = 0;
+    renderPager();
+    bar.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.l === letter));
+  } catch (e) { toast(e.message, true); }
+  finally { bar.classList.remove('busy'); }
+}
+
 async function loadFacets() {
   const j = await jget('/api/lib/facets?' + facetQS());
   const paint = (elId, list, kind, countId) => {
@@ -769,6 +854,138 @@ async function showMix(opts = {}) {
     (votes ? ` · <span class="steer">steering +${S.liked.length} −${S.disliked.length}</span>` +
              ` <button class="chip" id="steerReset" title="Clear all steering and re-mix from the seed">reset</button>`
            : '');
+}
+
+/* Crash/restart slice 3: reopen the mix the user last had open. `saved` is read from
+   localStorage BEFORE initCore()'s own loadLibrary(true) call -- that call's renderRows()
+   writes S.view==='library' through the SAME store.set('lastMix', ...) line showMix()'s
+   renderRows() writes, which would otherwise clobber the very value this function needs
+   to read. See the call site in initCore().
+   Rehydration reads rows via /api/lib/rows -- the exact GET showMix() always makes to
+   paint -- never /api/mix, so reopening never recomputes a mix (LAW 1: no metric ever
+   picks what ships, and re-running the engine on restart would silently do exactly that
+   for whichever candidates happened to still be available). A track deleted/relinked
+   between sessions just drops out of the restored list; if fewer than 2 tracks (the seed
+   plus at least one companion) survive, restoring isn't "safe" per the spec -- fall back
+   silently to whatever loadLibrary(true) already rendered (current empty-state behaviour). */
+async function restoreLastMix(saved) {
+  if (!saved || saved.seed == null || !Array.isArray(saved.mix) || saved.mix.length < 2) return;
+  try {
+    const j = await jget('/api/lib/rows?' + saved.mix.map(i => `i=${i}`).join('&'));
+    const byI = new Map(j.rows.map(r => [r.i, r]));
+    const survived = saved.mix.filter(i => byI.has(i));
+    if (!byI.has(saved.seed) || survived.length < 2) return;
+    S.seed = saved.seed;
+    S.mix = survived;
+    $('mixN').textContent = S.mix.length;
+    await showMix();
+  } catch (e) { console.error('[core] restoreLastMix', e); }   // stays on the library view
+}
+
+/* ------------------------------------------------------------------ diagnostics
+   Read-only viewer for the server's log files -- audit item 9's "first slice"
+   (structured logging), client half. The server contract is fixed and owned by a
+   parallel stream (Stream C), not this file:
+     GET /api/diag/logs                       -> {dir, files:[{name,size,mtime}, ...]} newest first
+     GET /api/diag/logs/tail?name=&lines=      -> {name, lines:[...], truncated}
+   Until that stream merges into this tree the endpoints simply 404; jget() already
+   turns a non-OK response into a thrown Error (see jget's `if (!r.ok) throw ...`), so
+   the plain try/catch below is the whole "degrade honestly" story -- no 404-specific
+   branch needed. Read-only: no delete, no edit, no download anywhere in this view. */
+let _diagFiles = [];
+let _diagActiveFile = null;
+
+function fmtBytes(n) {
+  n = +n || 0;
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+// mtime's units aren't nailed down by the contract ("mtime", no unit stated) -- Python's
+// os.stat().st_mtime is epoch SECONDS, the common case, but this guards the epoch-ms case
+// too rather than assuming and risking every date reading as 1970.
+function fmtDiagDate(mtime) {
+  if (!mtime) return '';
+  const ms = mtime < 1e12 ? mtime * 1000 : mtime;
+  try { return new Date(ms).toLocaleString(); } catch { return ''; }
+}
+
+async function showDiagnostics() {
+  S.view = 'diagnostics'; markTree('diagnostics');
+  document.querySelectorAll('#folderTree li.on, #slList li.on').forEach(l => l.classList.remove('on'));
+  $('viewLabel').textContent = 'Diagnostics';
+  $('viewSub').textContent = '';
+  $('btnBackLib').hidden = false;
+  $('queueTools').hidden = true;
+  $('pager').innerHTML = '';
+  $('filterBar').hidden = true;
+  // Diagnostics doesn't render table rows, so it never passes through renderRows()'s
+  // chrome-restore choke point -- hide the table-view pieces explicitly on entry, the
+  // same way setTableMode(true) does for the album grid.
+  document.querySelector('#tbl').hidden = true;
+  $('albumGrid').hidden = true;
+  $('tableWrap').classList.remove('gridmode');
+  $('azBar').hidden = true;
+  store.set('lastMix', null);      // Diagnostics is not the Mix view either
+  await loadDiagLogs();
+}
+
+async function loadDiagLogs() {
+  try {
+    const j = await jget('/api/diag/logs');
+    _diagFiles = j.files || [];
+    $('diagUnavailable').hidden = true;
+    $('diagView').hidden = false;
+    $('diagDir').textContent = j.dir ? 'Folder: ' + j.dir : '';
+    renderDiagFileList();
+    if (_diagFiles.length) {
+      const keep = _diagActiveFile && _diagFiles.some(f => f.name === _diagActiveFile);
+      await loadDiagTail(keep ? _diagActiveFile : _diagFiles[0].name);
+    } else {
+      _diagActiveFile = null;
+      $('diagTailName').textContent = '—';
+      $('diagTailBody').textContent = '';
+      $('diagTailTruncated').hidden = true;
+    }
+  } catch (e) {
+    // Covers both "Stream C hasn't merged yet" (404 -> jget throws "HTTP 404") and any
+    // other transient failure -- same honest, non-throwing degrade either way.
+    _diagFiles = []; _diagActiveFile = null;
+    $('diagView').hidden = true;
+    $('diagUnavailable').hidden = false;
+    $('diagUnavailable').textContent = 'Diagnostics endpoint not available.';
+  }
+}
+
+function renderDiagFileList() {
+  const list = $('diagFileList');
+  $('diagFilesEmpty').hidden = _diagFiles.length > 0;
+  list.innerHTML = _diagFiles.map(f => `
+    <li data-name="${esc(f.name)}" class="${f.name === _diagActiveFile ? 'on' : ''}">
+      <span class="dn">${esc(f.name)}</span>
+      <span class="dm">${fmtBytes(f.size)} · ${fmtDiagDate(f.mtime)}</span>
+    </li>`).join('');
+}
+
+async function loadDiagTail(name) {
+  _diagActiveFile = name;
+  renderDiagFileList();
+  $('diagTailName').textContent = name;
+  $('diagTailBody').textContent = 'Loading…';
+  $('diagTailTruncated').hidden = true;
+  const lines = +$('diagLines').value || 200;
+  try {
+    const j = await jget(`/api/diag/logs/tail?name=${encodeURIComponent(name)}&lines=${lines}`);
+    $('diagTailBody').textContent = (j.lines || []).join('\n');
+    if (j.truncated) {
+      $('diagTailN').textContent = fmt((j.lines || []).length);
+      $('diagTailTruncated').hidden = false;
+    }
+    // newest lines are what you came here for -- land at the bottom, not the top
+    $('diagTailBody').scrollTop = $('diagTailBody').scrollHeight;
+  } catch (e) {
+    $('diagTailBody').textContent = 'Could not read this file: ' + e.message;
+  }
 }
 
 async function showNowPlaying() {
@@ -1414,7 +1631,24 @@ function bindEvents() {
     if (smartLi) { loadSmart(smartLi.dataset.smart); return; }
     const li = e.target.closest('li[data-view]'); if (!li) return;
     if (li.dataset.view === 'library') { S.smart = ''; S.folder = null; }
-    ({ library: () => loadLibrary(true), mix: showMix, nowplaying: showNowPlaying })[li.dataset.view]();
+    ({ library: () => loadLibrary(true), mix: showMix, nowplaying: showNowPlaying,
+       diagnostics: showDiagnostics })[li.dataset.view]();
+  });
+
+  // A-Z jump bar
+  $('azBar').addEventListener('click', e => {
+    const b = e.target.closest('button[data-l]'); if (!b) return;
+    jumpToLetter(b.dataset.l);
+  });
+
+  // diagnostics: file list selection, refresh, line-count change
+  $('diagFileList').addEventListener('click', e => {
+    const li = e.target.closest('li[data-name]'); if (!li) return;
+    loadDiagTail(li.dataset.name);
+  });
+  $('diagRefresh').onclick = loadDiagLogs;
+  $('diagLines').addEventListener('change', () => {
+    if (_diagActiveFile) loadDiagTail(_diagActiveFile);
   });
 
   // folder tree: triangle toggles children, name opens the folder in the table
@@ -1762,8 +1996,13 @@ async function jgetReady(url, { tries = 40, delay = 250, maxDelay = 1500 } = {})
    regardless. Each section below degrades on its own: a dead playlist folder
    must not cost you the library, and neither must cost you the player. */
 async function initCore() {
-  try { renderHead(); bindSliders(); bindEvents(); bindRecipeEvents(); }
+  try { renderHead(); bindSliders(); bindEvents(); bindRecipeEvents(); renderAzBar(); }
   catch (e) { console.error('[core] chrome', e); }
+
+  // Read BEFORE loadLibrary(true) below runs -- its renderRows() call clears this same
+  // key (S.view is 'library' by then), so the value must be captured into a local first.
+  // See the comment on restoreLastMix() for why.
+  const savedMix = store.get('lastMix', null);
 
   try {
     S.stats = await jgetReady('/api/lib/stats');
@@ -1808,6 +2047,11 @@ async function initCore() {
     console.error('[core] library', e);
     softFail = 'library view failed to load';
   }
+
+  // Soft, best-effort: a failed rehydration just leaves whatever loadLibrary(true)
+  // already rendered on screen, never costs the rest of boot.
+  try { await restoreLastMix(savedMix); }
+  catch (e) { console.error('[core] restoreLastMix wrapper', e); }
 
   return softFail ? { ok: false, error: softFail } : { ok: true };
 }

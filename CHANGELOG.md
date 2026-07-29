@@ -6,6 +6,48 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Reopens the mix you last had open, on restart** (`web/static/studio.js`) — crash/restart
+  slice 3 (slices 1-2: window geometry, throttled seek restore, above). Persisted only
+  while the Mix view is the one actually on screen (the same `store`/localStorage helper
+  every other persisted-UI-state key already uses), so a deliberate "back to Library"
+  before quitting is honoured on the next launch instead of silently overridden.
+  Rehydration reads rows via the existing read-only `/api/lib/rows`, the exact call
+  `showMix()` already makes to paint — never `/api/mix`, so reopening never recomputes a
+  mix (no metric ever gets to pick what ships on restart, any more than it does the rest
+  of the time). A track deleted/relinked between sessions just drops out of the restored
+  list; fewer than 2 survivors (the seed plus at least one companion) falls back silently
+  to the ordinary empty-state Library view. **Observed** against a scratch copy of the
+  production DB (`_scratch-p5b/mixer.b.db`, 21,236 tracks) across real page reloads: a
+  101-track mix came back with the same seed and exact track order after reload (only
+  `/api/lib/rows` on the wire, zero `/api/mix` calls); returning to Library first cleared
+  it and a following reload correctly stayed on Library; a fabricated single-survivor
+  entry correctly fell back to Library rather than showing a broken 1-track mix.
+- **A-Z jump bar beside the Library list** (`web/static/studio.js`, `web/static/studio.html`,
+  `web/static/studio.css`) — audit item 11. No server endpoint exists for "give me the row
+  offset for letter X" (this stream doesn't own `studio.py`), so it binary-searches the
+  offset space against the existing `/api/lib/tracks` endpoint with `limit=1` probes
+  (~15 round trips for the current library), then loads the real page at the offset it
+  converges on — the target row is genuinely fetched, never a jump to nothing. Forces the
+  list to artist-sorted ascending on click, same as clicking the Artist column header
+  would. List view only (hidden in the album grid, a folder, or Diagnostics).
+  **Observed** live against the 21,236-track scratch DB: `#` landed on offset 0
+  (`10cc`/`112`, the numeric-prefixed names), `A` on offset 13 (`A Fine Frenzy`), `M` on
+  offset 10889 (`M`/`M.O.P.`) after 14 probes converging exactly right, `Z` on offset
+  21173 (`Zac Brown Band`) — console clean throughout.
+- **Read-only Diagnostics view** (`web/static/studio.js`, `web/static/studio.html`,
+  `web/static/studio.css`) — audit item 9's structured-logging first slice, client half.
+  File list on the left, tailed lines on the right, a refresh control, honest empty
+  states. Server contract is fixed and owned by a parallel stream:
+  `GET /api/diag/logs` -> `{dir, files:[{name,size,mtime}]}`, `GET /api/diag/logs/tail`
+  -> `{name, lines, truncated}`. No delete, no edit, no download — read-only end to end.
+  Degrades to a plain "not available" message if the endpoints 404 (expected until that
+  stream merges) rather than throwing. **Observed**: a real request to
+  `/api/diag/logs` in this tree returned 404 and the view degraded to the unavailable
+  message with a clean console; render logic (file list, size/date formatting, tail
+  display, the `truncated` banner, and the 400-bad-name error path) was separately
+  exercised against a mocked `fetch` shaped exactly to the fixed contract, since the real
+  endpoint doesn't exist in this worktree yet — **not** verified against Stream C's
+  actual implementation, which is the owed check once it merges.
 - **"Send to folder", from the right-click menu, in two scopes** (`web/static/studio.js`
   context menu, `web/static/studio.html`): **Send selection** copies exactly the rows you
   have selected; **Send whole mix** copies the mix. Both route through the **existing**

@@ -250,6 +250,8 @@
         <li data-smart="mostplayed"><span class="ti">↻</span> Most Played</li>
         <li data-smart="neverplayed"><span class="ti">·</span> Never Played</li>
         <li data-smart="missing"><span class="ti">⚠</span> Missing Files <b id="missingN">0</b></li>
+        <li class="grouphead">Tools</li>
+        <li data-view="diagnostics"><span class="ti">▨</span> Diagnostics</li>
         <li class="grouphead" id="foldersHead">Folders <span class="fold" id="foldersTog">▸</span></li>
       </ul>
       <ul id="folderTree" class="tree folders" hidden></ul>
@@ -309,13 +311,49 @@
         <span id="fbChips"></span>
         <button id="fbClear" class="fbClear" title="Clear all mix filters">Clear all</button>
       </div>
-      <div class="tableWrap" id="tableWrap">
-        <table id="tbl">
-          <thead><tr id="thead-row"></tr></thead>
-          <tbody id="tbody"></tbody>
-        </table>
-        <div id="albumGrid" class="albumgrid" hidden></div>
-        <div id="empty" class="empty" hidden>Nothing here.</div>
+      <div class="tableRow" id="tableRow">
+        <div class="tableWrap" id="tableWrap">
+          <table id="tbl">
+            <thead><tr id="thead-row"></tr></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+          <div id="albumGrid" class="albumgrid" hidden></div>
+          <div id="empty" class="empty" hidden>Nothing here.</div>
+        </div>
+        <!-- A-Z jump bar (audit item 11) -- Library list only (see renderRows()'s hidden
+             toggle in studio.js); jumps by binary-searching /api/lib/tracks for the row
+             offset, since there's no dedicated server endpoint for it. -->
+        <div id="azBar" class="azBar" hidden></div>
+        <!-- Diagnostics (audit item 9, structured-logging first slice) -- read-only viewer
+             for the server's log files. Server side (GET /api/diag/logs[, /tail]) is a
+             parallel stream; #diagUnavailable covers the case where it hasn't merged yet. -->
+        <div id="diagView" class="diagView" hidden>
+          <div class="diagFiles">
+            <div class="diagFilesHead">Log files
+              <button id="diagRefresh" type="button" title="Refresh">⟳</button></div>
+            <div class="diagDir" id="diagDir"></div>
+            <ul id="diagFileList" class="diagFileList"></ul>
+            <div id="diagFilesEmpty" class="railEmpty" hidden>No log files yet.</div>
+          </div>
+          <div class="diagTail">
+            <div class="diagTailHead">
+              <span id="diagTailName">—</span>
+              <span class="spacer"></span>
+              <label class="diagLines">Lines
+                <select id="diagLines">
+                  <option value="200">200</option>
+                  <option value="500">500</option>
+                  <option value="1000">1000</option>
+                  <option value="2000">2000</option>
+                </select>
+              </label>
+            </div>
+            <pre id="diagTailBody" class="diagTailBody"></pre>
+            <div id="diagTailTruncated" class="hint diagTailTruncated" hidden>Showing the
+              last <span id="diagTailN"></span> lines only — older lines are not shown.</div>
+          </div>
+        </div>
+        <div id="diagUnavailable" class="empty" hidden>Diagnostics endpoint not available.</div>
       </div>
       <div id="pager" class="pager"></div>
     </div>
