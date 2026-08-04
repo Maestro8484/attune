@@ -487,6 +487,8 @@ def register(app, ctx):
     bp = Blueprint("studio", __name__)
     playlist_dir = ctx.get("playlist_dir") or ""
     locked = ctx["locked"]
+    # hands-out record (ruling B1); absent in older callers, so no-op fallback
+    ledger = ctx.get("ledger") or (lambda *_a, **_k: None)
 
     @bp.get("/api/lib/stats")
     @locked
@@ -761,6 +763,7 @@ def register(app, ctx):
                 tracks = [eng.paths[int(x)] for x in ids if 0 <= int(x) < lib.n]
             except (ValueError, TypeError):
                 return jsonify(ok=False, error="bad ids"), 400
+            default_name = "Attune mix"
         else:
             try:
                 i = int(body.get("i"))
@@ -770,10 +773,16 @@ def register(app, ctx):
             if not (0 <= i < lib.n):
                 return jsonify(ok=False, error="unknown seed"), 404
             tracks = ctx["active_mix_tracks"](i, size, body.get("dedup") or None)
+            # Default name follows the operator's own 2021 convention (ruling C9):
+            # a mix is "like-<seed>". An explicit client name still wins.
+            sm = eng.meta.get(eng.paths[i], {})
+            seed_name = (sm.get("title")
+                         or os.path.splitext(os.path.basename(eng.paths[i]))[0]).strip()
+            default_name = f"like-{seed_name or 'mix'}"
         if not tracks:
             return jsonify(ok=False, error="empty playlist"), 400
         try:
-            dest = _safe_out(playlist_dir, body.get("name") or "Attune mix")
+            dest = _safe_out(playlist_dir, body.get("name") or default_name)
         except ValueError as e:
             return jsonify(ok=False, error=str(e)), 400
 
@@ -796,6 +805,11 @@ def register(app, ctx):
                 fh.write("\n".join(lines) + "\n")
         except OSError as e:
             return jsonify(ok=False, error=f"write failed: {e}"), 500
+        ledger("export_dir", dest=dest, name=os.path.basename(dest),
+               n=len(tracks), flavor=report["used"],
+               tracks=[f"{(eng.meta.get(p, {}).get('artist') or '?')} - "
+                       f"{(eng.meta.get(p, {}).get('title') or os.path.basename(p))}"
+                       for p in tracks])
         return jsonify(ok=True, path=dest, name=os.path.basename(dest),
                        count=len(tracks), fallback=report)
 

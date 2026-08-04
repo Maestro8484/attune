@@ -73,7 +73,7 @@ class V2Engine(Engine):
     shared pool here (no reconciliation needed) -- pool_i is just eng.idx[path]."""
     name = "v2"
     capabilities = frozenset({"search", "similar", "refine", "mmr", "flow", "explain",
-                              "weights", "radio"})
+                              "weights", "radio", "multiseed"})
 
     def __init__(self, db_path=None, hybrid_engine=None):
         if hybrid_engine is None:
@@ -145,6 +145,21 @@ class V2Engine(Engine):
         if not picks:
             return []
         return [self._ref(self.eng.idx[p]) for p in picks]
+
+    def mix_multi(self, seed_refs, size=25, artist_spacing=3):
+        idxs = [_as_pool_i(r) for r in seed_refs]
+        picks, cohesion = self.eng.mix_multi(idxs, size=size,
+                                             artist_spacing=artist_spacing)
+        if picks is None:
+            return None, None
+        return [self._ref(self.eng.idx[p]) for p in picks], cohesion
+
+    def adventure(self, a_ref, b_ref, size=25, artist_spacing=3):
+        path = self.eng.adventure(_as_pool_i(a_ref), _as_pool_i(b_ref), size=size,
+                                  artist_spacing=artist_spacing)
+        if path is None:
+            return None
+        return [self._ref(self.eng.idx[p]) for p in path]
 
 
 class MusicIPAdapter(Engine):

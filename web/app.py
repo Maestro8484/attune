@@ -135,6 +135,16 @@ def _load_config():
     return mod
 
 
+def _load_ledger():
+    """Import ledger.py (sibling): the hands-out record -- one jsonl line per mix
+    served / export written (ruling B1, RULINGS_SHEET_2026-08-04.md)."""
+    spec = importlib.util.spec_from_file_location("attune_ledger",
+                                                  os.path.join(HERE, "ledger.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def _load_libreload():
     path = os.path.join(HERE, "libreload.py")
     spec = importlib.util.spec_from_file_location("attune_libreload", path)
@@ -227,6 +237,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     exp_spec.loader.exec_module(export)
     cfgmod = _load_config()             # also reused below by the /api/settings routes
     cfg = export.load_env()             # .env: Plex secrets + a dev override for the 3 roots
+    ledger = _load_ledger()
+    ledger.init(cfgmod.config_dir())    # <config_dir>/ledger.jsonl (ruling B1)
     settings = cfgmod.load()
     _migrate_env_roots_once(cfgmod, settings, cfg)
     settings = cfgmod.load()            # re-read: the migration may have just written roots
@@ -492,6 +504,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         except ValueError:
             return jsonify(error="bad request"), 400
         tracks = [{"i": pi, "label": labels[pi]} for pi in picks_i]
+        ledger.record("mix", seed=labels[i], seed_i=i, n=len(tracks))
 
         if is_musicip:
             style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), MUSICIP_STYLE_MAX)
@@ -568,6 +581,71 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks,
                        variety=variety, arc=arc, pos=pos)
+
+    @app.get("/api/mix/blend")
+    @_locked
+    def mix_blend():
+        """Blend mix (ruling A1, PROPOSAL_MULTISEED_2026-08-04.md): 2+ seed indices,
+        repeat i= per seed, ranked against their CLAP centroid. Acoustic-only by
+        design (ruling A3) -- weight overrides deliberately NOT plumbed in, because
+        mix_from_vector ranks by CLAP cosine alone and pretending the dials apply
+        would lie. `cohesion` = the seeds' mean pairwise cosine, surfaced so the UI
+        can warn instead of quietly serving a centroid of nothing (ruling A4)."""
+        if "multiseed" not in active.capabilities:
+            return jsonify(error=f"multiseed not supported by the '{active.name}' engine"), 501
+        try:
+            seeds = [int(x) for raw in request.args.getlist("i")
+                     for x in raw.split(",") if x.strip()]
+            size = min(max(int(request.args.get("size", 100)), 20), 150)
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        if len(seeds) < 2:
+            return jsonify(error="need at least two seed indices (repeat i=)"), 400
+        for s in seeds:
+            if not (0 <= s < len(eng.paths)):
+                return jsonify(error="unknown seed"), 404
+        try:
+            refs, cohesion = active.mix_multi(seeds, size=size)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        except AttributeError:
+            return jsonify(error=f"multiseed not supported by the '{active.name}' engine"), 501
+        if refs is None:
+            return jsonify(error="unknown seed"), 404
+        tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
+        ledger.record("blend", seeds=[labels[s] for s in seeds], n=len(tracks),
+                      cohesion=round(cohesion, 3))
+        return jsonify(seeds=[{"i": s, "label": labels[s]} for s in seeds],
+                       tracks=tracks, cohesion=cohesion)
+
+    @app.get("/api/mix/adventure")
+    @_locked
+    def mix_adventure():
+        """Ordered A-to-B path (ruling A1; the Plexamp Sonic Adventure shape on our
+        own stored CLAP vectors, zero cloud). Tracks INCLUDE both endpoints, in
+        order. Deterministic for (a, b, size); CLAP-only like blend."""
+        if "multiseed" not in active.capabilities:
+            return jsonify(error=f"multiseed not supported by the '{active.name}' engine"), 501
+        try:
+            a = int(request.args.get("a", ""))
+            b = int(request.args.get("b", ""))
+            size = min(max(int(request.args.get("size", 25)), 3), 100)
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        if not (0 <= a < len(eng.paths)) or not (0 <= b < len(eng.paths)):
+            return jsonify(error="unknown seed"), 404
+        try:
+            refs = active.adventure(a, b, size=size)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        except AttributeError:
+            return jsonify(error=f"multiseed not supported by the '{active.name}' engine"), 501
+        if refs is None:
+            return jsonify(error="unknown seed"), 404
+        tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
+        ledger.record("adventure", a=labels[a], b=labels[b], n=len(tracks))
+        return jsonify(a={"i": a, "label": labels[a]}, b={"i": b, "label": labels[b]},
+                       tracks=tracks)
 
     @app.post("/api/refine")
     @_locked
@@ -740,8 +818,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         body = "\n".join(lines) + "\n"
         stem = eng.meta.get(eng.paths[i], {}).get("title") or "mix"
         safe = "".join(c for c in stem if c.isalnum() or c in " -_").strip()[:60] or "mix"
+        ledger.record("export_m3u", seed=labels[i], dest="download",
+                      name=f"like-{safe}.m3u8", flavor=report["used"], n=len(tracks),
+                      tracks=[labels[eng.idx[p]] for p in tracks if p in eng.idx])
         resp = Response(body, mimetype="audio/x-mpegurl",
-                        headers={"Content-Disposition": f'attachment; filename="Attune-{safe}.m3u8"'})
+                        headers={"Content-Disposition": f'attachment; filename="like-{safe}.m3u8"'})
         resp.headers["X-Attune-Export-Flavor-Requested"] = report["requested"]
         resp.headers["X-Attune-Export-Flavor-Used"] = report["used"]
         resp.headers["X-Attune-Export-Fallback"] = "1" if report["fallback"] else "0"
@@ -785,6 +866,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(ok=False, error=str(e)), 400
         except Exception as e:                      # network / Plex API failure
             return jsonify(ok=False, error=f"Plex error: {e}"), 502
+        ledger.record("export_plex", seed=labels[i], dest="plex", name=title,
+                      n=len(tracks),
+                      tracks=[labels[eng.idx[p]] for p in tracks if p in eng.idx])
         # don't leak full local library paths in the HTTP response — basenames only
         if isinstance(res.get("missed"), list):
             res["missed"] = [os.path.basename(p) for p in res["missed"]]
@@ -962,6 +1046,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "engine_name": engine_name,
         "plex_configured": plex_configured,
         "active_mix_tracks": _active_mix_tracks,
+        "ledger": ledger.record,
         "locked": _locked,
     })
 
@@ -1059,7 +1144,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     exportjob = importlib.util.module_from_spec(ej_spec)
     ej_spec.loader.exec_module(exportjob)
     exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks,
-                             "locked": _locked})
+                             "locked": _locked, "ledger": ledger.record})
 
     # ==================================================================================
     # ---- diagnostics: read-only structured-log viewer (applog.py) -- AUDIT_FABLE_
@@ -1448,7 +1533,7 @@ async function exportM3u() {
     const m = /filename="([^"]+)"/.exec(dispo);
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = m ? m[1] : 'Attune-mix.m3u8';
+    a.download = m ? m[1] : 'like-mix.m3u8';
     document.body.appendChild(a); a.click(); a.remove();
     URL.revokeObjectURL(a.href);
     const usedFlavor = r.headers.get('X-Attune-Export-Flavor-Used');

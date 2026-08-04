@@ -131,6 +131,8 @@ class ExportJob:
         self.current = ""         # basename being copied right now
         self.skipped = []         # [{name, reason}] — unreadable/missing sources
         self.m3u8 = ""            # path to the written playlist, once written
+        self.playlist_wanted = True   # False = selection-scope copy, files only (ruling B4)
+        self.playlist_stem = ""       # optional .m3u8 stem override, like-<seed> (ruling C9)
         self.error = ""
         self.started = 0
         self.finished = 0
@@ -145,15 +147,24 @@ class ExportJob:
         with self._lock:
             self.skipped.append({"name": name, "reason": reason})
 
+    # Set once by register(); a CLASS attribute so start()'s self.__init__() reset
+    # cannot clear it. Called after a copy lands (ruling B1).
+    _ledger = None
+
     # ---------------------------------------------------------------- run
-    def start(self, items, target_dir, layout):
+    def start(self, items, target_dir, layout, playlist=True, playlist_stem=""):
         """items: [{src, artist, title}] resolved by the caller (request thread).
-        target_dir: an ALREADY-containment-checked absolute directory. layout: flat|tree."""
+        target_dir: an ALREADY-containment-checked absolute directory. layout: flat|tree.
+        playlist=False skips the .m3u8 entirely -- selection-scope sends, where the
+        numbered filenames already carry play order (ruling B4). playlist_stem, when
+        given, names the .m3u8 (like-<seed>, ruling C9) instead of the folder name."""
         with _START_LOCK:
             if self.running:
                 raise RuntimeError("a copy is already running")
             self.__init__()
             self.running = True
+            self.playlist_wanted = bool(playlist)
+            self.playlist_stem = playlist_stem or ""
             self.dest = target_dir
             self.layout = layout
             self.total = len(items)
@@ -252,9 +263,16 @@ class ExportJob:
                 self._log(f"copied {name}")
             self.current = ""
             # Write the self-contained playlist for whatever actually landed (even a
-            # cancelled partial is left playable and honest).
-            if copied_entries:
+            # cancelled partial is left playable and honest). Selection-scope sends
+            # skip it: the numbered filenames already carry the order (ruling B4).
+            if copied_entries and self.playlist_wanted:
                 self._write_m3u8(target_dir, copied_entries)
+            if copied_entries and ExportJob._ledger:
+                ExportJob._ledger(
+                    "export_copy", dest=target_dir, n=self.copied,
+                    playlist=os.path.basename(self.m3u8) if self.m3u8 else "",
+                    tracks=[(f"{a} - {t}" if a else t)
+                            for _rel, a, t in copied_entries])
         except Exception as e:                    # never let the worker die silently
             self.error = self.error or f"copy failed: {e}"
         finally:
@@ -263,7 +281,8 @@ class ExportJob:
             self.current = ""
 
     def _write_m3u8(self, target_dir, entries):
-        stem = _sanitize_component(os.path.basename(target_dir)) or "Attune Mix"
+        stem = _sanitize_component(self.playlist_stem
+                                   or os.path.basename(target_dir)) or "Attune Mix"
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
         lines = ["#EXTM3U"]
         for rel, artist, title in entries:
@@ -345,6 +364,7 @@ def register(app, ctx):
     active_mix_tracks = ctx["active_mix_tracks"]
     locked = ctx["locked"]
     job = ExportJob()
+    ExportJob._ledger = ctx.get("ledger")
     bp = Blueprint("exportjob", __name__)
 
     def _guard():
@@ -404,11 +424,23 @@ def register(app, ctx):
             target = _resolve_target(dest, body.get("folder"))
         except ValueError as e:
             return jsonify(ok=False, error=str(e)), 400
+        # Selection scope (`ids`) copies files only -- no .m3u8, the numbered
+        # filenames carry the order (ruling B4). Whole-mix names its playlist
+        # like-<seed>, the operator's own 2021 convention (ruling C9).
+        selection = isinstance(ids, list) and bool(ids)
+        stem = ""
+        if not selection:
+            sm = eng.meta.get(eng.paths[i], {})
+            seed_name = (sm.get("title")
+                         or os.path.splitext(os.path.basename(eng.paths[i]))[0]).strip()
+            stem = f"like-{seed_name or 'mix'}"
         try:
-            job.start(items, target, layout)
+            job.start(items, target, layout, playlist=not selection,
+                      playlist_stem=stem)
         except RuntimeError as e:
             return jsonify(ok=False, error=str(e)), 409
-        return jsonify(ok=True, dest=target, total=len(items))
+        return jsonify(ok=True, dest=target, total=len(items),
+                       playlist=not selection)
 
     @bp.post("/api/export/copy/cancel")
     def copy_cancel():
