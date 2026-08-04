@@ -480,6 +480,67 @@ class HybridEngine:
             q = q - beta * self.X[disliked].mean(axis=0)
         return self._unit(q)
 
+    def mix_multi(self, seeds, size=25, artist_spacing=3):
+        """Blend mix: rank the pool against the unit-mean of 2+ seeds' CLAP rows --
+        refine()'s liked-centroid math with no starting seed -- via the same
+        mix_from_vector() walk. Returns (paths, cohesion). `cohesion` is the seeds'
+        mean pairwise cosine (rows of X are unit vectors, so V @ V.T is cosine):
+        near 1.0 the seeds agree, near 0 the centroid sits in thin space and the
+        caller should SAY so rather than serve it quietly (ruling A4). CLAP-only on
+        purpose, like refine(): _score()'s genre/bpm/era terms have no meaning for
+        a virtual seed (ruling A3). Deterministic for a given seed set."""
+        idxs = []
+        for s in seeds:
+            i = self._as_index(s)
+            if i is None:
+                return None, None
+            idxs.append(i)
+        if len(idxs) < 2:
+            raise ValueError("mix_multi needs at least 2 seeds")
+        V = self.X[idxs].astype(np.float64)
+        sims = V @ V.T
+        n = len(idxs)
+        cohesion = float((sims.sum() - np.trace(sims)) / (n * (n - 1)))
+        picks = self.mix_from_vector(V.mean(axis=0), size=size,
+                                     artist_spacing=artist_spacing, exclude=idxs)
+        return picks, cohesion
+
+    def adventure(self, a, b, size=25, artist_spacing=3):
+        """Ordered path FROM a TO b: normalized-lerp waypoints along the CLAP-space
+        segment between the two seeds, each snapped to the nearest not-yet-used
+        track (mix_from_vector over a shortlist). Returns the full ordered path
+        INCLUDING both endpoints; monotone because the waypoints are. Deterministic
+        for (a, b, size). Artist spacing cannot ride mix_from_vector's own walk
+        across separate size=1 calls (each call starts a fresh `recent`), so it is
+        enforced here over the accumulating path instead."""
+        ia, ib = self._as_index(a), self._as_index(b)
+        if ia is None or ib is None:
+            return None
+        if ia == ib:
+            raise ValueError("adventure needs two different tracks")
+        size = max(int(size), 3)
+        va = self.X[ia].astype(np.float64)
+        vb = self.X[ib].astype(np.float64)
+        used, middle = [ia, ib], []
+        recent = [self.artist[ia]]
+        for t in np.linspace(0.0, 1.0, size)[1:-1]:
+            cands = self.mix_from_vector((1.0 - t) * va + t * vb,
+                                         size=artist_spacing + 1, exclude=used)
+            pick = None
+            for p in cands:
+                pa = self.artist[self.idx[p]]
+                if not pa or pa not in recent[-artist_spacing:]:
+                    pick = p
+                    break
+            if pick is None:
+                if not cands:
+                    break
+                pick = cands[0]
+            middle.append(pick)
+            used.append(self.idx[pick])
+            recent.append(self.artist[self.idx[pick]])
+        return [self.paths[ia]] + middle + [self.paths[ib]]
+
     def mmr(self, candidates, k=None, lambda_=0.5, query=None):
         """Maximal Marginal Relevance re-ranking of `candidates` (paths, already ranked
         by relevance, e.g. the output of mix()/mix_from_vector()) for diversity.

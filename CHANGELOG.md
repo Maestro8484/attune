@@ -5,7 +5,50 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0] — unreleased (initial public cut)
 
+### Added
+- **Multi-seed mixes: blend and adventure** (`src/hybrid.py`, `src/engine.py`,
+  `web/app.py`), rulings A1-A4 of RULINGS_SHEET_2026-08-04.md per
+  PROPOSAL_MULTISEED_2026-08-04.md. `GET /api/mix/blend?i=..&i=..` (repeat `i` per
+  seed, 2+) ranks the pool against the seeds' CLAP centroid — `refine()`'s
+  liked-centroid math with no starting seed — and reports `cohesion` (the seeds'
+  mean pairwise cosine) so the UI can warn when seeds do not blend instead of
+  quietly serving the centroid of nothing. `GET /api/mix/adventure?a=..&b=..&size=..`
+  walks normalized-lerp waypoints from A to B, each snapped to the nearest unused
+  track: the Plexamp Sonic Adventure shape on Attune's own stored vectors, zero
+  cloud. Both are CLAP-only by design (the weight dials deliberately do not apply
+  to a virtual seed), both sit behind a new `multiseed` capability (V2-only, 501
+  on other engines), both are deterministic. **Observed** on a scratch copy of the
+  live DB: byte-identical responses on repeated calls for both routes; a two-seed
+  blend returned cohesion 0.974 and 20 tracks; adventure 100->9000 at size 12
+  returned exactly 12 tracks starting at A and ending at B; one-seed blend and
+  a==b both answer 400. Ear sets per ruling A6 are owed at the next bench sitting.
+- **The hands-out ledger** (`web/ledger.py`; wired in `web/app.py`,
+  `web/studio.py`, `web/exportjob.py`), ruling B1: one JSON line per mix served
+  and per export written, appended to `<config_dir>/ledger.jsonl` — when, what
+  kind, where it went, the seed, and for exports the tracklist. It records what
+  the app HANDS OUT, never listening behavior, and it is the baseline a future
+  stick read diffs against (the rotation-survivor signal, HANDOFF_RESUME S17 C3).
+  A sidecar jsonl, not a DB table, so SCHEMA_VERSION stays untouched and a write
+  failure can never break a mix or an export. **Observed**: kinds
+  mix/blend/adventure/export_m3u/export_dir/export_copy all appended during a
+  scratch-server session, the export_copy lines carrying destination, tracklist
+  and playlist name.
+
 ### Changed
+- **Selection-scope Send-to no longer writes an .m3u8** (`web/exportjob.py`),
+  ruling B4: the numbered filenames already carry play order on a dumb device, so
+  a hand-picked handful of tracks got a clutter playlist it never asked for.
+  Whole-mix copies still write one. **Observed**: an ids-form copy landed
+  `01..03`-prefixed files and no playlist (response `playlist:false`); the i-form
+  landed files plus the playlist.
+- **Exports are named `like-<seed>`** (`web/app.py`, `web/studio.py`,
+  `web/exportjob.py`), ruling C9 — the operator's own naming convention since
+  2021, now produced by the app itself. The .m3u8 download filename, the
+  playlist-folder default name, and the copied-folder playlist all follow it; an
+  explicit client-supplied name still wins. **Observed**:
+  `Content-Disposition: attachment; filename="like-Early Every Morning.m3u8"` on
+  the download; the playlist-folder save defaulted to the same name; the copy job
+  wrote the same stem into its destination folder.
 - **Built-in recipes can no longer be deleted** (`web/recipes.py`): `POST
   /api/recipe/delete` now answers 403 for a `builtin=1` row instead of deleting it.
   They stay editable via save (a builtin is a starting point, not immutable); delete
@@ -14,6 +57,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   `AUDIT_BETA_2026-07-26.md`, per the operator's 2026-08-04 ruling. **Observed** on a
   scratch copy of the live DB: deleting a builtin returns 403 and the row survives;
   saving then deleting a user recipe still returns ok and removes it.
+
+### Fixed
+- **`find_env()` can no longer adopt an unrelated machine-level `.env`**
+  (`src/export.py`). The upward walk used to reach the drive root, so a real
+  `C:\.env` belonging to another tool was parsed whenever the process cwd sat
+  outside the workspace, while the docstring claimed exactly the opposite
+  (HANDOFF_RESUME S15 finding, ledger T-002). The walk now only accepts a `.env`
+  whose directory is Attune-shaped (an `attune/` checkout beside it, or a
+  pyproject.toml/.git repo root); `ATTUNE_ENV` remains the explicit escape hatch.
+  **Observed**: from `cwd=C:\` `find_env()` returns None; from the workspace root
+  it still returns the workspace `.env`; regression gate 16/16 byte-identical
+  after the change.
 
 ### Added
 - **Attune stops guessing your library folder, and says so instead** (`src/export.py`,
