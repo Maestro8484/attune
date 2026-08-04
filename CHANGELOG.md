@@ -22,6 +22,18 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   blend returned cohesion 0.974 and 20 tracks; adventure 100->9000 at size 12
   returned exactly 12 tracks starting at A and ending at B; one-seed blend and
   a==b both answer 400. Ear sets per ruling A6 are owed at the next bench sitting.
+- **Blend and Adventure in the right-click menu** (`web/static/studio.html`,
+  `web/static/studio.js`): select two or more rows, right-click, "Blend
+  Selected (2+)" mixes against all of them; with exactly two, "Adventure:
+  First → Last" walks from the first selected row to the last, endpoints
+  included. Results land in the same mix pane as Create Mix; the blend toast
+  reports cohesion and warns below 0.5 (provisional threshold, ears will tune
+  it). **Observed**: the Studio page boots with zero console errors and the
+  underlying routes are verified deterministic server-side. **NOT yet
+  verified: the click path itself with a real mouse** — the Browser pane did
+  not composite this session (the standing displayed-pane limitation); the
+  check that closes this is two ctrl-clicks, a right-click, and each menu
+  entry producing a mix on screen.
 - **The hands-out ledger** (`web/ledger.py`; wired in `web/app.py`,
   `web/studio.py`, `web/exportjob.py`), ruling B1: one JSON line per mix served
   and per export written, appended to `<config_dir>/ledger.jsonl` — when, what
