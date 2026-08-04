@@ -236,7 +236,14 @@ def register(app, ctx):
             return jsonify(ok=False, error="bad id"), 400
         con = sqlite3.connect(db_path, timeout=30)
         try:
-            row = con.execute("SELECT name FROM recipes WHERE id=?", (rid,)).fetchone()
+            row = con.execute("SELECT name, builtin FROM recipes WHERE id=?",
+                              (rid,)).fetchone()
+            # Built-ins stay editable via r_save (a builtin is a starting point), but
+            # not deletable: _seed_builtins only runs on a fresh schema, so a deleted
+            # builtin has no re-seed path short of dropping the table.
+            if row and row[1]:
+                return jsonify(ok=False,
+                               error="built-in recipes cannot be deleted"), 403
             con.execute("DELETE FROM recipes WHERE id=?", (rid,))
             con.commit()
         finally:
