@@ -47,22 +47,37 @@ def find_env(explicit=None):
     (PROPOSAL_EXPORT_ROOTS_2026-07-28.md §5): once settings.json is the answer for an
     installed app, a developer's .env sitting near that install would otherwise silently
     override the user's own Preferences, and precedence would depend on install layout --
-    the original bug wearing a different hat. This is why a process whose cwd is outside
-    the workspace (a scheduled task starting in System32, an installed copy under Program
-    Files) still finds no .env: that's correct, not a gap."""
+    the original bug wearing a different hat.
+
+    The walk only accepts a .env whose directory is Attune-shaped (an `attune`
+    checkout beside it, or a pyproject.toml/.git marking a repo root). Without that
+    check the walk reaches the drive root and adopts ANY machine-level .env -- a real
+    drive-root .env belonging to an unrelated tool bit here (HANDOFF_RESUME S15/S17). So a
+    process whose cwd is outside an Attune workspace (a scheduled task starting in
+    System32, an installed copy under Program Files) finds no .env: correct, and now
+    actually true. ATTUNE_ENV stays the explicit escape hatch."""
     for cand in (explicit, os.environ.get("ATTUNE_ENV")):
         if cand and os.path.exists(cand):
             return cand
     d = os.getcwd()
     while True:
         p = os.path.join(d, ".env")
-        if os.path.exists(p):
+        if os.path.exists(p) and _attune_shaped(d):
             return p
         parent = os.path.dirname(d)
         if parent == d:
             break
         d = parent
     return None
+
+
+def _attune_shaped(d):
+    # Guard for find_env's upward walk: a .env only counts inside a dev tree tied
+    # to Attune (workspace root holding an attune/ checkout, or a repo root). Bare
+    # ancestors like C:\ or a home dir carry none of these markers.
+    return (os.path.isdir(os.path.join(d, "attune"))
+            or os.path.exists(os.path.join(d, "pyproject.toml"))
+            or os.path.exists(os.path.join(d, ".git")))
 
 
 def load_env(explicit=None):
