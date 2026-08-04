@@ -5,6 +5,16 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0] — unreleased (initial public cut)
 
+### Changed
+- **Built-in recipes can no longer be deleted** (`web/recipes.py`): `POST
+  /api/recipe/delete` now answers 403 for a `builtin=1` row instead of deleting it.
+  They stay editable via save (a builtin is a starting point, not immutable); delete
+  was the one unrecoverable action, since `_seed_builtins` only runs on a fresh
+  schema. Closes the "built-in recipe delete is destructive and unguarded" note from
+  `AUDIT_BETA_2026-07-26.md`, per the operator's 2026-08-04 ruling. **Observed** on a
+  scratch copy of the live DB: deleting a builtin returns 403 and the row survives;
+  saving then deleting a user recipe still returns ok and removes it.
+
 ### Added
 - **Attune stops guessing your library folder, and says so instead** (`src/export.py`,
   `web/app.py`, `web/studio.py`, `web/static/studio.js`, `web/static/studio.html`,
