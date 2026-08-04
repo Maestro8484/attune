@@ -131,17 +131,28 @@ class FileState:
         necessarily self.lib.paths[i], which may have moved on if a reload raced this
         write; see the module docstring's documented limitation) to the DB, and best-
         effort mirror it into the live lib arrays at index i."""
-        con = sqlite3.connect(self.db_path, timeout=30)
-        try:
-            con.execute("PRAGMA journal_mode=WAL")
-            con.execute(
-                """INSERT INTO filestate(path, missing, checked_at) VALUES(?,?,?)
-                   ON CONFLICT(path) DO UPDATE SET missing=excluded.missing,
-                     checked_at=excluded.checked_at""",
-                (path, 1 if missing else 0, checked_at))
-            con.commit()
-        finally:
-            con.close()
+        # A verify pass makes ~21k rapid open/write/close cycles against a WAL db;
+        # on Windows a single transient "attempt to write a readonly database" (the
+        # -shm handle racing another opener) used to abort the WHOLE pass at
+        # whatever file it reached (observed 2026-08-04 at 16,671/21,236). One
+        # retried write is cheap; a dead pass costs a full re-run.
+        for attempt in (1, 2, 3):
+            con = sqlite3.connect(self.db_path, timeout=30)
+            try:
+                con.execute("PRAGMA journal_mode=WAL")
+                con.execute(
+                    """INSERT INTO filestate(path, missing, checked_at) VALUES(?,?,?)
+                       ON CONFLICT(path) DO UPDATE SET missing=excluded.missing,
+                         checked_at=excluded.checked_at""",
+                    (path, 1 if missing else 0, checked_at))
+                con.commit()
+                break
+            except sqlite3.OperationalError:
+                if attempt == 3:
+                    raise
+                time.sleep(0.2 * attempt)
+            finally:
+                con.close()
         if 0 <= i < len(self.lib.missing):
             self.lib.missing[i] = bool(missing)
             self.lib.checked_at[i] = checked_at

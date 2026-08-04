@@ -212,6 +212,24 @@ class HybridEngine:
         # engine pool: CLAP tracks; when the lib term is active, restrict to the
         # clap∩librosa joint pool exactly as V2 did (no librosa => can't score lib).
         paths = [p for p in clap if p in libN] if self.use_lib else list(clap)
+        # Verified-missing files leave the pool (ruling C6, 2026-08-04): a row whose
+        # audio is gone can only ever serve dead picks. `filestate` is libverify.py's
+        # additive table -- absent (older DB) means no exclusions; relinking or a
+        # fresh verify clears the flag and the next reload restores the track.
+        # Fresh handle on purpose: `conn` above is already closed by here.
+        fs_conn = _connect_readonly(db_path, timeout=30)
+        try:
+            gone = {p for (p,) in fs_conn.execute(
+                "SELECT path FROM filestate WHERE missing=1")}
+        except sqlite3.OperationalError:
+            gone = set()          # no filestate table in this DB
+        finally:
+            fs_conn.close()
+        if gone:
+            n0 = len(paths)
+            paths = [p for p in paths if p not in gone]
+            if n0 != len(paths):
+                print(f"pool: excluded {n0 - len(paths)} verified-missing file(s)")
         if not paths:
             raise SystemExit("no tracks with both CLAP and librosa features — run "
                              "scan.py analyze + embed.py, or set the 'lib' weight to 0")

@@ -27,6 +27,9 @@ DEFAULTS = {
     "engine": "auto",              # auto | v2 | musicip | learned  (auto = probe MusicIP, fall back v2)
     "musicip_url": "http://localhost:10002",
     "library_folders": [],         # watched/scanned music roots
+    "exclude_folders": [],         # folder prefixes import-folder never walks (ruling
+                                   # B2 2026-08-04: _SYNCAPP\Versioning seeded 199 dead
+                                   # rows; scan.py prunes these during the walk)
     "local_library_root": "",      # local drive path matching paths as stored in the DB
                                    # (export flavor: local). '' = derived from the DB's own
                                    # path prefix at startup (see export.derive_local_root).

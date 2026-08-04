@@ -35,6 +35,32 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   and playlist name.
 
 ### Changed
+- **Verified-missing files leave the mix pool** (`src/hybrid.py`), ruling C6: a
+  library row whose audio file is gone (per libverify's `filestate`, populated by
+  "Check files now") can only ever serve dead picks, so the engine now drops it at
+  pool build and says so ("pool: excluded N verified-missing file(s)"). Relinking
+  or a fresh verify restores it at the next reload. **Observed** against the live
+  DB 2026-08-04: first full prod verify found 22 missing of 21,236 checked; after
+  reload the pool read 21,214 (later 21,215 with one new import) and the loader
+  printed the exclusion line. The regression baseline was re-sealed the same day
+  (workspace `tools/regression_gate.py` now points at
+  REGRESSION_BASELINE_20260804; 16/16 against it).
+- **Scans can exclude folders** (`src/scan.py`, `src/config.py`,
+  `web/scanjob.py`), ruling B2: new `exclude_folders` setting, folder prefixes
+  `import-folder` prunes during its walk. Born from `_SYNCAPP\Versioning`, a sync
+  tool's version-history folder that seeded 199 dead rows. **Observed**: setting
+  saved via /api/settings; scan started with exclude args logged.
+- **`POST /api/track/delete` accepts `{path}`** (`web/userdata.py`) for rows the
+  pool never held: analysis failures live in `tracks` but have no pool index, so
+  the ruled cleanup of the 199 dead rows had no addressable handle. Same loopback
+  guard, same lock, same transactional core, still never touches the audio file.
+  **Observed**: 199/199 dead rows deleted via the endpoint against the live DB
+  (log kept in the workspace audit folder); unknown path answers 404.
+- **A verify pass survives a transient write error** (`web/libverify.py`): the
+  per-file filestate write now retries up to three times before aborting the
+  pass. **Observed**: the first prod verify died at 16,671/21,236 on one
+  "attempt to write a readonly database"; after the retry change a full pass
+  completed 21,236/21,236 with no error.
 - **Selection-scope Send-to no longer writes an .m3u8** (`web/exportjob.py`),
   ruling B4: the numbered filenames already carry play order on a dumb device, so
   a hand-picked handful of tracks got a clutter playlist it never asked for.
