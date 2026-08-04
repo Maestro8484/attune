@@ -840,6 +840,54 @@ async function doMix(seedI, opts) {
   finally { $('btnMix').disabled = false; }
 }
 
+/* Blend: 2+ selected rows -> a mix that sounds like ALL of them (ruling A1, an
+   acoustic blend against the seeds' shared center). The server reports `cohesion`
+   (how alike the seeds themselves are); a low number is surfaced instead of
+   silently serving a stretch (ruling A4; threshold provisional pending ears). */
+async function doBlend(seedIds) {
+  if (!seedIds || seedIds.length < 2) return toast('Select two or more tracks first', true);
+  S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
+  S.banLabel = {};
+  const p = new URLSearchParams();
+  seedIds.forEach(i => p.append('i', i));
+  p.set('size', Math.max(20, Math.min(150, +$('mixSize').value || 100)));
+  try {
+    const j = await jget('/api/mix/blend?' + p);
+    S.seed = seedIds[0];
+    S.liked = []; S.disliked = [];
+    const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
+    S.mix = [...seedIds, ...ids];
+    $('mixN').textContent = S.mix.length;
+    const c = j.cohesion;
+    if (c != null && c < 0.5) {
+      toast(`These seeds don't blend well (cohesion ${c.toFixed(2)}) — expect a stretch`, true);
+    } else if (c != null) {
+      toast(`Blend of ${seedIds.length} seeds · cohesion ${c.toFixed(2)}`);
+    }
+    await showMix();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* Adventure: exactly two selected rows -> an ordered walk FROM the first TO the
+   last (row order), endpoints included (ruling A1; the Sonic Adventure shape on
+   our own vectors). */
+async function doAdventure(seedIds) {
+  if (!seedIds || seedIds.length !== 2) return toast('Select exactly two tracks (start and destination)', true);
+  S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
+  S.banLabel = {};
+  const p = new URLSearchParams({ a: seedIds[0], b: seedIds[1],
+    size: Math.max(3, Math.min(100, +$('mixSize').value || 25)) });
+  try {
+    const j = await jget('/api/mix/adventure?' + p);
+    S.seed = seedIds[0];
+    S.liked = []; S.disliked = [];
+    S.mix = (j.tracks || []).map(x => x.i);
+    $('mixN').textContent = S.mix.length;
+    toast(`Adventure: ${j.a.label} → ${j.b.label}`);
+    await showMix();
+  } catch (e) { toast(e.message, true); }
+}
+
 /* FLIP: capture where each row sits, re-render, then slide survivors from their old
    position to the new one and fade newcomers in. This is what makes a re-rank read as
    "the mix responded to me" instead of a flicker. Web Animations API — no class juggling. */
@@ -2091,6 +2139,8 @@ function bindEvents() {
     ctx.hidden = true;
     switch (li.dataset.act) {
       case 'mix': doMix(i); break;
+      case 'blend': doBlend(selectedIds()); break;
+      case 'adventure': { const s = selectedIds(); doAdventure(s); break; }
       case 'play': Player.playTrack(i); break;
       case 'playnext': Player.queueAdd(selectedIds().length ? selectedIds() : [i], { next: true });
         if (S.view === 'nowplaying') showNowPlaying();
