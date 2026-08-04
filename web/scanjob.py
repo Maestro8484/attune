@@ -111,7 +111,7 @@ class ScanJob:
         self.after = {}
 
     # ---------------------------------------------------------------- run
-    def start(self, folders, ml_python):
+    def start(self, folders, ml_python, exclude=()):
         with _START_LOCK:
             if self.running:
                 raise RuntimeError("a scan is already running")
@@ -119,10 +119,12 @@ class ScanJob:
             self.running = True
             self.started = int(time.time())
             self.before = _db_counts(self.db_path)
-            self.logger.info("scan started: folders=%s ml_python=%s",
-                             folders, ml_python or "(standalone/analyzer)")
+            self.logger.info("scan started: folders=%s ml_python=%s exclude=%s",
+                             folders, ml_python or "(standalone/analyzer)",
+                             list(exclude) or "(none)")
             self.thread = threading.Thread(
-                target=self._run, args=(list(folders), ml_python), daemon=True)
+                target=self._run, args=(list(folders), ml_python, list(exclude)),
+                daemon=True)
             self.thread.start()
 
     def _exec(self, name, argv):
@@ -158,7 +160,7 @@ class ScanJob:
         self.logger.info("stage done: %s rc=%s seconds=%s", name, rc, seconds)
         return rc
 
-    def _run(self, folders, ml_python):
+    def _run(self, folders, ml_python, exclude=()):
         try:
             # Interpreter + embed script for the heavy (analyze/embed) stages.
             #   ml_python set        -> reference/retrain path: ML venv + embed.py
@@ -213,9 +215,12 @@ class ScanJob:
                 if not os.path.isdir(d):
                     self.lines.append(f"skipping missing folder: {d}")
                     continue
+                excl_args = []
+                for e in (exclude or []):
+                    excl_args += ["--exclude", e]
                 rc = self._exec(f"import {os.path.basename(d) or d}",
                                 _scan_argv(imp_python, "import-folder", d,
-                                           "--db", self.db_path))
+                                           "--db", self.db_path, *excl_args))
                 if rc != 0:
                     if not self.cancelled:
                         self.error = f"import failed (rc={rc}) — see log tail"
@@ -306,8 +311,11 @@ def register(app, ctx):
         ml = (s.get("ml_venv_python") or "").strip()
         if ml and not os.path.isfile(ml):
             return jsonify(ok=False, error=f"ml_venv_python not found: {ml}"), 400
+        # settings `exclude_folders`: prefixes import-folder never walks (ruling B2)
+        excl = [e for e in (s.get("exclude_folders") or [])
+                if isinstance(e, str) and e.strip()]
         try:
-            job.start(folders, ml)
+            job.start(folders, ml, excl)
         except RuntimeError as e:
             return jsonify(ok=False, error=str(e)), 409
         return jsonify(ok=True)

@@ -255,7 +255,13 @@ class UserData:
         own writes. The in-RAM pool (self.eng/self.lib, and whichever engine is
         active) still holds this track until the next hot reload (see libreload.py) —
         deliberately not addressed here; the caller is expected to offer a reload."""
-        path = self.paths[i]
+        return self.delete_path(self.paths[i])
+
+    def delete_path(self, path):
+        """delete_track's core, addressable by PATH: needed for rows the pool never
+        held (analysis failures live in `tracks` but have no pool index — the 199
+        _SYNCAPP dead rows, ruling B2 2026-08-04). Same transaction, same tables,
+        same never-touches-the-audio-file guarantee."""
         con = sqlite3.connect(self.db_path, timeout=30)
         deleted = {}
         try:
@@ -420,6 +426,20 @@ def register(app, ctx):
         if not _guard():
             return jsonify(ok=False, error="only available on the Attune machine itself"), 403
         body = request.get_json(silent=True) or {}
+        # {path} form: for rows the pool never held (analysis failures — they have
+        # no index anywhere; /api/lib/failures is where a caller learns the path).
+        # Same guard, same lock, same transactional core (ruling B2 2026-08-04).
+        if "path" in body and "i" not in body:
+            p = str(body.get("path") or "")
+            if not p:
+                return jsonify(ok=False, error="bad request"), 400
+            try:
+                result = ud.delete_path(p)
+            except sqlite3.Error as e:
+                return jsonify(ok=False, error=str(e)), 500
+            if not result["deleted"].get("tracks"):
+                return jsonify(ok=False, error="unknown path"), 404
+            return jsonify(ok=True, path=result["path"], deleted=result["deleted"])
         try:
             i = _idx(body)
         except (TypeError, ValueError):

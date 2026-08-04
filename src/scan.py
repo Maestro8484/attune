@@ -44,10 +44,25 @@ def _ffprobe_tags(path):
         return {"title": os.path.splitext(os.path.basename(path))[0]}
 
 
-def import_folder(db_path, music_dir, workers=8):
+def import_folder(db_path, music_dir, workers=8, exclude=()):
     conn = dbm.connect(db_path)
+    # exclude: folder prefixes never imported (settings `exclude_folders`, ruling
+    # B2 2026-08-04). Born from _SYNCAPP\Versioning: a sync tool's version-history
+    # folder seeded 199 dead rows the pool could never use. Pruned during the walk
+    # so an excluded tree is never even listed.
+    ex_norm = [os.path.normcase(os.path.abspath(e)).rstrip("\\/")
+               for e in (exclude or ()) if str(e).strip()]
+
+    def _excluded(d):
+        dn = os.path.normcase(os.path.abspath(d))
+        return any(dn == e or dn.startswith(e + os.sep) for e in ex_norm)
+
     files = []
     for root, _dirs, names in os.walk(music_dir):
+        if _excluded(root):
+            _dirs[:] = []
+            continue
+        _dirs[:] = [d for d in _dirs if not _excluded(os.path.join(root, d))]
         for n in names:
             if os.path.splitext(n)[1].lower() in AUDIO_EXTS:
                 files.append(os.path.abspath(os.path.join(root, n)))
@@ -172,9 +187,12 @@ def main():
     ap.add_argument("--read-map", nargs=2, metavar=("FROM", "TO"), action="append",
                     help="read audio from a local mirror: FROM path-prefix -> TO path-prefix "
                          "(repeatable). DB paths stay unchanged; only reads are redirected.")
+    ap.add_argument("--exclude", action="append",
+                    help="folder prefix to skip during import-folder (repeatable; "
+                         "settings `exclude_folders` feeds this)")
     a = ap.parse_args()
     if a.cmd == "import-folder":
-        import_folder(a.db, a.arg)
+        import_folder(a.db, a.arg, exclude=a.exclude or ())
     elif a.cmd == "import-catalog":
         import_catalog(a.db, a.arg)
     elif a.cmd == "analyze":
