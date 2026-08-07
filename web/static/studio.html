@@ -301,6 +301,13 @@
         <span id="viewSub" class="hint"></span>
         <span id="mixRecipeTag" class="pill" hidden></span>
         <span id="queueTools" hidden>
+          <!-- Blend sits FIRST because it is the reason to open this view rather than
+               just letting the queue play: it turns whatever is sitting here into the
+               seed for a new playlist. Selected rows if any are selected, otherwise
+               everything still to come. -->
+          <button id="qBlend" title="Make a playlist that sounds like these tracks.
+            Select rows first to use just those, or leave nothing selected to use
+            everything still to come in the queue">✦ Playlist from these</button>
           <button id="qClear" title="Clear the queue">Clear</button>
           <button id="qShuffle" title="Shuffle the queue">Shuffle</button>
           <button id="qSave" title="Save queue as playlist">Save…</button>
@@ -390,6 +397,13 @@
       </div>
 
       <div class="railBody" id="railQueue">
+        <!-- The rail is a plain list with no row selection, so it gets the whole-queue
+             action only; picking specific tracks happens in the Now Playing view, where
+             rows can actually be selected. Hidden until something is queued. -->
+        <div id="railQTools" hidden>
+          <button id="railBlend" title="Make a playlist that sounds like everything
+            still to come in the queue">✦ Playlist from what's next</button>
+        </div>
         <ul id="upNext" class="upnext"></ul>
         <div id="upNextEmpty" class="railEmpty">Nothing queued yet.</div>
       </div>

@@ -6,6 +6,72 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Real bitrate, sample rate, channels and codec, read off the files**
+  (`web/audioinfo.py`, new). Windows Explorer and MusicBee both show a bitrate
+  column; Attune could not, because `tracks` stores no encoding data at all.
+  Deliberately NOT computed as `bytes*8/seconds` — that average includes the ID3
+  tag and any embedded cover art (a 2 MB jacket on a four-minute track inflates it
+  by ~66 kbps) and cannot tell CBR from VBR. **Uses mutagen, already a dependency
+  of the lean runtime venv and already used by `userdata.py`** — so no new
+  dependency and no entanglement with the pending ruling to drop ffmpeg/ffprobe
+  from the bundle. `audioinfo` is a new additive table outside `db.py`'s
+  SCHEMA_VERSION guard, same contract as `filestate`/`usermeta`/`recipes`. The fill
+  pass runs on a background thread only, never in a request thread (`libverify.py`'s
+  rule for the SMB library), auto-starts once when rows are missing, and
+  `POST /api/lib/audioinfo?force=1` re-reads everything so a bad pass can be
+  corrected. **Observed** on a scratch copy of the live DB: all 21,215 pool tracks
+  read in 80 s, 2 unreadable (one a known-broken Chemical Brothers track), 4,437
+  CBR / 3,707 VBR / 4 ABR / 13,067 that declare no mode.
+  **Bug found and fixed during verification, worth recording because the repr
+  lies:** mutagen's `BitrateMode` prints as `<BitrateMode.CBR: 1>` but is a bare
+  `int` subclass with **no `.name` attribute** (`__mro__` is
+  `(BitrateMode, int, object)`; `isinstance(BitrateMode, enum.EnumMeta)` is False).
+  Reading `.name` yielded None for every file and silently blanked the mode on
+  5,200 rows before it was caught. Parsed off `str()` instead; re-verified against
+  raw mutagen over 200 mp3s with zero disagreements.
+- **Seven new library columns** (`web/studio.py`, `web/static/studio.js`,
+  `studio.css`): BPM, Bitrate, Format, Size, File date, Added, File path. All off
+  by default, toggled from the existing right-click menu on the column headers, all
+  sortable through the existing `SORTS` map, all persisted by the existing
+  `store.set('cols', …)`. **BPM was already in the database** — librosa computes a
+  tempo for every track during analysis and 21,237 rows carry one; it had never been
+  shown in the app. `bytes`/`mtime` were likewise already in `tracks` and only ever
+  SUMmed for the footer total. Unread bitrate and absent BPM render blank and sort
+  last, never as `0`, because a zero is a claim the file never made.
+  **Observed:** after a cold reload with the columns persisted, rows render e.g.
+  `BPM 136 · 320 CBR · MP3 · 14.0 MB · 2026-01-02 · L:\_MUSIC\…`, and
+  `GET /api/lib/tracks?sort=bitrate` returns the 192 kHz FLAC at 5,251 kbps first.
+- **Make a playlist from what is in the queue** (`web/static/studio.html`,
+  `web/static/studio.js`, `studio.css`). "✦ Playlist from these" in the Now Playing
+  toolbar uses the selected rows when any are selected and otherwise everything
+  still to come; "✦ Playlist from what's next" in the Up Next rail always means the
+  remainder, since that list has no selection of its own and appears only when two
+  or more tracks are still queued. Both route through the existing `doBlend()` and
+  the existing `/api/mix/blend`, which already accepted N seeds — no new endpoint.
+  **The result opens as a mix and never overwrites the queue** (ruling C4: a
+  playlist is a capture in time). **Seed count is capped at 25 and the toast says
+  when it bit** — the centre of a very large seed set converges on the library
+  average, which is the more-of-the-same failure LAW 1 exists to prevent, and
+  cohesion over that many seeds carries no information. Threshold provisional
+  pending ears, like the 0.5 cohesion warning. **Observed** on a scratch DB:
+  rail button → 106-track mix, queue untouched at 6; three rows selected in the
+  queue → blend seeded by exactly those three; the pre-existing right-click Blend
+  still works after the signature change; an empty queue refuses without throwing
+  and the rail button hides itself; 40 queued produced
+  `"Playlist from 25 tracks from the queue · cohesion 0.95 · used the first 25,
+  ignored 15"`.
+  **NOT verified: a physical mouse click on either new button.** The Browser pane
+  does not composite in this environment and — correcting a claim carried in
+  HANDOFF_RESUME since S13 — **ref-clicks do not land either**: a capture-phase
+  probe on `document` recorded zero click events for a ref-click reported as
+  delivered. What was verified instead: both handlers are bound, and
+  `document.elementFromPoint()` at each button's centre returns that button, so
+  nothing overlays them. The handlers themselves were then invoked directly and did
+  the full real thing, network call included.
+- `web/audioinfo.py` added to `desktop/build.py`'s GUI bundle list. A new
+  `web/*.py` that app.py loads by file path has crashed the frozen exe on boot
+  twice (`applog.py`, then `ledger.py` at `7dd30bc`); this is the same class and
+  the list entry is the fix.
 - **Multi-seed mixes: blend and adventure** (`src/hybrid.py`, `src/engine.py`,
   `web/app.py`), rulings A1-A4 of RULINGS_SHEET_2026-08-04.md per
   PROPOSAL_MULTISEED_2026-08-04.md. `GET /api/mix/blend?i=..&i=..` (repeat `i` per
