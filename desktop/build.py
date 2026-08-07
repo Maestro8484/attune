@@ -61,6 +61,7 @@ GUI_DATA = [
     ("web/libverify.py",       "attune/web"),
     ("web/applog.py",          "attune/web"),
     ("web/ledger.py",          "attune/web"),
+    ("web/audioinfo.py",       "attune/web"),
     ("src/config.py",          "attune/src"),
     # the Studio front-end: studio.html loads all five scripts + the stylesheet
     ("web/static/studio.html", "attune/web/static"),
