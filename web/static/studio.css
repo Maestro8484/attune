@@ -405,6 +405,9 @@ body.norail #splitRight, body.norail #rightRail { display:none; }
   padding:3px 8px; cursor:pointer; font-size:12px; }
 .viewBar button:hover { border-color:var(--accent); }
 #queueTools { display:flex; gap:6px; }
+#railQTools { padding:6px 8px; border-bottom:1px solid var(--line); }
+#railQTools button { width:100%; }
+#qBlend, #railBlend { color:var(--accent); }
 
 /* live mix filters — every removal stays visible and one click from undone */
 .filterBar { display:flex; align-items:center; gap:8px; flex-wrap:wrap;
@@ -472,6 +475,17 @@ tbody tr.dragover td { border-top:2px solid var(--accent); }
 .c-status { width:96px; color:var(--muted); }
 .c-status.no { color:var(--warn); }
 .c-album, .c-artist { color:var(--muted); }
+/* File + encoding columns. Numbers right-aligned and tabular so a bitrate or a size
+   column reads as a column and not as ragged text. File path is the one that can be
+   arbitrarily long, so it gets a floor rather than a fixed width and is allowed to
+   take the slack -- the table already scrolls horizontally in its own wrapper. */
+.c-bpm { width:52px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+.c-bitr { width:88px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+.c-fmt { width:56px; color:var(--muted); }
+.c-size { width:72px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+.c-fdate, .c-added { width:88px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+.c-path { min-width:260px; max-width:520px; color:var(--muted); font-size:11px;
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
 .stars { color:var(--dim); cursor:pointer; letter-spacing:1px; font-size:12px;
   user-select:none; white-space:nowrap; }
 .stars .on { color:var(--star); }

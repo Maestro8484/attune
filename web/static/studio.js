@@ -389,6 +389,15 @@ const COLS = [
   { id: 'rating', label: 'Rating', cls: 'c-rating' },
   { id: 'plays',  label: 'Plays',  cls: 'c-plays'  },
   { id: 'status', label: 'Status', cls: 'c-status' },
+  // File + encoding detail. Off by default so nobody's existing layout changes;
+  // turn them on from the right-click menu on the column headers.
+  { id: 'bpm',      label: 'BPM',       cls: 'c-bpm'    },
+  { id: 'bitrate',  label: 'Bitrate',   cls: 'c-bitr'   },
+  { id: 'format',   label: 'Format',    cls: 'c-fmt'    },
+  { id: 'size',     label: 'Size',      cls: 'c-size'   },
+  { id: 'filedate', label: 'File date', cls: 'c-fdate'  },
+  { id: 'added',    label: 'Added',     cls: 'c-added'  },
+  { id: 'path',     label: 'File path', cls: 'c-path'   },
 ];
 let visCols = new Set(store.get('cols',
   ['track', 'title', 'length', 'artist', 'album', 'year', 'rating', 'plays', 'status']));
@@ -412,8 +421,29 @@ function cellHtml(c, r) {
     case 'rating': return starsHtml(r);
     case 'plays':  return r.plays || '';
     case 'status': return esc(r.status);
+    case 'bpm':    return r.bpm || '';
+    // Real bitrate off the file header (audioinfo.py), not size/duration arithmetic.
+    // Blank while the fill pass is still working through the library — never "0".
+    // The CBR/VBR suffix only appears when the file actually declares one; plenty of
+    // older mp3s carry no Xing/LAME header and inventing a mode would be a lie.
+    case 'bitrate': return r.bitrate ? `${r.bitrate}${r.brmode ? ' ' + esc(r.brmode) : ''}` : '';
+    case 'format':  return esc(r.format || '');
+    case 'size':    return r.bytes ? mb(r.bytes) : '';
+    case 'filedate':return r.mtime ? ymd(r.mtime) : '';
+    case 'added':   return r.added ? ymd(r.added) : '';
+    case 'path':    return esc(r.path || '');
   }
   return '';
+}
+
+function mb(b) {
+  return b >= 1048576 ? (b / 1048576).toFixed(1) + ' MB' : Math.round(b / 1024) + ' KB';
+}
+function ymd(unix) {
+  const d = new Date(unix * 1000);
+  if (isNaN(d)) return '';
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-` +
+         `${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function renderHead() {
@@ -486,7 +516,10 @@ function rowsHtml(rows, opts = {}) {
     const tds = cols.map(c => {
       const extra = (c.id === 'status' && r.status !== 'Analyzed') ? ' no' : '';
       const cell = cellHtml(c, r) + (tune && c.id === 'title' ? tuneHtml(r.i) : '');
-      return `<td class="${c.cls}${extra}">${cell}</td>`;
+      // A path is wider than any sane column, so the cell truncates and hover shows
+      // the whole thing rather than forcing the table to scroll to read one row.
+      const ct = (c.id === 'path' && r.path) ? ` title="${esc(r.path)}"` : '';
+      return `<td class="${c.cls}${extra}"${ct}>${cell}</td>`;
     }).join('');
     // r.tip: hover text for the whole row. Set by the Not Mixable view, which has to be
     // able to answer "which file is this?" — those tracks appear in no other view, so the
@@ -844,8 +877,21 @@ async function doMix(seedI, opts) {
    acoustic blend against the seeds' shared center). The server reports `cohesion`
    (how alike the seeds themselves are); a low number is surfaced instead of
    silently serving a stretch (ruling A4; threshold provisional pending ears). */
-async function doBlend(seedIds) {
-  if (!seedIds || seedIds.length < 2) return toast('Select two or more tracks first', true);
+/* Ceiling on how many tracks can seed one blend. This is not tidiness: the blend ranks
+   against the seeds' shared centre, and the centre of a very large set converges on the
+   library average, which is the "everything sounds the same" failure LAW 1 exists to
+   stop. Cohesion over that many seeds carries no information either. 25 is provisional
+   pending the ear sitting, exactly like the 0.5 cohesion threshold below, and when it
+   bites the toast SAYS so rather than quietly dropping tracks. */
+const MAX_BLEND_SEEDS = 25;
+
+async function doBlend(seedIds, sourceLabel) {
+  if (!seedIds || seedIds.length < 2) return toast('Pick two or more tracks first', true);
+  let dropped = 0;
+  if (seedIds.length > MAX_BLEND_SEEDS) {
+    dropped = seedIds.length - MAX_BLEND_SEEDS;
+    seedIds = seedIds.slice(0, MAX_BLEND_SEEDS);
+  }
   S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
   S.banLabel = {};
   const p = new URLSearchParams();
@@ -859,13 +905,33 @@ async function doBlend(seedIds) {
     S.mix = [...seedIds, ...ids];
     $('mixN').textContent = S.mix.length;
     const c = j.cohesion;
+    const from = sourceLabel ? ` from the ${sourceLabel}` : '';
+    const cut = dropped ? ` · used the first ${seedIds.length}, ignored ${dropped}` : '';
     if (c != null && c < 0.5) {
-      toast(`These seeds don't blend well (cohesion ${c.toFixed(2)}) — expect a stretch`, true);
+      toast(`These ${seedIds.length} tracks don't blend well (cohesion ${c.toFixed(2)}) — ` +
+            `expect a stretch${cut}`, true);
     } else if (c != null) {
-      toast(`Blend of ${seedIds.length} seeds · cohesion ${c.toFixed(2)}`);
+      toast(`Playlist from ${seedIds.length} tracks${from} · cohesion ${c.toFixed(2)}${cut}`);
     }
     await showMix();
   } catch (e) { toast(e.message, true); }
+}
+
+/* The queue as a seed set. Selection wins when there is one -- the operator asked for
+   "the selected files in the queue" in as many words -- and with nothing selected it
+   falls back to everything still TO COME (q from the current position), not the whole
+   queue, because blending tracks already played reruns the evening.
+   The result opens as a mix and never overwrites the queue: a playlist here is a
+   capture in time (ruling C4), so nothing destructive happens behind the operator. */
+function blendFromQueue() {
+  const sel = selectedIds();
+  const useSel = sel.length >= 2;
+  const ids = [...new Set(useSel ? sel : Player.q.slice(Player.pos).filter(i => i >= 0))];
+  if (ids.length < 2) {
+    return toast(useSel ? 'Pick two or more tracks first'
+                        : 'Not enough tracks left in the queue to build from', true);
+  }
+  doBlend(ids, useSel ? 'tracks you picked' : 'queue');
 }
 
 /* Adventure: exactly two selected rows -> an ordered walk FROM the first TO the
@@ -1136,6 +1202,10 @@ async function renderUpNext() {
   if (!list || typeof Player === 'undefined') return;
   const q = Player.q, pos = Player.pos;
   $('railQN').textContent = q.length;
+  // Two or more still to come is exactly the condition the blend needs, so the button
+  // appears only when pressing it could actually work.
+  const qt = $('railQTools');
+  if (qt) qt.hidden = q.slice(pos).filter(i => i >= 0).length < 2;
   if (!railIsShowingQueue()) return;            // collapsed or on the Info tab: no fetch
   if (!q.length) { list.innerHTML = ''; $('upNextEmpty').hidden = false; return; }
   $('upNextEmpty').hidden = true;
@@ -1955,6 +2025,14 @@ function bindEvents() {
   });
 
   // queue tools
+  $('qBlend').onclick = blendFromQueue;
+  // The rail has no selection of its own, so it always means "what's still to come".
+  // Clearing S.sel first stops a stale library selection from hijacking it.
+  $('railBlend').onclick = () => {
+    const ids = [...new Set(Player.q.slice(Player.pos).filter(i => i >= 0))];
+    if (ids.length < 2) return toast('Not enough tracks left in the queue to build from', true);
+    doBlend(ids, 'queue');
+  };
   $('qClear').onclick = () => { Player.clearQueue(); showNowPlaying(); };
   $('qShuffle').onclick = () => { Player.shuffleQueue(); showNowPlaying(); };
   $('qSave').onclick = () => {

@@ -62,6 +62,13 @@ def _seconds_to_len(s):
     return f"{s // 60}:{s % 60:02d}"
 
 
+def _ext(path):
+    """File format as the operator would say it: MP3, FLAC. Taken off the filename,
+    which costs nothing -- the real codec name from the header lands separately via
+    audioinfo.py, and on this library the two agree (20,455 mp3 + 800 flac)."""
+    return os.path.splitext(path)[1].lstrip(".").upper()
+
+
 def _fold(s):
     """accent/case-insensitive compare key for search + sort."""
     s = unicodedata.normalize("NFKD", str(s or ""))
@@ -118,10 +125,27 @@ class LibraryIndex:
 
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         idx = {p: i for i, p in enumerate(paths)}
-        for p, sec in con.execute("SELECT path, seconds FROM tracks"):
+        # bytes/mtime were already in `tracks` and were only ever SUMmed for the
+        # footer total; they cost one wider SELECT to become File size / File date
+        # columns. 21,255 rows, zero nulls in either (checked 2026-08-07).
+        self.bytes = [0] * self.n
+        self.mtime = [0] * self.n
+        for p, sec, by, mt in con.execute(
+                "SELECT path, seconds, bytes, mtime FROM tracks"):
             i = idx.get(p)
             if i is not None:
                 self.seconds[i] = int(sec or 0)
+                self.bytes[i] = int(by or 0)
+                self.mtime[i] = int(mt or 0)
+        # BPM was computed by librosa during analysis and stored for every mixable
+        # track (21,237 rows with tempo > 0, checked 2026-08-07) and had never once
+        # been shown in the app. It is read here, not recomputed.
+        self.tempo = [0.0] * self.n
+        for p, tempo in con.execute(
+                "SELECT path, tempo FROM features WHERE tempo IS NOT NULL"):
+            i = idx.get(p)
+            if i is not None:
+                self.tempo[i] = float(tempo or 0.0)
         self.analyzed = [False] * self.n
         for (p,) in con.execute(
                 "SELECT path FROM features WHERE error IS NULL AND vec IS NOT NULL"):
@@ -165,6 +189,15 @@ class LibraryIndex:
         # as the user columns just above).
         self.missing = [False] * self.n
         self.checked_at = [0] * self.n
+        # encoding columns — None until audioinfo.py's AudioInfo loads the real values
+        # from `audioinfo` and overwrites these in place (same pattern again). None
+        # rather than 0 on purpose: a track whose header has not been read yet has no
+        # bitrate, and "0 kbps" would be a number the file never claimed.
+        self.bitrate = [None] * self.n
+        self.sample_rate = [None] * self.n
+        self.channels = [None] * self.n
+        self.brmode = [""] * self.n
+        self.codec = [""] * self.n
 
         self._trackno = {}
         self._trackno_lock = threading.Lock()
@@ -304,6 +337,15 @@ class LibraryIndex:
         "plays": lambda s, i: (-s.plays[i], -s.last_played[i]),
         "added": lambda s, i: -s.date_added[i],
         "status": lambda s, i: (not s.analyzed[i], s.f_artist[i]),
+        # New file/encoding sorts. Unread bitrate and missing BPM sort LAST rather
+        # than as zero, so "sort by bitrate" does not park every not-yet-read row at
+        # the top and read as "these are all 0 kbps".
+        "bpm": lambda s, i: (-s.tempo[i] if s.tempo[i] else 1, s.f_artist[i]),
+        "bitrate": lambda s, i: (-s.bitrate[i] if s.bitrate[i] else 1, s.f_artist[i]),
+        "size": lambda s, i: -s.bytes[i],
+        "filedate": lambda s, i: -s.mtime[i],
+        "format": lambda s, i: (_ext(s.paths[i]), s.f_artist[i]),
+        "path": lambda s, i: _fold(s.paths[i]),
     }
 
     def update_row(self, i, fields):
@@ -345,6 +387,18 @@ class LibraryIndex:
             "added": self.date_added[i] or None,
             "status": "Analyzed" if self.analyzed[i] else "Not analyzed",
             "missing": bool(self.missing[i]),
+            # file + encoding detail. `path` was always in RAM and simply never sent.
+            # bitrate/sample_rate/channels are None until audioinfo.py has read that
+            # file's header; the UI renders None as blank, never as 0.
+            "path": self.paths[i],
+            "bytes": self.bytes[i] or None,
+            "mtime": self.mtime[i] or None,
+            "format": _ext(self.paths[i]),
+            "bpm": round(self.tempo[i]) if self.tempo[i] else None,
+            "bitrate": self.bitrate[i],
+            "sample_rate": self.sample_rate[i],
+            "channels": self.channels[i],
+            "brmode": self.brmode[i] or "",
         }
 
 
