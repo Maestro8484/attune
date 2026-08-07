@@ -139,6 +139,11 @@ class ReloadJob:
                 filestate = ctx.get("filestate")
                 if filestate is not None:
                     filestate.reload()
+                # audioinfo.py's AudioInfo re-attaches lib.bitrate/sample_rate/channels/
+                # brmode/codec, same contract again.
+                audioinfo = ctx.get("audioinfo")
+                if audioinfo is not None:
+                    audioinfo.reload()
                 self.new_count = len(eng.paths)
         except (Exception, SystemExit) as e:
             self.error = str(e)

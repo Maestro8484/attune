@@ -1077,6 +1077,18 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "engine_lock": engine_lock, "locked": _locked,
     })
 
+    # ---- audio file detail: real bitrate / sample rate / channels read off the file
+    # headers with mutagen (audioinfo.py). Registered beside libverify because it is the
+    # same additive-table + attach-columns-to-lib shape, and its fill pass auto-starts
+    # here when rows are missing.
+    ai_spec = importlib.util.spec_from_file_location(
+        "attune_audioinfo", os.path.join(HERE, "audioinfo.py"))
+    audioinfo = importlib.util.module_from_spec(ai_spec)
+    ai_spec.loader.exec_module(audioinfo)
+    ai_handles = audioinfo.register(app, {
+        "db_path": db_path, "lib": lib, "locked": _locked,
+    })
+
     # ---- hot pool reload: POST /api/lib/reload rebuilds eng/active/labels/lib/ud from
     # the DB in a background thread and installs them without restarting the app
     # (libreload.py). Registered last among the state-touching modules so its ctx can
@@ -1087,6 +1099,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "eng": eng, "active": active, "labels": labels, "labels_lc": labels_lc,
         "lib": lib, "ud": ud, "engine_lock": engine_lock,
         "filestate": verify_handles["filestate"],
+        "audioinfo": ai_handles["info"],
     })
 
     # ---- auto-playlists: user-defined smart-playlist rules (smartlists.py). Registered
