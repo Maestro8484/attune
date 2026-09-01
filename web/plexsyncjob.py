@@ -31,8 +31,17 @@ Endpoints (all loopback-guarded like ``/api/export/copy`` -- reading a local fol
 writing to the household Plex server is a this-machine action, not something a LAN
 client should drive):
   GET  /api/plexsync/status
-  POST /api/plexsync/preview  {folder, title}
+  POST /api/plexsync/preview  {folder, title, order?}
   POST /api/plexsync/apply    {folder, title, prune?}
+
+`title` is a TEMPLATE, not a literal: "DrivingTunesUSB ({date})" resolves to
+"DrivingTunesUSB (26-09-01)". It is expanded ONCE, during preview, and the resolved name
+is carried to apply -- expanding it again at write time would let a run started at 23:59
+create a playlist under a different name than the one that was approved.
+
+The template therefore decides what the sync DOES, and the panel shows the resolved name
+before anything is written: a fixed name updates one playlist forever, a name carrying
+{date} makes a new one each day and leaves yesterday's standing.
   POST /api/plexsync/cancel
   POST /api/plexsync/rescan   ask Plex to re-read the library from disk
   POST /api/plexsync/open     open the playlist in Plex's own web app, in a real browser
@@ -89,6 +98,7 @@ class PlexSyncJob:
         self.lines = deque(maxlen=40)
         self.preview = None        # the parked report, see _shape()
         self.applied = None        # what the last apply actually did
+        self.order = "folder"      # running order asked for
         self.scanning = False      # Plex is re-reading the library right now
         self.scan_pct = None       # its own progress number, when it gives one
         self._lock = threading.Lock()
@@ -98,7 +108,7 @@ class PlexSyncJob:
             self.lines.append(msg)
 
     # ------------------------------------------------------------------ preview
-    def start_preview(self, folder, title, connect):
+    def start_preview(self, folder, title, order, connect):
         with _START_LOCK:
             if self.running:
                 raise RuntimeError("a Plex sync is already running")
@@ -107,14 +117,16 @@ class PlexSyncJob:
             self.applied = keep_applied
             self.running = True
             self.folder = folder
-            self.title = title
+            self.title = title            # the TEMPLATE as typed
+            self.order = order
             self.started = int(time.time())
             self.thread = threading.Thread(target=self._run_preview,
-                                           args=(folder, title, connect),
+                                           args=(folder, title, order, self.started,
+                                                 connect),
                                            daemon=True)
             self.thread.start()
 
-    def _run_preview(self, folder, title, connect):
+    def _run_preview(self, folder, template, order, seed, connect):
         try:
             plexmatch = _load("plexmatch")
             self.phase = "reading plex"
@@ -140,6 +152,11 @@ class PlexSyncJob:
             if self.cancelled:
                 raise RuntimeError("cancelled")
 
+            # Stamped once, here, and carried to apply -- same reason the shuffle
+            # seed is the preview's own start time: the list looked at is the list
+            # written.
+            title = plexmatch.resolve_title(template)
+            rep["resolved"] = plexmatch.order_resolved(rep["resolved"], order, seed)
             existing = px.find_playlist(title)
             now = len(px.playlist_items(existing["ratingKey"])) if existing else None
             # If Plex is mid-scan, anything reported missing may simply not be indexed
@@ -148,7 +165,7 @@ class PlexSyncJob:
             self.scanning, self.scan_pct = px.scan_activity()
             self.preview = _shape(rep, title, now,
                                   px.web_url(existing["ratingKey"]) if existing else "",
-                                  self.scanning)
+                                  self.scanning, template, order)
             c = rep["counts"]
             self._log(f"{c['resolved']} of {c['source']} matched, "
                       f"{c['residue']} not in your library.")
@@ -160,17 +177,22 @@ class PlexSyncJob:
             self.finished = int(time.time())
 
     # -------------------------------------------------------------------- apply
-    def start_apply(self, folder, title, prune, connect):
-        """Refuses anything but the parked preview for this exact folder and title."""
+    def start_apply(self, folder, template, prune, connect):
+        """Refuses anything but the parked preview for this exact folder and template.
+
+        Matched on the TEMPLATE the operator has on screen, then written under the
+        RESOLVED name the preview stamped -- so the playlist created is the one the panel
+        named, even if the clock has since rolled past midnight.
+        """
         with _START_LOCK:
             if self.running:
                 raise RuntimeError("a Plex sync is already running")
             p = self.preview
             if not p:
                 raise RuntimeError("look at the folder first, then apply what you saw")
-            if p["folder"] != folder or p["title"] != title:
+            if p["folder"] != folder or p["template"] != template:
                 raise RuntimeError("that preview was for a different folder or playlist "
-                                   "-- run the check again")
+                                   "name -- run the check again")
             if not p["keys"]:
                 raise RuntimeError("nothing in that folder could be matched, so there is "
                                    "nothing to put in the playlist")
@@ -178,10 +200,11 @@ class PlexSyncJob:
             self.cancelled = False
             self.error = ""
             self.folder = folder
-            self.title = title
+            self.title = template
             self.started = int(time.time())
             self.thread = threading.Thread(target=self._run_apply,
-                                           args=(title, list(p["keys"]), prune, connect),
+                                           args=(p["title"], list(p["keys"]), prune,
+                                                 connect),
                                            daemon=True)
             self.thread.start()
 
@@ -190,17 +213,30 @@ class PlexSyncJob:
             self.phase = "writing"
             self._log(f"Updating '{title}' on Plex…")
             px = connect()
-            res = px.sync_playlist(title, keys, prune=prune)
+
+            def moving(done, total):
+                self.indexed, self.index_total = done, total
+
+            res = px.sync_playlist(title, keys, prune=prune, order=True,
+                                   progress=moving)
             if res.get("error"):
                 raise RuntimeError(res["error"])
             self.applied = {"title": title, "playlist": res["playlist"],
                             "created": res["created"], "before": res["before"],
                             "after": res["after"], "added": res["added"],
                             "removed": res["removed"], "web_url": res.get("web_url", ""),
+                            "ordered": res.get("ordered"),
                             "asked": len(keys), "when": int(time.time())}
             verb = "Created" if res["created"] else "Updated"
             self._log(f"{verb} '{title}': {res['before']} → {res['after']} tracks, "
-                      f"{res['added']} added, {res['removed']} removed.")
+                      f"{res['added']} added, {res['removed']} removed"
+                      + (", in the order you asked for."
+                         if res.get("ordered") else "."))
+            if res.get("ordered") is False:
+                # Said out loud rather than swallowed: the tracks are all there, the
+                # running order is not what was asked for. Read back off the server.
+                self._log("The tracks are all there, but Plex did not keep the "
+                          "running order. Try the update again.")
         except Exception as e:                                  # noqa: BLE001
             self.error = _friendly(e)
         finally:
@@ -248,7 +284,8 @@ def _zone_chooser(px):
     return choose
 
 
-def _shape(rep, title, existing_count, web_url="", scanning=False):
+def _shape(rep, title, existing_count, web_url="", scanning=False, template="",
+           order="folder"):
     """The preview, trimmed to what the UI shows and what apply needs.
 
     Carries `keys` -- the exact ratingKeys apply will write -- so the list that was
@@ -267,7 +304,8 @@ def _shape(rep, title, existing_count, web_url="", scanning=False):
     flagged_files = {f["file"] for f in rep["flagged"]}
     matched = [row(r, "flagged" if r["file"] in flagged_files else "matched")
                for r in rep["resolved"]]
-    return {"folder": rep["folder"], "title": title,
+    return {"folder": rep["folder"], "title": title, "template": template,
+            "order": order,
             "counts": rep["counts"], "existing": existing_count,
             "web_url": web_url, "scanning": bool(scanning),
             "keys": [r["track"]["rk"] for r in rep["resolved"]],
@@ -322,14 +360,19 @@ def register(app, ctx):
         # this-machine action, same reasoning as /api/export/copy.
         return request.remote_addr in ("127.0.0.1", "::1")
 
-    def _remember(folder, title):
-        """Persist the two fields so the panel comes back filled in. Best effort: a
-        settings write that fails must not fail the sync the operator asked for."""
+    def _remember(folder, title, order):
+        """Persist the panel's three fields so it comes back filled in. Best effort: a
+        settings write that fails must not fail the sync the operator asked for.
+
+        `title` is stored as the TEMPLATE he typed, not the name it resolved to -- storing
+        the resolved name would silently freeze today's date into tomorrow's run."""
         try:
             s = cfgmod.load()
-            if s.get("plex_sync_folder") != folder or s.get("plex_sync_title") != title:
+            if (s.get("plex_sync_folder") != folder or s.get("plex_sync_title") != title
+                    or s.get("plex_sync_order") != order):
                 s["plex_sync_folder"] = folder
                 s["plex_sync_title"] = title
+                s["plex_sync_order"] = order
                 cfgmod.save(s)
         except Exception:                                       # noqa: BLE001
             pass
@@ -357,10 +400,13 @@ def register(app, ctx):
         if not title:
             return jsonify(ok=False, error="give the playlist a name"), 400
         try:
-            job.start_preview(folder, title, _connect)
+            order = body.get("order")
+            if order not in _load("plexmatch").ORDERS:
+                order = "folder"
+            job.start_preview(folder, title, order, _connect)
         except RuntimeError as e:
             return jsonify(ok=False, error=str(e)), 409
-        _remember(folder, title)
+        _remember(folder, title, order)
         return jsonify(ok=True)
 
     @bp.post("/api/plexsync/apply")

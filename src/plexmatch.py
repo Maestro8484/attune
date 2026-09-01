@@ -350,3 +350,80 @@ def format_report(rep, limit=0):
     if limit and len(rep["resolved"]) > limit:
         out.append(f"  ... and {len(rep['resolved']) - limit} more")
     return "\n".join(out)
+
+
+# ---------------------------------------------------------------- naming + order
+# Operator ruling 2026-09-01: a playlist is named from a TEMPLATE, and the default
+# stamps the date it was made -- "DrivingTunesUSB (26-09-01)". A name he types himself
+# ("DrivingTunesUSB Fall 2026") is left exactly as typed.
+#
+# The consequence is worth stating out loud because it changes what the sync DOES: the
+# name is the identity. Same name -> the existing playlist is updated in place. A name
+# with today's date in it -> a new playlist every day, and yesterday's is left standing.
+# Neither is more correct; the template decides, and the panel shows the resolved name
+# before anything is written so the choice is visible rather than inferred.
+DEFAULT_TITLE_TEMPLATE = "DrivingTunesUSB ({date})"
+
+# Kept deliberately small. Every extra token is another thing to look up, and he can
+# type any literal text he wants around them.
+TITLE_TOKENS = {
+    "date": "%y-%m-%d",      # 26-09-01
+    "ymd": "%Y-%m-%d",       # 2026-09-01
+    "year": "%Y",            # 2026
+    "month": "%B",           # September
+}
+
+_TOKEN_RE = re.compile(r"\{(\w+)\}")
+
+
+def resolve_title(template, when=None):
+    """Expand {date}/{ymd}/{year}/{month} in a playlist name template.
+
+    `when` is a datetime the CALLER supplies, so the resolved name is stamped once and
+    then carried: expanding lazily at write time would let a run started at 23:59 preview
+    one name and create another, which is precisely the kind of "the thing I approved is
+    not the thing that happened" the preview/apply split exists to prevent.
+
+    An unknown token is left standing as literal text rather than blanked -- a name that
+    still visibly says {foo} tells the operator he mistyped something; a silently empty
+    one does not.
+    """
+    import datetime
+    when = when or datetime.datetime.now()
+
+    def sub(m):
+        fmt = TITLE_TOKENS.get(m.group(1))
+        return when.strftime(fmt) if fmt else m.group(0)
+
+    return _TOKEN_RE.sub(sub, template or DEFAULT_TITLE_TEMPLATE).strip()
+
+
+# Running order. "folder" is the default because the folder IS the roster -- a stick
+# plays in filename order and this matches it, so the car and Plex agree.
+ORDERS = ("folder", "shuffle", "artist")
+
+
+def order_resolved(resolved, how="folder", seed=0):
+    """Return `resolved` (plexmatch's matched entries) in the running order asked for.
+
+    shuffle uses a deterministic Fisher-Yates driven by `seed`, NOT random.shuffle: the
+    same seed gives the same order, so the list previewed is the list written. A shuffle
+    that re-rolled between looking and applying would break the preview contract for the
+    one option most likely to be used.
+    """
+    rows = list(resolved)
+    if how == "artist":
+        def key(r):
+            t = r.get("track") or {}
+            return (normalise(t.get("artist")), normalise(t.get("album")),
+                    normalise(t.get("title")))
+        rows.sort(key=key)
+    elif how == "shuffle":
+        state = (int(seed) or 1) & 0x7FFFFFFF
+        for i in range(len(rows) - 1, 0, -1):
+            # Lehmer / MINSTD: tiny, dependency-free, and reproducible from the seed.
+            state = (state * 48271) % 2147483647
+            j = state % (i + 1)
+            rows[i], rows[j] = rows[j], rows[i]
+    # "folder" is already the order resolve_folder produced (sorted paths); leave it.
+    return rows
