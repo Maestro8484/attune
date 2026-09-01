@@ -6,6 +6,62 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **The folder mirror is a panel in Attune now, not a script** (`web/plexsyncjob.py`,
+  new; `web/static/studio.{html,js,css}`; wired in `web/app.py`; two keys in
+  `src/config.py`). It sits under Export, beside "Take it with you", and it is
+  **two buttons on purpose**. *Check the folder* reads the folder and the Plex library,
+  reports, and writes nothing. *Update Plex* then writes EXACTLY the list that check
+  produced — `start_apply()` refuses unless a completed preview for the same folder AND
+  the same title is parked in memory, and the Update button retracts the moment either
+  field is edited. One button would let the folder change between looking and writing,
+  and the operator would be approving a list nobody had read. Shape cloned from
+  `exportjob.py`: one job at a time behind a module-level `_START_LOCK`, lock-free
+  `/status` reads, `register(app, ctx)`, loopback-guarded like `/api/export/copy`.
+  **Observed with a real click in a real browser** (not a synthetic event): clicking
+  *Check the folder* ran the check and revealed the *Update Plex* and *See it in Plex*
+  buttons; the panel read "128 of 130 matched, 1 not in your library, 1 duplicate — the
+  playlist holds 128 today — Plex is still scanning…". Guards proven by request: apply
+  before any preview → 409, apply with a different title → 409, a folder that does not
+  exist → 400.
+- **"See it in Plex" — the confirmation is the operator's eyes, not our number**
+  (`PlexExporter.web_url()`, `POST /api/plexsync/open`). Attune reporting "128 tracks"
+  is Attune's word for it. This opens the actual playlist in Plex's own web app, and
+  `sync_playlist()` now reads its count back off the server after the write instead of
+  counting what was sent. Deliberately **server-side `webbrowser.open`** rather than a
+  link in the page: Attune's shipped surface is a pywebview window, where an external
+  link can land in the embedded view or nowhere. The endpoint refuses any URL that is
+  not a `/web/` link on the configured server, so a caller-supplied url cannot turn it
+  into an open-anything hole. **Observed:** `POST /api/plexsync/open` → 200, Chrome
+  launched three seconds later; a junk url → 400.
+- **"Rescan Plex library", and honest wording while a scan is running**
+  (`PlexExporter.rescan()` / `scan_activity()`, `POST /api/plexsync/rescan`). Earned by
+  a real failure: a track restored to the library minutes earlier is genuinely absent
+  from Plex's index, so the report called it "not in your library" — honestly, and
+  uselessly. The status payload now carries Plex's own scan progress and the report says
+  "not in your library, **or not scanned yet**", so "still scanning" and "really missing"
+  stop looking identical. `rescan()` goes through `_verb` rather than `_get` because
+  Plex answers the refresh with an **empty body** and `_get` assumes JSON.
+  **Observed:** `/api/plexsync/rescan` → `{ok: true, scanning: true, pct: 99}`.
+- **Everything in the folder counts, subfolders at any depth** (`plexmatch.list_folder`
+  now defaults `recursive=True`). Operator ruling 2026-09-01: "if it's in there it's on
+  the playlist - including folders that could be dropped in there now or later." The
+  earlier non-recursive default was justified by four unrelated sub-projects that
+  happened to sit in that folder; he deleted them and ruled the other way, so that
+  rationale is **deleted from the code, not merely overridden**, and recursion is not a
+  setting in the app — there is no switch to drift out of step with it.
+  **Observed** on a scratch tree: a file three levels down is picked up; the flat view
+  survives only as `recursive=False`, which nothing in Attune passes.
+- **Bug found by reading the real response, not the code:** `/api/settings` answers
+  `{settings, path, restart_keys, env_overrides}` and the panel was reading the top
+  level. It looked like it worked and silently left both remembered fields blank on
+  every load.
+- **`web/plexsyncjob.py` and `src/plexmatch.py` are in `desktop/build.py`'s `GUI_DATA`.**
+  Both are loaded by importlib-path, which PyInstaller cannot see — the exact gap that
+  shipped the `ledger.py` and `audioinfo.py` boot crashes. **Observed after the rebuild:**
+  the frozen exe boots with window title "Attune Studio", and runs the whole feature out
+  of bundled code — preview (128 of 130 matched), the Plex web link, and the rescan
+  endpoint. **Regression gate 16/16 byte-identical**; production `mixer.db` never opened
+  by any of this code and SHA256 (`1d9aa7a3…a27944`) identical across the whole session.
 - **A folder of loose mp3s can now become, and stay, a Plex playlist**
   (`src/plexmatch.py` and `src/plexsync.py`, both new; `src/export.py` extended,
   additively — 132 insertions, 0 deletions). The existing Plex export
