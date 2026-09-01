@@ -1595,6 +1595,130 @@ async function pollCopy() {
 function startCopyPoll() { if (copyTimer) return; copyTimer = setInterval(pollCopy, 800); pollCopy(); }
 function stopCopyPoll() { clearInterval(copyTimer); copyTimer = 0; }
 
+/* -- Mirror a folder onto a Plex playlist (backend: web/plexsyncjob.py).
+   TWO buttons on purpose. "Check the folder" reads and reports and writes nothing;
+   "Update Plex" then writes EXACTLY the list the check just showed, which is why the
+   Update button only appears after a check and disappears again the moment the folder
+   or playlist name is edited. One button would let the folder change between looking
+   and writing, and you would be approving a list nobody had read. */
+let psTimer = 0;
+function psErr(m) { $('psMsg').className = 'msg err'; $('psMsg').textContent = m; }
+function psShowApply(on) { $('btnPsApply').hidden = !on; }
+
+async function psBrowse() {
+  const picked = await Prefs.pickFolder($('psFolder').value || '');
+  if (picked) { $('psFolder').value = picked; psShowApply(false); $('psReport').hidden = true; }
+}
+async function psCheck() {
+  const folder = $('psFolder').value.trim(), title = $('psTitle').value.trim();
+  if (!folder) return psErr('Pick the folder to mirror first');
+  if (!title) return psErr('Give the playlist a name');
+  $('psMsg').className = 'msg'; $('psMsg').textContent = 'Reading your Plex library…';
+  psShowApply(false); $('psReport').hidden = true;
+  try { await jpost('/api/plexsync/preview', { folder, title }); startPsPoll(); }
+  catch (e) { psErr(e.message); }
+}
+async function psApply() {
+  const folder = $('psFolder').value.trim(), title = $('psTitle').value.trim();
+  const no_prune = $('psPrune').value === 'keep';
+  $('psMsg').className = 'msg'; $('psMsg').textContent = 'Updating the playlist…';
+  try { await jpost('/api/plexsync/apply', { folder, title, no_prune }); startPsPoll(); }
+  catch (e) { psErr(e.message); }
+}
+async function psCancel() { try { await jpost('/api/plexsync/cancel'); } catch (e) { psErr(e.message); } }
+// Plex only knows about files it has scanned, so a track you restored five minutes ago
+// is genuinely absent from its index and the check reports it as missing -- honestly,
+// and uselessly. This is the fix, and it runs on the server for minutes.
+async function psRescan() {
+  $('psMsg').className = 'msg'; $('psMsg').textContent = 'Asking Plex to re-read your library…';
+  try {
+    await jpost('/api/plexsync/rescan', {});
+    $('psMsg').className = 'msg';
+    $('psMsg').textContent = 'Plex is re-reading your library. It takes a few minutes on a big ' +
+      'library — check the folder again once it settles.';
+  } catch (e) { psErr(e.message); }
+}
+// Human confirmation, not ours: this opens the real playlist on the real server in a
+// real browser, so the operator sees it rather than taking Attune's count on trust.
+// Server-side webbrowser.open, because a plain link inside the pywebview shell can land
+// in the embedded view or nowhere.
+let psWebUrl = '';
+async function psOpen() {
+  if (!psWebUrl) return;
+  try { await jpost('/api/plexsync/open', { url: psWebUrl }); }
+  catch (e) { psErr(e.message + ' — open it yourself at: ' + psWebUrl); }
+}
+function psSetLink(url) { psWebUrl = url || ''; $('btnPsOpen').hidden = !psWebUrl; }
+
+function psRows(rows, cls) {
+  return rows.map(r => {
+    const right = r.status === 'missing'
+      ? `<span class="psbad">not in your library, or not scanned yet — looked for ${esc(r.looked_for)}</span>`
+      : `${esc(r.artist || '?')} — ${esc(r.title || '?')}` +
+        (r.drift != null ? ` <span class="psdrift">${r.drift}s different</span>` : '') +
+        (r.tied && r.tied.length ? ` <span class="psdrift">two copies in your library</span>` : '');
+    return `<div class="psrow ${cls}"><b>${esc(r.file)}</b><span>${right}</span></div>`;
+  }).join('');
+}
+function paintPs(st) {
+  const idx = st.index_total ? Math.round(st.indexed / st.index_total * 100) : 0;
+  $('psBar').hidden = !st.running;
+  $('psFill').style.width = (st.phase === 'reading plex' ? idx : 100) + '%';
+  $('btnPsCheck').hidden = st.running;
+  $('btnPsCancel').hidden = !st.running;
+  if (st.running) {
+    $('psMsg').className = 'msg';
+    $('psMsg').textContent = st.phase === 'reading plex'
+      ? `Reading your Plex library… ${st.indexed}/${st.index_total || '?'}`
+      : (st.lines[st.lines.length - 1] || 'Working…');
+    return;
+  }
+  if (!psTimer || !st.done) return;
+  stopPsPoll();
+  if (st.error) { psShowApply(false); return psErr(st.error); }
+  // An apply that just finished reports what moved; otherwise show the check's answer.
+  const a = st.applied, p = st.preview;
+  if (a && st.finished && a.when && Math.abs(a.when - st.finished) <= 2) {
+    psShowApply(false);
+    psSetLink(a.web_url);
+    // `a.after` is read back off the server after the write, not a count of what we
+    // sent -- so this line is what Plex holds, and the button proves it.
+    $('psMsg').className = 'msg ok';
+    $('psMsg').textContent = `${a.created ? 'Created' : 'Updated'} “${a.title}” — ` +
+      `Plex now holds ${a.after} track${a.after === 1 ? '' : 's'}` +
+      (a.added ? `, ${a.added} added` : '') + (a.removed ? `, ${a.removed} removed` : '') +
+      (!a.added && !a.removed ? ', nothing to change' : '') +
+      '. Click “See it in Plex” to look at it yourself.';
+    return;
+  }
+  if (!p) return;
+  const c = p.counts;
+  psSetLink(p.web_url);
+  $('psMsg').className = c.residue ? 'msg warn' : 'msg ok';
+  $('psMsg').textContent = `${c.resolved} of ${c.source} matched` +
+    (c.residue ? `, ${c.residue} not in your library` : '') +
+    (c.dupes ? `, ${c.dupes} duplicate` : '') +
+    (p.existing == null ? ' — the playlist does not exist yet'
+                        : ` — the playlist holds ${p.existing} today`) +
+    // A library mid-scan has not finished telling Plex what it owns, so "missing" and
+    // "not indexed yet" look identical. Say which it is rather than let it read as loss.
+    (p.scanning ? ' — Plex is still scanning, so anything below may just not be indexed yet' : '');
+  const bits = [];
+  if (p.missing.length) bits.push(`<div class="pshd">Cannot be added</div>${psRows(p.missing, 'bad')}`);
+  if (p.flagged.length) bits.push(`<div class="pshd">Matched, but worth a look</div>${psRows(p.flagged, 'warn')}`);
+  if (p.dupes.length) bits.push(`<div class="pshd">The same song twice in the folder</div>` +
+    p.dupes.map(d => `<div class="psrow"><b>${esc(d.file)}</b><span>same as ${esc(d.same_as)}</span></div>`).join(''));
+  $('psReport').innerHTML = bits.join('') ||
+    '<div class="pshd">Every file matched cleanly.</div>';
+  $('psReport').hidden = false;
+  psShowApply(true);
+}
+async function pollPs() {
+  try { paintPs(await jget('/api/plexsync/status')); } catch { /* transient */ }
+}
+function startPsPoll() { if (psTimer) return; psTimer = setInterval(pollPs, 700); pollPs(); }
+function stopPsPoll() { clearInterval(psTimer); psTimer = 0; }
+
 // "Send to Folder" (right-click context menu, both scopes) — opens the SAME export
 // panel and runs the SAME copy job as the "Take it with you" button above, just with
 // an explicit `ids` list instead of currentExportIds(): scope lives entirely in which
@@ -2155,6 +2279,28 @@ function bindEvents() {
   $('btnCopyCancel').onclick = cancelCopy;
   // if a copy is already running (started before this page loaded), surface it
   jget('/api/export/copy/status').then(st => { if (st.running) startCopyPoll(); }).catch(() => {});
+
+  // folder -> Plex playlist mirror. Editing either field retracts the Update button:
+  // the parked preview belongs to the folder+title it was taken for, and the server
+  // refuses a mismatch anyway — this just stops the button lying about it first.
+  $('psBrowse').onclick = psBrowse;
+  $('btnPsCheck').onclick = psCheck;
+  $('btnPsApply').onclick = psApply;
+  $('btnPsCancel').onclick = psCancel;
+  $('btnPsRescan').onclick = psRescan;
+  $('btnPsOpen').onclick = psOpen;
+  $('psTitle').addEventListener('input', () => {
+    psShowApply(false); $('psReport').hidden = true; psSetLink('');
+  });
+  // /api/settings answers {settings, path, restart_keys, env_overrides} -- the values
+  // are one level down. Reading the top level looked like it worked and silently left
+  // both fields blank on every load.
+  jget('/api/settings').then(r => {
+    const s = (r && r.settings) || {};
+    $('psFolder').value = s.plex_sync_folder || '';
+    $('psTitle').value = s.plex_sync_title || 'Car-MP3usb';
+  }).catch(() => {});
+  jget('/api/plexsync/status').then(st => { if (st.running) startPsPoll(); }).catch(() => {});
 
   $('reloadNow').onclick = startReload;
   // if a reload was already running before this page loaded (e.g. a refresh mid-reload),
