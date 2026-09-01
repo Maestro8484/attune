@@ -47,6 +47,13 @@ DEFAULTS = {
                                    # the key must stay in DEFAULTS or the whole settings save 400s).
                                    # 'bee' matches the client default since the S11 MusicBee UI.
     "default_recipe": "",          # name of the recipe applied by Genius / preselected in Studio ('' = engine defaults)
+    "plex_sync_folder": "",        # the folder web/plexsyncjob.py mirrors onto a Plex playlist.
+                                   # NOT a library root: this is a hand-built roster living
+                                   # outside the library (the car-USB folder), which is why it
+                                   # is matched by tags rather than by a path rewrite.
+    "plex_sync_title": "",         # exact title of that Plex playlist. Exact, never a prefix
+                                   # match -- picking the wrong existing playlist would rewrite
+                                   # a real one. '' = nothing set up yet.
     "window_geometry": None,       # {"x","y","width","height"} of the desktop window at last
                                    # close (app_desktop.py). None = not saved yet / invalid ->
                                    # pywebview's own OS-placed default. Desktop-only native OS

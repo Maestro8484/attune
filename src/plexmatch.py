@@ -119,12 +119,17 @@ def read_source(path):
     return artist, title, album, secs
 
 
-def list_folder(folder, recursive=False):
-    """Audio files directly in `folder`, sorted. Subfolders are NOT descended by default.
+def list_folder(folder, recursive=True):
+    """Every audio file at or under `folder`, sorted. Subfolders ARE descended.
 
-    The operator's roster folder holds four unrelated sub-projects beside the car
-    roster; walking into them would silently triple the playlist. Recursion is opt-in
-    and the caller says which it wants.
+    OPERATOR RULING, 2026-09-01, his words: "the rule is if it's in there it's on the
+    playlist - including folders that could be dropped in there now or later." The
+    roster folder is the roster, whatever shape it is in. An earlier version of this
+    function defaulted to non-recursive because that folder happened to hold four
+    unrelated sub-projects on the day it was written; he deleted them and ruled the
+    other way, so that rationale is dead and this is not a preference to toggle back.
+
+    `recursive=False` survives as a caller-side escape hatch, unused by Attune itself.
     """
     out = []
     if recursive:
@@ -271,7 +276,7 @@ def resolve_one(catalog, path, prefer_zone=None):
                         "drift": None, "tied": []})}
 
 
-def resolve_folder(catalog, folder, recursive=False, prefer_zone=None):
+def resolve_folder(catalog, folder, recursive=True, prefer_zone=None):
     """Resolve every audio file in `folder`. Returns a report dict.
 
     Report keys:

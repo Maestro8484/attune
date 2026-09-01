@@ -1159,6 +1159,20 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks,
                              "locked": _locked, "ledger": ledger.record})
 
+    # ---- folder -> Plex playlist mirror (plexsyncjob.py). The other Plex route
+    # (/api/export/plex, above) exports a MIX and resolves each track by swapping the
+    # library root out of its path. This one takes a FOLDER of loose copies that lives
+    # outside the library root -- a hand-built car roster -- where a prefix swap cannot
+    # work at all, and resolves by tags and duration instead (src/plexmatch.py). Two
+    # endpoints on purpose: preview parks an answer, apply writes only that parked
+    # answer. Loopback-guarded; reads .env for the Plex token exactly as /api/export/plex
+    # does, so no secret moves into settings.json.
+    px_spec = importlib.util.spec_from_file_location(
+        "attune_plexsyncjob", os.path.join(HERE, "plexsyncjob.py"))
+    plexsyncjob = importlib.util.module_from_spec(px_spec)
+    px_spec.loader.exec_module(plexsyncjob)
+    plexsyncjob.register(app, {"cfg": cfgmod, "locked": _locked})
+
     # ==================================================================================
     # ---- diagnostics: read-only structured-log viewer (applog.py) -- AUDIT_FABLE_
     # 2026-07-28.md S2 item 9, "prove the pattern on one path before spreading." The
