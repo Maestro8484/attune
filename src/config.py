@@ -51,9 +51,16 @@ DEFAULTS = {
                                    # NOT a library root: this is a hand-built roster living
                                    # outside the library (the car-USB folder), which is why it
                                    # is matched by tags rather than by a path rewrite.
-    "plex_sync_title": "",         # exact title of that Plex playlist. Exact, never a prefix
-                                   # match -- picking the wrong existing playlist would rewrite
-                                   # a real one. '' = nothing set up yet.
+    "plex_sync_title": "",         # NAME TEMPLATE for that playlist, e.g.
+                                   # "DrivingTunesUSB ({date})". Expanded once per run
+                                   # (plexmatch.resolve_title) and then matched EXACTLY --
+                                   # never a prefix match, since picking the wrong existing
+                                   # playlist would rewrite a real one. A template carrying
+                                   # {date} makes a new playlist each day and leaves the
+                                   # previous one standing; a fixed name updates one
+                                   # forever. '' = nothing set up yet.
+    "plex_sync_order": "folder",   # running order written into that playlist:
+                                   # folder | shuffle | artist (plexmatch.ORDERS).
     "window_geometry": None,       # {"x","y","width","height"} of the desktop window at last
                                    # close (app_desktop.py). None = not saved yet / invalid ->
                                    # pywebview's own OS-placed default. Desktop-only native OS

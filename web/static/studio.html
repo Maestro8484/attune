@@ -199,14 +199,24 @@
     <input id="psFolder" type="text" placeholder="The folder of mp3s to mirror…" readonly>
     <button id="psBrowse" type="button" class="rowbtn">Browse…</button></label>
   <label class="row"><span class="k">Playlist</span>
-    <input id="psTitle" type="text" placeholder="Car-MP3usb"></label>
-  <div class="hint">Everything in that folder counts, including anything inside subfolders
-    you drop in later.</div>
+    <input id="psTitle" type="text" placeholder="DrivingTunesUSB ({date})"></label>
+  <div id="psNameHint" class="hint"></div>
+  <div class="hint">Type any name you like. <b>{date}</b> becomes 26-09-01,
+    <b>{ymd}</b> 2026-09-01, <b>{month}</b> September, <b>{year}</b> 2026 — so a name with
+    a date in it makes a fresh playlist each time and leaves the old one alone.</div>
+  <label class="row"><span class="k">Order</span>
+    <select id="psOrder">
+      <option value="folder">Folder order — same as the USB stick</option>
+      <option value="shuffle">Shuffled</option>
+      <option value="artist">Artist, then album</option>
+    </select></label>
   <label class="row"><span class="k">Also</span>
     <select id="psPrune">
       <option value="prune">Match the folder exactly — drop what you deleted</option>
       <option value="keep">Only add — never remove anything</option>
     </select></label>
+  <div class="hint">Everything in that folder counts, including anything inside subfolders
+    you drop in later.</div>
   <div class="btnrow">
     <button id="btnPsCheck" class="primary">Check the folder</button>
     <button id="btnPsApply" hidden>Update Plex</button>

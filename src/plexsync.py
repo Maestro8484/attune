@@ -80,7 +80,10 @@ def build(cfg):
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--folder", required=True, help="the folder of mp3s that IS the roster")
-    ap.add_argument("--title", default="Car-MP3usb", help="Plex playlist title (exact)")
+    ap.add_argument("--title", default=plexmatch.DEFAULT_TITLE_TEMPLATE,
+                    help="playlist name, or a template: {date} {ymd} {month} {year}")
+    ap.add_argument("--order", default="folder", choices=list(plexmatch.ORDERS),
+                    help="running order written into the playlist (default: folder)")
     ap.add_argument("--apply", action="store_true",
                     help="actually change the playlist; without this it only reports")
     ap.add_argument("--no-prune", action="store_true",
@@ -113,6 +116,10 @@ def main(argv=None):
     catalog = plexmatch.PlexCatalog(tracks)
     rep = plexmatch.resolve_folder(catalog, args.folder, recursive=not args.flat,
                                    prefer_zone=zone_chooser(px, px.section_key))
+    # Stamped once, before anything is written, and printed -- so the name that gets
+    # created is the name the report named, even if the clock rolls over mid-run.
+    title = plexmatch.resolve_title(args.title)
+    rep["resolved"] = plexmatch.order_resolved(rep["resolved"], args.order, len(rep["resolved"]))
     text = plexmatch.format_report(rep)
     print()
     print(text)
@@ -123,7 +130,7 @@ def main(argv=None):
         side = os.path.splitext(args.report)[0] + ".json"
         with io.open(side, "w", encoding="utf-8") as fh:
             json.dump({"counts": rep["counts"], "folder": rep["folder"],
-                       "title": args.title,
+                       "title": title,
                        "residue": [{k: r[k] for k in ("file", "artist", "title", "secs")}
                                    for r in rep["residue"]],
                        "flagged": [{"file": f["file"], "grade": f["grade"],
@@ -139,15 +146,15 @@ def main(argv=None):
 
     keys = [r["track"]["rk"] for r in rep["resolved"]]
     if not args.apply:
-        pl = px.find_playlist(args.title)
+        pl = px.find_playlist(title)
         now = f"{len(px.playlist_items(pl['ratingKey']))} tracks" if pl else "does not exist yet"
         print(f"\nPREVIEW ONLY. Nothing on Plex was changed.")
-        print(f"  playlist '{args.title}': {now}")
+        print(f"  playlist '{title}': {now}")
         print(f"  would hold: {len(keys)} tracks")
         print(f"  re-run with --apply to make it so.")
         return 0
 
-    res = px.sync_playlist(args.title, keys, prune=not args.no_prune)
+    res = px.sync_playlist(title, keys, prune=not args.no_prune, order=True)
     if res.get("error"):
         print(f"\n[plex] FAILED: {res['error']}")
         return 1

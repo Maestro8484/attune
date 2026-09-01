@@ -1609,13 +1609,37 @@ async function psBrowse() {
   const picked = await Prefs.pickFolder($('psFolder').value || '');
   if (picked) { $('psFolder').value = picked; psShowApply(false); $('psReport').hidden = true; }
 }
+// The name is a template. Mirror the server's expansion here so the resolved name is on
+// screen BEFORE anything is written -- the template decides whether this updates one
+// playlist forever or makes a new one today, and that should be visible, not inferred.
+// Kept in step with plexmatch.TITLE_TOKENS by hand; the server's expansion is the one
+// that counts, and the panel shows the server's answer once the check comes back.
+function psResolveName(tpl) {
+  const d = new Date(), p2 = n => String(n).padStart(2, '0');
+  const months = ['January','February','March','April','May','June','July','August',
+                  'September','October','November','December'];
+  return (tpl || '').replace(/\{(\w+)\}/g, (m, k) => ({
+    date: p2(d.getFullYear() % 100) + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()),
+    ymd: d.getFullYear() + '-' + p2(d.getMonth() + 1) + '-' + p2(d.getDate()),
+    year: String(d.getFullYear()),
+    month: months[d.getMonth()],
+  }[k] ?? m));
+}
+function psPaintName() {
+  const tpl = $('psTitle').value.trim();
+  const out = psResolveName(tpl);
+  $('psNameHint').textContent = !tpl ? ''
+    : (out === tpl ? `Will be called “${out}” — the same playlist every time.`
+                   : `Will be called “${out}” — a new playlist each day.`);
+}
 async function psCheck() {
   const folder = $('psFolder').value.trim(), title = $('psTitle').value.trim();
+  const order = $('psOrder').value;
   if (!folder) return psErr('Pick the folder to mirror first');
   if (!title) return psErr('Give the playlist a name');
   $('psMsg').className = 'msg'; $('psMsg').textContent = 'Reading your Plex library…';
   psShowApply(false); $('psReport').hidden = true;
-  try { await jpost('/api/plexsync/preview', { folder, title }); startPsPoll(); }
+  try { await jpost('/api/plexsync/preview', { folder, title, order }); startPsPoll(); }
   catch (e) { psErr(e.message); }
 }
 async function psApply() {
@@ -1687,7 +1711,9 @@ function paintPs(st) {
     $('psMsg').textContent = `${a.created ? 'Created' : 'Updated'} “${a.title}” — ` +
       `Plex now holds ${a.after} track${a.after === 1 ? '' : 's'}` +
       (a.added ? `, ${a.added} added` : '') + (a.removed ? `, ${a.removed} removed` : '') +
-      (!a.added && !a.removed ? ', nothing to change' : '') +
+      (a.ordered ? ', in the order you asked for' : '') +
+      (a.ordered === false ? ', but Plex did not keep the running order — try again' : '') +
+      (!a.added && !a.removed ? ', already up to date' : '') +
       '. Click “See it in Plex” to look at it yourself.';
     return;
   }
@@ -1698,8 +1724,8 @@ function paintPs(st) {
   $('psMsg').textContent = `${c.resolved} of ${c.source} matched` +
     (c.residue ? `, ${c.residue} not in your library` : '') +
     (c.dupes ? `, ${c.dupes} duplicate` : '') +
-    (p.existing == null ? ' — the playlist does not exist yet'
-                        : ` — the playlist holds ${p.existing} today`) +
+    (p.existing == null ? ` — “${p.title}” will be created`
+                        : ` — “${p.title}” holds ${p.existing} today`) +
     // A library mid-scan has not finished telling Plex what it owns, so "missing" and
     // "not indexed yet" look identical. Say which it is rather than let it read as loss.
     (p.scanning ? ' — Plex is still scanning, so anything below may just not be indexed yet' : '');
@@ -2289,8 +2315,13 @@ function bindEvents() {
   $('btnPsCancel').onclick = psCancel;
   $('btnPsRescan').onclick = psRescan;
   $('btnPsOpen').onclick = psOpen;
+  // Editing the name or the order invalidates the parked check -- the server refuses a
+  // mismatch anyway, this just stops the button lying about it first.
   $('psTitle').addEventListener('input', () => {
-    psShowApply(false); $('psReport').hidden = true; psSetLink('');
+    psShowApply(false); $('psReport').hidden = true; psSetLink(''); psPaintName();
+  });
+  $('psOrder').addEventListener('change', () => {
+    psShowApply(false); $('psReport').hidden = true;
   });
   // /api/settings answers {settings, path, restart_keys, env_overrides} -- the values
   // are one level down. Reading the top level looked like it worked and silently left
@@ -2298,7 +2329,9 @@ function bindEvents() {
   jget('/api/settings').then(r => {
     const s = (r && r.settings) || {};
     $('psFolder').value = s.plex_sync_folder || '';
-    $('psTitle').value = s.plex_sync_title || 'Car-MP3usb';
+    $('psTitle').value = s.plex_sync_title || 'DrivingTunesUSB ({date})';
+    $('psOrder').value = s.plex_sync_order || 'folder';
+    psPaintName();
   }).catch(() => {});
   jget('/api/plexsync/status').then(st => { if (st.running) startPsPoll(); }).catch(() => {});
 
