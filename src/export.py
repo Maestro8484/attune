@@ -353,6 +353,50 @@ class PlexExporter:
         return (f"server://{self.machine_id}/com.plexapp.plugins.library/"
                 f"library/metadata/{','.join(str(k) for k in keys)}")
 
+    def web_url(self, playlist_key):
+        """A link that opens this playlist in Plex's own web app.
+
+        The point is human confirmation: Attune saying "128 tracks" is Attune's word for
+        it, and the operator should not have to take it. This link opens the real
+        playlist on the real server, so the check is his eyes on Plex, not our number.
+
+        Verified against this server 2026-09-01: GET /web/index.html answers 200 with the
+        Plex Web app, and this is the fragment form Plex Web itself uses for a playlist.
+        """
+        key = urllib.parse.quote(f"/playlists/{playlist_key}", safe="")
+        return f"{self.url}/web/index.html#!/server/{self.machine_id}/playlist?key={key}"
+
+    def rescan(self, path=None):
+        """Ask Plex to re-read the library (or one folder of it) from disk.
+
+        Needed because Plex only knows about files it has scanned: a track restored to
+        the library five minutes ago is genuinely absent from its index, and this
+        module would honestly but uselessly report it as "not in your library". A scan
+        of a 21,000-track section takes minutes and runs in the background -- the server
+        answers immediately with an EMPTY BODY, which is why this goes through _verb
+        rather than _get (the latter assumes JSON and raises on an empty response).
+        """
+        params = {"path": path} if path else None
+        self._verb("GET", f"/library/sections/{self.section_key}/refresh", params)
+        return True
+
+    def scan_activity(self):
+        """(scanning, percent) for this server, or (False, None) when idle.
+
+        Read off /activities, which is where Plex reports the background scan it starts;
+        without it a caller cannot tell "scan finished, the track really is missing" from
+        "scan still running, ask again in a minute" -- two answers that need opposite
+        reactions from the operator.
+        """
+        try:
+            d = self._get("/activities")
+        except Exception:                                   # noqa: BLE001
+            return False, None
+        for a in d.get("MediaContainer", {}).get("Activity", []):
+            if "library.update" in (a.get("type") or ""):
+                return True, a.get("progress")
+        return False, None
+
     def find_playlist(self, title):
         """The audio playlist with exactly this title, or None. Title match is exact.
 
@@ -420,10 +464,13 @@ class PlexExporter:
                 if rk not in keep:
                     self._delete(f"/playlists/{key}/items/{pid}")
                     removed += 1
+        # Read the playlist back off the server rather than reporting what we sent.
+        # "128 added" is a claim about a request; `after` is what Plex actually holds.
         after = self.playlist_items(key)
         return {"created": created, "playlist": key, "title": title,
                 "before": len(before), "after": len(after),
                 "added": len(missing), "removed": removed,
+                "web_url": self.web_url(key),
                 "final_keys": [rk for _pid, rk in after]}
 
     def match(self, local_paths):

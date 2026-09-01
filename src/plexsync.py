@@ -10,6 +10,9 @@ again: the playlist gains the new ones and loses the dropped ones, and keeps its
 identity so anything already pointing at it keeps working. ``--no-prune`` makes it
 add-only when you want to keep what is already in the playlist.
 
+Whatever is in the folder is on the playlist, subfolders included, dropped in now or
+later (operator ruling 2026-09-01). ``--flat-only`` opts out for a one-off look.
+
     preview (default -- reads Plex, changes nothing):
       python src/plexsync.py --folder "L:\_MUSIC\MP3 CD" --title Car-MP3usb
 
@@ -82,7 +85,11 @@ def main(argv=None):
                     help="actually change the playlist; without this it only reports")
     ap.add_argument("--no-prune", action="store_true",
                     help="add missing tracks but do not remove ones the folder dropped")
-    ap.add_argument("--recursive", action="store_true", help="descend into subfolders")
+    # Operator ruling 2026-09-01: whatever is in the folder is on the playlist,
+    # subfolders included, now or later. Recursion is the rule, not an option; the
+    # opt-out exists only so a one-off can ask for the flat view.
+    ap.add_argument("--flat-only", dest="flat", action="store_true",
+                    help="ignore subfolders (default: everything under the folder counts)")
     ap.add_argument("--report", help="write the full report here (.txt, plus a .json beside it)")
     ap.add_argument("--env", help="path to .env (default: auto-discover)")
     args = ap.parse_args(argv)
@@ -104,7 +111,7 @@ def main(argv=None):
     print(f"[plex] {len(tracks)} tracks indexed", flush=True)
 
     catalog = plexmatch.PlexCatalog(tracks)
-    rep = plexmatch.resolve_folder(catalog, args.folder, recursive=args.recursive,
+    rep = plexmatch.resolve_folder(catalog, args.folder, recursive=not args.flat,
                                    prefer_zone=zone_chooser(px, px.section_key))
     text = plexmatch.format_report(rep)
     print()
@@ -148,6 +155,9 @@ def main(argv=None):
     print(f"\n[plex] {verb} '{res['title']}' (id {res['playlist']}): "
           f"{res['before']} -> {res['after']} tracks, "
           f"+{res['added']} added, -{res['removed']} removed")
+    # The count above is read back off the server after the write, and this link opens
+    # the real playlist -- so the confirmation can be the operator's own eyes.
+    print(f"[plex] see it yourself: {res['web_url']}")
     if len(res["final_keys"]) != len(keys):
         print(f"[plex] WARNING: asked for {len(keys)}, playlist holds "
               f"{len(res['final_keys'])} -- re-run the preview to see which.")
