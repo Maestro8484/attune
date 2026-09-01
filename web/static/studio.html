@@ -191,6 +191,32 @@
   </div>
   <div id="copyBar" class="progressbar" hidden><div id="copyFill" class="fill"></div></div>
   <div id="copyMsg" class="msg"></div>
+
+  <!-- Mirror a folder onto a Plex playlist. Deliberately two buttons, not one: Check
+       reads and reports, Update writes only what Check just showed. -->
+  <div class="expsep">Mirror a folder to a Plex playlist</div>
+  <label class="row"><span class="k">Folder</span>
+    <input id="psFolder" type="text" placeholder="The folder of mp3s to mirror…" readonly>
+    <button id="psBrowse" type="button" class="rowbtn">Browse…</button></label>
+  <label class="row"><span class="k">Playlist</span>
+    <input id="psTitle" type="text" placeholder="Car-MP3usb"></label>
+  <div class="hint">Everything in that folder counts, including anything inside subfolders
+    you drop in later.</div>
+  <label class="row"><span class="k">Also</span>
+    <select id="psPrune">
+      <option value="prune">Match the folder exactly — drop what you deleted</option>
+      <option value="keep">Only add — never remove anything</option>
+    </select></label>
+  <div class="btnrow">
+    <button id="btnPsCheck" class="primary">Check the folder</button>
+    <button id="btnPsApply" hidden>Update Plex</button>
+    <button id="btnPsCancel" hidden>⏹ Cancel</button>
+    <button id="btnPsRescan" title="Plex only knows about files it has scanned. Use this after adding music to your library.">Rescan Plex library</button>
+    <button id="btnPsOpen" hidden>See it in Plex</button>
+  </div>
+  <div id="psBar" class="progressbar" hidden><div id="psFill" class="fill"></div></div>
+  <div id="psMsg" class="msg"></div>
+  <div id="psReport" class="psreport" hidden></div>
 </div>
 
 <!-- context menu -->

@@ -62,6 +62,7 @@ GUI_DATA = [
     ("web/applog.py",          "attune/web"),
     ("web/ledger.py",          "attune/web"),
     ("web/audioinfo.py",       "attune/web"),
+    ("web/plexsyncjob.py",     "attune/web"),
     ("src/config.py",          "attune/src"),
     # the Studio front-end: studio.html loads all five scripts + the stylesheet
     ("web/static/studio.html", "attune/web/static"),
@@ -75,6 +76,11 @@ GUI_DATA = [
     ("src/engine.py",          "attune/src"),
     ("src/musicip_engine.py",  "attune/src"),
     ("src/export.py",          "attune/src"),
+    # plexsyncjob.py loads this by file path, exactly the way app.py loads the web
+    # modules above -- PyInstaller cannot see an importlib-by-path load, and a missing
+    # one is a runtime crash, not a build error (the ledger.py and audioinfo.py
+    # incidents were both this).
+    ("src/plexmatch.py",       "attune/src"),
     # Analyzer SCRIPTS (not the analyzer PAYLOAD). When a user configures an ML venv,
     # scanjob runs these under THEIR python, which supplies librosa/torch — so the
     # scripts must exist on disk here even though this bundle carries no heavy libs.
