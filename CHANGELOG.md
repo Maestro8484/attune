@@ -6,6 +6,51 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Playlist names are templates, and the template decides what the sync DOES**
+  (`plexmatch.resolve_title`, `DEFAULT_TITLE_TEMPLATE`). `DrivingTunesUSB ({date})`
+  resolves to `DrivingTunesUSB (26-09-01)`; `{ymd}`, `{month}` and `{year}` also expand,
+  an unknown token is left standing as literal text (a name still visibly saying `{foo}`
+  tells the operator he mistyped; a silently blank one does not), and any other text is
+  left exactly as typed. A name carrying `{date}` mints a fresh playlist each day and
+  leaves the previous one standing; a fixed name updates one forever. Because that choice
+  is invisible in the template itself, the panel renders the **resolved name live** as he
+  types and the check reports it back.
+  **Expanded ONCE, during preview, and carried to apply.** Expanding again at write time
+  would let a run started at 23:59 create a playlist under a different name than the one
+  approved — the same class of gap the preview/apply split exists to close. `start_apply`
+  therefore matches on the *template* on screen and writes under the *resolved* name the
+  preview stamped.
+- **A running order you choose** (`plexmatch.ORDERS` / `order_resolved`): folder order
+  (matches the USB stick, the default), shuffled, or artist-then-album. Shuffle is a
+  **seeded Fisher-Yates driven by the preview's own start time**, not `random.shuffle`, so
+  the order previewed is the order written — a shuffle that re-rolled between looking and
+  applying would break the preview contract for the option most likely to be used.
+- **`PlexExporter.set_order()` is clear-and-re-add, and the reason is in the docstring
+  because the failure was invisible.** Plex does support moving one item at a time
+  (`PUT /playlists/<k>/items/<playlistItemID>/move`, optionally `after=<pid>`) and at small
+  size it is exactly right: **a full reversal of 8 items landed perfectly in 7 moves.** At
+  real size it did not — **a full reversal of 127 items took 237 moves across two passes
+  and still came out wrong from position 15 onward.** `DELETE /playlists/<k>/items` clears
+  in a single call and re-adding lands the exact order: **127 tracks reordered in 0.1 s,
+  byte-exact.** The playlist's own ratingKey is untouched, so every link and client
+  pointing at it keeps working; only internal slot ids change, and nothing outside the
+  server holds those.
+  `sync_playlist` returns **`ordered`, read back off the server** via `order_matches()` —
+  an observation, not a claim about the requests sent. When it is false the panel and the
+  log say the tracks are all there but the running order is not what was asked for,
+  instead of swallowing it. A freshly created playlist is already in build order, so it is
+  only checked, never rewritten.
+  Also new: `rename` is possible through the same API (`PUT /playlists/<k>?title=`), used
+  once to move the operator's existing playlist onto the new naming scheme without minting
+  a duplicate — same id, same link, 128 tracks.
+- **Two new settings** (`plex_sync_order`, and `plex_sync_title` is now a template rather
+  than a literal). The template is stored **as typed**, never as the name it resolved to —
+  storing the resolved name would silently freeze today's date into tomorrow's run.
+  **Observed from the rebuilt exe:** a dated template resolves and finds the existing
+  playlist, artist order previews, and the served page carries the live name preview and
+  the order dropdown. **Observed against the live server:** folder order and shuffle both
+  read back equal to what was previewed, at 128 tracks. **Regression gate 16/16
+  byte-identical**; `mixer.db` never opened, SHA256 unchanged.
 - **The folder mirror is a panel in Attune now, not a script** (`web/plexsyncjob.py`,
   new; `web/static/studio.{html,js,css}`; wired in `web/app.py`; two keys in
   `src/config.py`). It sits under Export, beside "Take it with you", and it is
