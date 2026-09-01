@@ -321,7 +321,7 @@ def format_report(rep, limit=0):
            f"{c['residue']} not found, {c['flagged']} to eyeball, {c['dupes']} duplicate",
            f"confidence: {c['by_grade']}", ""]
     if rep["residue"]:
-        out.append("NOT IN YOUR LIBRARY (these cannot go in the playlist):")
+        out.append("NOT IN YOUR LIBRARY, OR NOT SCANNED BY PLEX YET (cannot go in the playlist):")
         for r in rep["residue"]:
             out.append(f"  {r['file']}")
             out.append(f"      searched for: {r['artist']!r} / {r['title']!r}  {r['secs']}s")
@@ -398,8 +398,42 @@ def resolve_title(template, when=None):
     return _TOKEN_RE.sub(sub, template or DEFAULT_TITLE_TEMPLATE).strip()
 
 
-# Running order. "folder" is the default because the folder IS the roster -- a stick
-# plays in filename order and this matches it, so the car and Plex agree.
+def zone_chooser(px):
+    """A per-file nudge toward the section folder the file NAME implies: a leading
+    track number came off an album, "Artist - Title" out of the singles folder.
+
+    Read off the server (the section's Location paths) rather than hardcoded, so a
+    renamed folder just stops nudging instead of nudging wrong. Worth one point in
+    `_rank`; duration still decides, this only breaks ties. Returns None when the
+    section does not have a recognisable singles + albums pair, and every caller treats
+    None as "no nudge".
+
+    Lived as two identical copies (the CLI and the web job) until the 2026-09-01 audit.
+    """
+    try:
+        d = px._get("/library/sections")
+        locs = []
+        for s in d.get("MediaContainer", {}).get("Directory", []):
+            if str(s.get("key")) == str(px.section_key):
+                locs = [l.get("path") for l in s.get("Location", []) if l.get("path")]
+        singles = next((p for p in locs if "single" in p.lower()), None)
+        albums = next((p for p in locs if "album" in p.lower()), None)
+    except Exception:                                           # noqa: BLE001
+        return None
+    if not (singles and albums):
+        return None
+
+    def choose(filename):
+        root = albums if _LEAD_NUM.match(filename) else singles
+        return root.rstrip("/") + "/"
+    return choose
+
+
+# Running order. "folder" is the default: the folder IS the roster, and A-to-Z by path
+# is the one order that is the same every run and easy to predict from the file names.
+# (A USB stick in a head unit plays in whatever order the unit chooses -- often the
+# order files were copied, not alphabetical -- so this is "matches the folder", not
+# "matches the car".)
 ORDERS = ("folder", "shuffle", "artist")
 
 

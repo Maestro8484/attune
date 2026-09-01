@@ -1629,8 +1629,8 @@ function psPaintName() {
   const tpl = $('psTitle').value.trim();
   const out = psResolveName(tpl);
   $('psNameHint').textContent = !tpl ? ''
-    : (out === tpl ? `Will be called “${out}” — the same playlist every time.`
-                   : `Will be called “${out}” — a new playlist each day.`);
+    : (out === tpl ? `Will be called “${out}” — the same playlist, updated every time.`
+                   : `Will be called “${out}” — a new playlist whenever that part of the name changes.`);
 }
 async function psCheck() {
   const folder = $('psFolder').value.trim(), title = $('psTitle').value.trim();
@@ -1689,7 +1689,10 @@ function paintPs(st) {
   $('psBar').hidden = !st.running;
   $('psFill').style.width = (st.phase === 'reading plex' ? idx : 100) + '%';
   $('btnPsCheck').hidden = st.running;
-  $('btnPsCancel').hidden = !st.running;
+  // No Cancel during the write: it is a couple of short calls and is never interrupted
+  // part-way (a half-written playlist is worse than a finished one), so a Cancel button
+  // there would be a button that does nothing.
+  $('btnPsCancel').hidden = !st.running || st.phase === 'writing';
   if (st.running) {
     $('psMsg').className = 'msg';
     $('psMsg').textContent = st.phase === 'reading plex'
@@ -1713,7 +1716,7 @@ function paintPs(st) {
       (a.added ? `, ${a.added} added` : '') + (a.removed ? `, ${a.removed} removed` : '') +
       (a.ordered ? ', in the order you asked for' : '') +
       (a.ordered === false ? ', but Plex did not keep the running order — try again' : '') +
-      (!a.added && !a.removed ? ', already up to date' : '') +
+      (!a.created && !a.added && !a.removed ? ', already up to date' : '') +
       '. Click “See it in Plex” to look at it yourself.';
     return;
   }
