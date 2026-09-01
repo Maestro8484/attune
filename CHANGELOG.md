@@ -6,6 +6,35 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **Audit of the Plex folder-mirror (2026-09-01), one real defect fixed.** "Only add,
+  never remove anything" was removing tracks. The job always orders the playlist, and
+  ordering had become clear-and-re-add of the *folder's* list, so anything in the
+  playlist the folder did not contain was wiped by the reorder step and reported as
+  `removed: 0`. **Caught by a scratch test, not by reading:** six tracks, sync three with
+  prune off, three left. `set_order` now re-adds everything that was in the playlist and
+  not in the wanted list, *after* the wanted list, in its existing relative order —
+  ordering is not pruning, and dropping tracks is the caller's decision through `prune`,
+  never a side effect. **Same test after the fix:** six stay six, the wanted three first
+  in the asked order, the other three kept; a real prune still prunes to three. The
+  docstring had also kept claiming "items not in keys are left alone" from the move-based
+  version — corrected. **The exe was rebuilt and carries the fix.**
+  Smaller things the same pass turned up: `zone_chooser` existed as two identical copies
+  (CLI and web job) and now lives in `plexmatch` once; the job re-executed `plexmatch.py`
+  and `export.py` by file path on every request and worker run (stateless, harmless,
+  pointless on a 700 ms poll) and now loads them once at `register()`; the CLI's shuffle
+  was seeded with the *track count*, making "shuffle" one permutation forever, and is now
+  seeded with today's date so the .bat's two separate processes agree within a day; the
+  Cancel button showed during the write, where `cancel()` has no effect, and is hidden
+  in that phase; the live name hint said "a new playlist each day" for any token,
+  including `{year}`, and now says "whenever that part of the name changes"; a freshly
+  created playlist reported "already up to date"; "Folder order — same as the USB stick"
+  was a claim about the car's head unit this code cannot make and is now "A to Z, same
+  every time"; the .txt report says "or not scanned by Plex yet" as the panel already did.
+  **Observed from the rebuilt exe:** the audited labels are in the served page, a full
+  preview runs from bundled code (128 of 130), and — the one claim that had only ever
+  been seen from the dev server — **"See it in Plex" pressed on the frozen exe opened a
+  browser.** Regression gate 16/16 byte-identical; `mixer.db` never opened, SHA256
+  unchanged.
 - **Playlist names are templates, and the template decides what the sync DOES**
   (`plexmatch.resolve_title`, `DEFAULT_TITLE_TEMPLATE`). `DrivingTunesUSB ({date})`
   resolves to `DrivingTunesUSB (26-09-01)`; `{ymd}`, `{month}` and `{year}` also expand,
