@@ -270,6 +270,22 @@ class PlexExporter:
             body = r.read()
             return json.loads(body) if body else {}
 
+    def _put(self, path, params=None):
+        return self._verb("PUT", path, params)
+
+    def _delete(self, path, params=None):
+        return self._verb("DELETE", path, params)
+
+    def _verb(self, method, path, params=None):
+        """PUT/DELETE share _post's shape; Plex answers DELETE with 204 and no body."""
+        p = dict(params or {})
+        p["X-Plex-Token"] = self.token
+        req = urllib.request.Request(f"{self.url}{path}?{urllib.parse.urlencode(p)}",
+                                     method=method, headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            body = r.read()
+            return json.loads(body) if body else {}
+
     def build_index(self, page=2000, progress=None):
         """Page the whole music section once, mapping server file path -> ratingKey."""
         index, start = {}, 0
@@ -293,6 +309,122 @@ class PlexExporter:
                 break
         self._index = index
         return index
+
+    def build_meta_index(self, page=2000, progress=None):
+        """Page the same music section, keeping METADATA as well as the file paths.
+
+        ``build_index`` above answers "what is the ratingKey for this exact server
+        path", which is all a root-prefix export needs. Matching a folder of loose
+        copies (src/plexmatch.py) needs the other columns too -- title, artist,
+        album and duration -- because those files are NOT under the library root and
+        their paths are not translatable. Same request, same paging, wider projection,
+        so the two never disagree about what the library contains.
+
+        ``orig`` is Plex's originalTitle: on a compilation, grandparentTitle is
+        "Various Artists" and originalTitle is the real track artist.
+
+        Returns a list of dicts: rk / title / artist / album / orig / dur (ms) / files.
+        """
+        rows, start = [], 0
+        while True:
+            d = self._get(f"/library/sections/{self.section_key}/all",
+                          {"type": 10, "X-Plex-Container-Start": start,
+                           "X-Plex-Container-Size": page})
+            mc = d.get("MediaContainer", {})
+            meta = mc.get("Metadata", [])
+            for t in meta:
+                files = [prt["file"] for m in t.get("Media", [])
+                         for prt in m.get("Part", []) if prt.get("file")]
+                rows.append({"rk": t.get("ratingKey"), "title": t.get("title"),
+                             "artist": t.get("grandparentTitle"),
+                             "album": t.get("parentTitle"),
+                             "orig": t.get("originalTitle"),
+                             "dur": t.get("duration"), "files": files})
+            start += len(meta)
+            total = mc.get("totalSize", mc.get("size", 0))
+            if progress:
+                progress(start, total)
+            if not meta or start >= total:
+                break
+        return rows
+
+    # ---------------------------------------------------------------- playlists
+    def _library_uri(self, keys):
+        return (f"server://{self.machine_id}/com.plexapp.plugins.library/"
+                f"library/metadata/{','.join(str(k) for k in keys)}")
+
+    def find_playlist(self, title):
+        """The audio playlist with exactly this title, or None. Title match is exact.
+
+        Deliberately not fuzzy and deliberately not "starts with": picking the wrong
+        existing playlist would rewrite somebody's real list. Exact or create-new.
+        """
+        d = self._get("/playlists", {"playlistType": "audio"})
+        for pl in d.get("MediaContainer", {}).get("Metadata", []):
+            if pl.get("title") == title:
+                return pl
+        return None
+
+    def playlist_items(self, playlist_key):
+        """[(playlistItemID, ratingKey)] in playlist order.
+
+        playlistItemID is NOT the ratingKey: it identifies this track's slot in this
+        playlist, and it is what DELETE .../items/<id> takes. Removing by ratingKey
+        does not work.
+        """
+        d = self._get(f"/playlists/{playlist_key}/items")
+        return [(m.get("playlistItemID"), str(m.get("ratingKey")))
+                for m in d.get("MediaContainer", {}).get("Metadata", [])]
+
+    def sync_playlist(self, title, keys, prune=True):
+        """Make the playlist called `title` hold exactly `keys`, and say what moved.
+
+        Add-then-remove against the EXISTING playlist rather than delete-and-recreate,
+        because the playlist is a thing the operator has already put on a phone and in
+        a car -- recreating it mints a new ratingKey and every client's reference to it
+        goes stale. Rotation is the whole point of this feature, so it has to survive
+        being rotated.
+
+        Verified against Plex Media Server 1.43.4 on 2026-09-01: PUT .../items with a
+        uri listing the full desired set adds only the ones missing (the server
+        de-duplicates), and DELETE .../items/<playlistItemID> removes exactly one slot.
+
+        `prune=False` makes this add-only, for "top up the car list, keep what is
+        already there".
+
+        Returns {created, playlist, before, after, added, removed}.
+        """
+        want = [str(k) for k in keys]
+        pl = self.find_playlist(title)
+        created = False
+        if pl is None:
+            if not want:
+                return {"created": False, "playlist": None, "before": 0, "after": 0,
+                        "added": 0, "removed": 0,
+                        "error": "nothing to put in the playlist, so none was created"}
+            resp = self._post("/playlists", {"type": "audio", "title": title,
+                                             "smart": 0, "uri": self._library_uri(want)})
+            md = resp.get("MediaContainer", {}).get("Metadata", [{}])
+            pl = md[0] if md else {}
+            created = True
+        key = pl.get("ratingKey")
+        before = self.playlist_items(key)
+        have = {rk for _pid, rk in before}
+        missing = [k for k in want if k not in have]
+        if missing:
+            self._put(f"/playlists/{key}/items", {"uri": self._library_uri(missing)})
+        removed = 0
+        if prune:
+            keep = set(want)
+            for pid, rk in self.playlist_items(key):
+                if rk not in keep:
+                    self._delete(f"/playlists/{key}/items/{pid}")
+                    removed += 1
+        after = self.playlist_items(key)
+        return {"created": created, "playlist": key, "title": title,
+                "before": len(before), "after": len(after),
+                "added": len(missing), "removed": removed,
+                "final_keys": [rk for _pid, rk in after]}
 
     def match(self, local_paths):
         """Return (rating_keys_in_order, missed_local_paths)."""

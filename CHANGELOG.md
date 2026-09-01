@@ -6,6 +6,59 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ## [0.1.0] — unreleased (initial public cut)
 
 ### Added
+- **A folder of loose mp3s can now become, and stay, a Plex playlist**
+  (`src/plexmatch.py` and `src/plexsync.py`, both new; `src/export.py` extended,
+  additively — 132 insertions, 0 deletions). The existing Plex export
+  (`PlexExporter.match`) resolves a track by swapping the library root out of its
+  path, which is correct and which cannot work here: a hand-built roster folder like
+  `L:\_MUSIC\MP3 CD` sits OUTSIDE the library root, so `PathMapper` refuses every
+  path in it (ruling (a), MORNING_REPORT_2026-07-29 §5.1 — and refusing is right; a
+  prefix swap on a path outside the prefix is the "drive letter in the middle of a
+  UNC path" bug). So `plexmatch` asks a different question: which track in the Plex
+  library is the same recording as this file?
+  **Three tiers, every one gated on duration**: identical file name, then normalised
+  ID3 artist+title, then title with an artist substring. Plex's own `duration` and
+  the source file's real length (mutagen, already a lean-venv dependency) decide;
+  a candidate more than 2 s off is demoted out of its tier and one more than 8 s off
+  does not resolve there at all. That is what keeps "Life During Wartime" from
+  silently becoming "Life During Wartime (live)" — same artist, same title, 10.65 s
+  apart, and the report names it instead.
+  **No fuzzy string matching anywhere**, deliberately: near-miss edit distance is the
+  silent-wrong-answer failure ruling (a) exists to prevent, and duration discriminates
+  far better. Every resolution carries a grade (`exact` / `strong` / `probable` /
+  `weak`) and its drift in seconds; anything below `strong` is listed under "MATCHED,
+  BUT WORTH A LOOK", and a file with no honest answer is printed under "NOT IN YOUR
+  LIBRARY" with what was searched for — never resolved to a plausible neighbour.
+  The report leads with the failures, because one that opens with 127 successes
+  trains the reader to stop before the one that matters.
+  **Observed on the operator's real roster, 2026-09-01:** 128 files → 126 distinct
+  Plex tracks, 1 genuine residue (a track the library does not contain), 1 in-folder
+  duplicate collapsed, 4 flagged; grades 99 exact / 24 strong / 1 probable / 2 weak.
+  Filename matching alone reached 101 of 128, which is the whole reason tags and
+  duration are the primary evidence and the file name is only the fast path.
+- **`PlexExporter` can now read and rewrite a playlist, not just create one**
+  (`src/export.py`): `_put`/`_delete`/`_verb`, `build_meta_index()` (the same paging
+  as `build_index`, wider projection — title, artist, album, originalTitle, duration),
+  `find_playlist()` (exact title, never a prefix match — picking the wrong existing
+  playlist would rewrite someone's real list), `playlist_items()` (returns
+  `playlistItemID`, which is the slot id `DELETE .../items/<id>` needs, NOT the
+  ratingKey), and `sync_playlist()`.
+  `sync_playlist` **adds and prunes against the existing playlist rather than
+  recreating it**, because recreating mints a new ratingKey and every phone and car
+  head unit already pointing at the playlist goes stale — and rotation is the entire
+  point of the feature. `prune=False` makes it add-only.
+  **Observed against Plex Media Server 1.43.4, 2026-09-01:** create 200, add via
+  `PUT .../items` 200 (the server de-duplicates, so re-sending the full desired set
+  adds only what is missing), remove via `DELETE .../items/<playlistItemID>` 200,
+  delete playlist 204. Rotation proven on a scratch playlist over three runs from a
+  scratch folder of copies: 5 → dropped 2 and added 1 → `5 -> 4, +1, -2`, same
+  playlist id throughout; then `--no-prune` → `4 -> 5, +1, -0`. Scratch playlist
+  deleted afterwards and confirmed gone.
+  No new dependency: python-plexapi was considered and rejected rather than add a
+  package to a frozen exe to make HTTP requests this repo already makes correctly.
+  **Regression gate 16/16 byte-identical** against REGRESSION_BASELINE_20260804 on a
+  scratch copy of the live DB; production `mixer.db` SHA256 identical before and
+  after (`1d9aa7a3…a27944`), and nothing in this change opens it at all.
 - **Real bitrate, sample rate, channels and codec, read off the files**
   (`web/audioinfo.py`, new). Windows Explorer and MusicBee both show a bitrate
   column; Attune could not, because `tracks` stores no encoding data at all.
