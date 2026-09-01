@@ -43,28 +43,6 @@ if HERE not in sys.path:
 import export          # noqa: E402  (path shim above must run first)
 import plexmatch       # noqa: E402
 
-# The two Location paths of the operator's music section, used only as a one-point
-# tiebreak nudge when a name matches in both. Read off the server at run time rather
-# than hardcoded, so a renamed folder cannot silently stop nudging.
-def zone_chooser(exporter, section_key):
-    try:
-        d = exporter._get("/library/sections")
-        locs = []
-        for s in d.get("MediaContainer", {}).get("Directory", []):
-            if str(s.get("key")) == str(section_key):
-                locs = [l.get("path") for l in s.get("Location", []) if l.get("path")]
-        singles = next((p for p in locs if "single" in p.lower()), None)
-        albums = next((p for p in locs if "album" in p.lower()), None)
-    except Exception:
-        singles = albums = None
-    if not (singles and albums):
-        return None
-
-    def choose(filename):
-        return (albums if plexmatch._LEAD_NUM.match(filename) else singles).rstrip("/") + "/"
-    return choose
-
-
 def build(cfg):
     mapper = export.PathMapper(cfg.get("LOCAL_LIBRARY_ROOT"), cfg.get("UNC_LIBRARY_ROOT"),
                                cfg.get("PLEX_LIBRARY_ROOT"))
@@ -115,11 +93,17 @@ def main(argv=None):
 
     catalog = plexmatch.PlexCatalog(tracks)
     rep = plexmatch.resolve_folder(catalog, args.folder, recursive=not args.flat,
-                                   prefer_zone=zone_chooser(px, px.section_key))
+                                   prefer_zone=plexmatch.zone_chooser(px))
     # Stamped once, before anything is written, and printed -- so the name that gets
     # created is the name the report named, even if the clock rolls over mid-run.
     title = plexmatch.resolve_title(args.title)
-    rep["resolved"] = plexmatch.order_resolved(rep["resolved"], args.order, len(rep["resolved"]))
+    # The .bat runs preview and apply as two separate processes, so the shuffle seed
+    # has to be something both can derive: today's date. Same day, same shuffle, so the
+    # list previewed is the list written; a new day rolls a new one. (It was the track
+    # count, which made "shuffle" the same permutation forever.)
+    import datetime
+    rep["resolved"] = plexmatch.order_resolved(rep["resolved"], args.order,
+                                               datetime.date.today().toordinal())
     text = plexmatch.format_report(rep)
     print()
     print(text)

@@ -73,11 +73,20 @@ _START_LOCK = threading.Lock()
 
 def _load(name):
     """Import a src/ module by file path -- the pattern app.py already uses, and the
-    reason every one of these files is listed in desktop/build.py's GUI_DATA."""
+    reason every one of these files is listed in desktop/build.py's GUI_DATA.
+
+    Called once per module, at register() time. It used to run on every request and
+    every worker run, re-executing the file each time and minting a fresh module object
+    -- harmless here since neither module keeps state, but pointless work on a path
+    that polls every 700 ms."""
     spec = importlib.util.spec_from_file_location(name, os.path.join(SRC, name + ".py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
+
+
+# Filled by register(); the worker and the routes read these, never _load() again.
+_MODS = {}
 
 
 class PlexSyncJob:
@@ -128,7 +137,7 @@ class PlexSyncJob:
 
     def _run_preview(self, folder, template, order, seed, connect):
         try:
-            plexmatch = _load("plexmatch")
+            plexmatch = _MODS["plexmatch"]
             self.phase = "reading plex"
             self._log("Reading your Plex library…")
             px = connect()
@@ -148,7 +157,7 @@ class PlexSyncJob:
             # or later -- operator ruling 2026-09-01. Not a setting, so there is no
             # switch here to get out of step with plexmatch's own default.
             rep = plexmatch.resolve_folder(catalog, folder, recursive=True,
-                                           prefer_zone=_zone_chooser(px))
+                                           prefer_zone=plexmatch.zone_chooser(px))
             if self.cancelled:
                 raise RuntimeError("cancelled")
 
@@ -245,6 +254,10 @@ class PlexSyncJob:
             self.finished = int(time.time())
 
     def cancel(self):
+        # Honoured between the two long steps of a preview. An apply is a couple of
+        # short calls and is never interrupted part-way -- a half-written playlist is
+        # worse than a finished one -- so the panel hides the Cancel button while
+        # writing rather than showing one that does nothing.
         self.cancelled = True
 
     def status(self):
@@ -257,31 +270,6 @@ class PlexSyncJob:
                 "lines": lines, "preview": self.preview, "applied": self.applied,
                 "scanning": self.scanning, "scan_pct": self.scan_pct,
                 "done": bool(self.started) and not self.running}
-
-
-def _zone_chooser(px):
-    """A one-point nudge toward the section folder the file name implies -- a leading
-    track number came off an album, "Artist - Title" out of the singles folder. Read off
-    the server rather than hardcoded, so a renamed folder just stops nudging. Duration
-    still decides; this only breaks ties."""
-    try:
-        plexmatch = _load("plexmatch")
-        d = px._get("/library/sections")
-        locs = []
-        for s in d.get("MediaContainer", {}).get("Directory", []):
-            if str(s.get("key")) == str(px.section_key):
-                locs = [l.get("path") for l in s.get("Location", []) if l.get("path")]
-        singles = next((p for p in locs if "single" in p.lower()), None)
-        albums = next((p for p in locs if "album" in p.lower()), None)
-    except Exception:                                           # noqa: BLE001
-        return None
-    if not (singles and albums):
-        return None
-
-    def choose(filename):
-        root = albums if plexmatch._LEAD_NUM.match(filename) else singles
-        return root.rstrip("/") + "/"
-    return choose
 
 
 def _shape(rep, title, existing_count, web_url="", scanning=False, template="",
@@ -339,10 +327,12 @@ def register(app, ctx):
     locked = ctx["locked"]
     job = PlexSyncJob()
     bp = Blueprint("plexsyncjob", __name__)
+    _MODS["plexmatch"] = _load("plexmatch")
+    _MODS["export"] = _load("export")
 
     def _connect():
         """Build a PlexExporter, or raise a message naming what is missing."""
-        export = _load("export")
+        export = _MODS["export"]
         env = export.load_env()
         settings = cfgmod.load()
         mapper = export.mapper_from_settings(settings, env)
@@ -401,7 +391,7 @@ def register(app, ctx):
             return jsonify(ok=False, error="give the playlist a name"), 400
         try:
             order = body.get("order")
-            if order not in _load("plexmatch").ORDERS:
+            if order not in _MODS["plexmatch"].ORDERS:
                 order = "folder"
             job.start_preview(folder, title, order, _connect)
         except RuntimeError as e:

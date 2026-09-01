@@ -421,12 +421,20 @@ class PlexExporter:
                 for m in d.get("MediaContainer", {}).get("Metadata", [])]
 
     def set_order(self, playlist_key, keys, progress=None):
-        """Make the playlist's running order exactly `keys`. Returns True when it did.
+        """Put `keys` at the front of the playlist, in that order. Returns True when the
+        running order read back off the server matches.
 
         Empty the playlist, then re-add it in the order wanted. Two HTTP calls, and the
         result is exactly what was asked for because Plex keeps a playlist in the order
         things were added -- the same property that already makes a NEWLY created
         playlist come out right.
+
+        ANYTHING ALREADY IN THE PLAYLIST THAT IS NOT IN `keys` IS KEPT, after `keys`, in
+        its existing relative order. Ordering is not pruning. The first version of this
+        re-added only `keys`, which meant the "only add, never remove" mode quietly
+        deleted every track the folder did not contain and reported `removed: 0` -- three
+        of six in the scratch test that caught it (2026-09-01). Whether to drop those
+        tracks is the caller's decision, made through `prune`, never a side effect here.
 
         This replaced a move-by-move implementation, and the reason is worth keeping.
         Plex does support moving one item at a time
@@ -447,11 +455,14 @@ class PlexExporter:
         want = [str(k) for k in keys]
         if not want:
             return False
+        wset = set(want)
+        extras = [rk for _pid, rk in self.playlist_items(playlist_key) if rk not in wset]
+        full = want + extras
         self._delete(f"/playlists/{playlist_key}/items")
-        self._put(f"/playlists/{playlist_key}/items", {"uri": self._library_uri(want)})
+        self._put(f"/playlists/{playlist_key}/items", {"uri": self._library_uri(full)})
         if progress:
-            progress(len(want), len(want))
-        return self.order_matches(playlist_key, want)
+            progress(len(full), len(full))
+        return self.order_matches(playlist_key, full)
 
     def order_matches(self, playlist_key, keys):
         """True when the playlist's running order really is `keys`.
