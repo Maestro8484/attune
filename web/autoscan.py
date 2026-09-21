@@ -40,9 +40,13 @@ just gets picked up cleanly on the NEXT trigger (next drop, next launch, or the 
 watch cycle after reconciliation) rather than corrupting anything now.
 
 Why only changed dirs are passed to job.start, not the whole library: import_folder
-(src/scan.py) walks its target directory and ffprobes every file under it on every
-call. Handing it the full library_folders list on every single-track drop would mean
-minutes of ffprobe re-reads for one new file. The watcher instead accumulates the
+(src/scan.py) walks its target directory and reads the tags of every file under it on
+every call. (It used to shell out to ffprobe for that; since the DIET work of
+2026-09-20 it reads them with mutagen and only falls back to an ffprobe when mutagen
+cannot open the file at all and one happens to be on PATH. Cheaper per file, and the
+argument below is unchanged either way.) Handing it the full library_folders list on
+every single-track drop would mean minutes of re-reads for one new file. The watcher
+instead accumulates the
 actual touched directories (event's file's parent, or the created dir itself for a
 new album folder) and only imports those; analyze/embed remain DB-wide scans but are
 already incremental (mtime/existing-row skip), so full-library correctness is kept

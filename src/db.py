@@ -162,7 +162,16 @@ def up_to_date_paths(conn) -> set:
     current tracks.mtime. Rows predating mtime tracking (src_mtime IS NULL) or tracks
     with no known mtime are grandfathered in (not re-analyzed). A file that changed —
     re-imported so tracks.mtime advanced past features.src_mtime — drops out of this
-    set and gets re-analyzed, fixing the old 'stale vector kept forever' bug."""
+    set and gets re-analyzed, fixing the old 'stale vector kept forever' bug.
+
+    A row carrying an ERROR counts as up to date here, on purpose, and the `f.error IS
+    NOT NULL` below is where that is decided. Three separate readers have now called
+    that a bug, so it is worth saying plainly: without it a file that cannot be decoded
+    would be retried on every scan forever. What decides whether a failed row deserves
+    another attempt is scan._retry_paths, which subtracts its own set from this one --
+    and it belongs there rather than here, because it answers from the state of THIS
+    machine on THIS run (is there an ffmpeg on PATH now?). Moving it in here would make
+    "up to date" mean different things on two machines reading the same library file."""
     q = """SELECT f.path FROM features f JOIN tracks t ON t.path = f.path
            WHERE (f.vec IS NOT NULL OR f.error IS NOT NULL)
              AND (f.src_mtime IS NULL OR t.mtime IS NULL OR f.src_mtime = t.mtime)"""
