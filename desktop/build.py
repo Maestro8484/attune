@@ -213,23 +213,42 @@ def build_gui(dist, work):
         dist, os.path.join(work, "gui"), windowed=True)
 
 
+def check_inputs(allow_no_ffmpeg):
+    """Refuse a build whose inputs are missing, BEFORE anything is deleted.
+
+    This runs at the very top of main(). It used to live inside build_analyzer(), which
+    is called AFTER build_gui() has already wiped dist\\Attune -- so on a default build
+    the refusal arrived too late and destroyed the very install it exists to protect.
+    A guard that fires after the damage is worse than no guard: it reads as safety."""
+    missing = [src for src, _dest in FFBIN
+               if not os.path.exists(os.path.join(ATT, src))]
+    if not missing:
+        return
+    if allow_no_ffmpeg:
+        for src in missing:
+            print(f"[build] --no-ffmpeg: building WITHOUT {src}. About 7% of real-world "
+                  f"mp3 files will not analyze in this build. Do not ship it.")
+        return
+    raise SystemExit(
+        f"[build] REFUSING to build: {', '.join(missing)} is missing. NOTHING has been "
+        f"deleted or changed.\n"
+        f"[build]   looked in: {os.path.join(ATT, missing[0])}\n"
+        f"[build] Without it roughly one mp3 in fourteen cannot be decoded (measured 22 "
+        f"of 300, 2026-09-20), and nothing at run time would say so. desktop\\ffbin\\ is "
+        f"gitignored, so a fresh clone or a git worktree never has it: copy ffmpeg.exe "
+        f"in from the main checkout.\n"
+        f"[build] To build without it on purpose, pass --no-ffmpeg.")
+
+
 def build_analyzer(dist, work, allow_no_ffmpeg=False):
     data = list(ANALYZER_DATA)
     for src, dest in FFBIN:
         if os.path.exists(os.path.join(ATT, src)):
             data.append((src, dest))
-        elif allow_no_ffmpeg:
-            print(f"[build] --no-ffmpeg: building WITHOUT {src}. About 7% of real-world "
-                  f"mp3 files will not analyze in this build. Do not ship it.")
-        else:
-            raise SystemExit(
-                f"[build] REFUSING to build: {src} is missing.\n"
-                f"[build]   looked in: {os.path.join(ATT, src)}\n"
-                f"[build] Without it roughly one mp3 in fourteen cannot be decoded "
-                f"(measured 22 of 300, 2026-09-20), and nothing at run time would say "
-                f"so. desktop\\ffbin\\ is gitignored, so a fresh clone or a git worktree "
-                f"never has it: copy ffmpeg.exe in from the main checkout.\n"
-                f"[build] To build without it on purpose, pass --no-ffmpeg.")
+        elif not allow_no_ffmpeg:
+            # check_inputs() already refused at the top of main(); this is the belt to
+            # that braces, for a caller that reaches build_analyzer() another way.
+            raise SystemExit(f"[build] {src} is missing and --no-ffmpeg was not given")
     stage = stage_dir(dist)
     if os.path.isdir(stage):
         shutil.rmtree(stage)
@@ -332,6 +351,11 @@ def main(argv=None):
 
     if a.analyzer_only and not os.path.isdir(gui):
         raise SystemExit(f"[build] --analyzer-only needs an existing GUI build at {gui}")
+
+    # Every reason to refuse is checked HERE, before a single file is removed. --gui-only
+    # does not build the analyzer, so it does not need ffmpeg.
+    if not a.gui_only:
+        check_inputs(a.no_ffmpeg)
 
     if not a.analyzer_only:
         with preserve_analyzer(dist, a.gui_only):

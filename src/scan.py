@@ -512,6 +512,12 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
             else:
                 n_ok += 1
                 if path in retry:
+                    # In the SAME transaction as the features row, never at the end of
+                    # the run. Once this row has a vector its error is gone, so the
+                    # retry query will not select it again; a cancel between the commit
+                    # below and a late cleanup would leave the stale CLAP failure behind
+                    # and the track out of the pool for good.
+                    _clear_failed_clap(conn, [path])
                     rescued.append(path)
             if i % 25 == 0 or i == len(todo):
                 conn.commit()
@@ -520,9 +526,8 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
                 print(f"  {i}/{len(todo)} ok={n_ok} err={n_err} "
                       f"{rate:.2f}/s eta={eta/60:.1f}m last={dt:.1f}s", flush=True)
     if rescued:
-        n = _clear_failed_clap(conn, rescued)
-        print(f"{len(rescued)} previously failed tracks now analyze; "
-              f"cleared {n} stale CLAP failures so the embed stage retries them")
+        print(f"{len(rescued)} previously failed tracks now analyze; their stale CLAP "
+              f"failures were cleared as each one landed, so the embed stage retries them")
     conn.commit()
     print(f"DONE ok={n_ok} err={n_err} in {(time.time()-t0)/60:.1f}m")
     print("stats:", dbm.stats(conn))
