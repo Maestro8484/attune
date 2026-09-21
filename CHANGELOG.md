@@ -7,6 +7,37 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Added (release campaign, 2026-09-20 to 2026-09-21)
 
+- **The song list says whether a track is analyzed, pending or unanalyzable, and why.**
+  It used to say "Analyzed" or "Not analyzed", and that second word was covering two
+  completely different situations: a song Attune has not reached yet, and a song Attune
+  tried and cannot use. They looked identical, so the list could not separate what needs
+  patience from what needs attention. Pending is amber, Unanalyzable is red, and hovering
+  the Status of a row gives the reason in plain English -- "only 0.3 seconds of audio could
+  be decoded from a 2.0 MB file", not an error code. The **Not Mixable** view is where this
+  shows: its Status column used to hold a whole sentence inside a narrow column, and now
+  holds the word with the sentence on hover, and its summary line splits the count into how
+  many are still waiting and how many cannot be used. Sorting by Status goes analyzed, then
+  pending, then unanalyzable.
+
+### Fixed (2026-09-21)
+
+- **Folders you tell Attune to skip are now skipped by every scan.** The excluded-folders
+  list in Preferences was obeyed by the Rescan button and ignored by the scan that runs when
+  Attune starts and by the folder watcher, which are the two that actually run once it is
+  set up. Junk you had excluded came back into the library on its own.
+- **An empty library no longer sends you to the wrong button.** The one instruction a new
+  person got was to open Preferences "the gear at the top right". The gear is Options, which
+  opens the mix sliders. The Preferences button now carries the word Preferences instead of
+  being an unlabelled symbol, and both messages name it.
+- **"Learned metric" has been removed from the engine list in Preferences.** Choosing it did
+  not choose it: every mix still came out the same, and it also switched off Radio, Blend,
+  Adventure, thumbs-up steering and Explain. It is still there behind a command-line flag for
+  anyone developing it, and it stays out of the window until it has passed a listening test.
+- **Building from source works from the recipe in the README**, which installed a version
+  that could not load the model it then told you to download.
+- **A build that is missing the listening model now refuses before it deletes anything.**
+  It used to wipe the finished application first and explain afterwards.
+
 - **A Plex section in Preferences.** Type the server address, paste the key, press Test
   connection, pick the music library from a list Attune fills in by asking the server, and
   press Save. No section number and no machine id is ever typed. Before this the Plex
