@@ -371,7 +371,7 @@ def _read_path(path, read_map):
     """Map a stored (canonical) path to a faster local mirror to READ audio from, if that
     mirror copy exists. The DB key stays the original path; only the bytes are read locally.
     read_map is a list of (from_prefix, to_prefix) pairs, e.g.
-    (r'\\\\NAS\\music', r'D:\\Music') so analysis runs off a local disk, not over the LAN."""
+    (r'\\\\NAS\\music', r'D:\\Audio') so analysis runs off a local disk, not over the LAN."""
     for a, b in (read_map or []):
         if a and path.startswith(a):
             cand = b + path[len(a):]

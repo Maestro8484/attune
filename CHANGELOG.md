@@ -141,7 +141,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   additively — 132 insertions, 0 deletions). The existing Plex export
   (`PlexExporter.match`) resolves a track by swapping the library root out of its
   path, which is correct and which cannot work here: a hand-built roster folder like
-  `D:\Music\MP3 CD` sits OUTSIDE the library root, so `PathMapper` refuses every
+  `D:\Audio\MP3 CD` sits OUTSIDE the library root, so `PathMapper` refuses every
   path in it (ruling (a), MORNING_REPORT_2026-07-29 §5.1 — and refusing is right; a
   prefix swap on a path outside the prefix is the "drive letter in the middle of a
   UNC path" bug). So `plexmatch` asks a different question: which track in the Plex
@@ -222,7 +222,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   SUMmed for the footer total. Unread bitrate and absent BPM render blank and sort
   last, never as `0`, because a zero is a claim the file never made.
   **Observed:** after a cold reload with the columns persisted, rows render e.g.
-  `BPM 136 · 320 CBR · MP3 · 14.0 MB · 2026-01-02 · D:\Music\…`, and
+  `BPM 136 · 320 CBR · MP3 · 14.0 MB · 2026-01-02 · D:\Audio\…`, and
   `GET /api/lib/tracks?sort=bitrate` returns the 192 kHz FLAC at 5,251 kbps first.
 - **Make a playlist from what is in the queue** (`web/static/studio.html`,
   `web/static/studio.js`, `studio.css`). "✦ Playlist from these" in the Now Playing
@@ -980,8 +980,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   your music by clicking instead of typing a path. One code path works identically in the
   browser and the desktop (pywebview) window — the listing comes from the server's own
   filesystem, returning absolute paths the analyzer can use, with no native-dialog bridge.
-  Read-only, directories only. **Observed:** in the wizard, Browse → navigate `L:\` →
-  `D:\Music` → Choose lands the absolute path in the folder field; the endpoint returns
+  Read-only, directories only. **Observed:** in the wizard, Browse → navigate `D:\` →
+  `D:\Audio` → Choose lands the absolute path in the folder field; the endpoint returns
   drives at the top level and correct parent links.
 - **Attune analyzes new music by itself** (`web/autoscan.py`, NEW): two triggers wired onto
   the existing incremental scan pipeline — the `scan_on_launch` setting (present since the

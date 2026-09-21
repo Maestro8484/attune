@@ -14,10 +14,10 @@ Whatever is in the folder is on the playlist, subfolders included, dropped in no
 later (operator ruling 2026-09-01). ``--flat-only`` opts out for a one-off look.
 
     preview (default -- reads Plex, changes nothing):
-      python src/plexsync.py --folder "D:\Music\MP3 CD" --title Car-MP3usb
+      python src/plexsync.py --folder "D:\Audio\MP3 CD" --title Car-MP3usb
 
     apply:
-      python src/plexsync.py --folder "D:\Music\MP3 CD" --title Car-MP3usb --apply
+      python src/plexsync.py --folder "D:\Audio\MP3 CD" --title Car-MP3usb --apply
 
 The matching itself lives in src/plexmatch.py and is deliberately conservative: file
 name, then ID3 artist+title, then title with an artist substring, every tier gated on

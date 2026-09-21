@@ -644,7 +644,7 @@ def suggest_local_root(paths, folders=None):
 
     Returns '' when there is no such prefix -- including the real case of one stray track
     on another drive (measured 2026-07-29: 21,452 of 21,453 paths under
-    D:\\Music\\Music Library, one under M:\\). '' means "Attune has nothing honest to
+    D:\\Audio\\Music Library, one under M:\\). '' means "Attune has nothing honest to
     offer here, ask the operator", which is the whole point of ruling (a).
 
     `folders` (settings.json's library_folders) is a SECONDARY source, used only when

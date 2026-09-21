@@ -1,6 +1,6 @@
 r"""Resolve a folder of loose audio files to the tracks your Plex server already has.
 
-The problem this exists for: a folder like ``D:\Music\MP3 CD`` is a hand-built car
+The problem this exists for: a folder like ``D:\Audio\MP3 CD`` is a hand-built car
 roster, copied out of the library over years. It is NOT under the library root, so
 ``export.PathMapper`` correctly refuses to rewrite its paths (ruling (a),
 MORNING_REPORT_2026-07-29 5.1 -- a root-prefix swap on a path outside the root is the
