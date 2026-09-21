@@ -1,0 +1,11 @@
+SQLite - public domain
+https://www.sqlite.org/copyright.html
+
+SQLite's authors have dedicated all of the code in SQLite to the public domain.
+There is no license file to reproduce here, because there is no license: no
+copyright is asserted over the code, and no permission is required to use,
+modify or redistribute it, for any purpose, commercial or otherwise.
+
+The DLL inside Attune (sqlite3.dll) is the one the official CPython build for
+Windows ships. This note records that fact so that every component in the bundle
+has an entry; it is not a license grant by anyone, and it is not legal advice.
