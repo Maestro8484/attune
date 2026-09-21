@@ -1,10 +1,14 @@
 [project]
 name = "attune-mixer"
-version = "0.1.0"
-description = "Local-first acoustic playlist generator — a modern successor to MusicIP Mixer."
+# ONE source of truth for the version: the VERSION file at the repo root. The installer
+# script, desktop/build_installer.py and tools/make_release.py all read that same file.
+# Never type a version number into this file or any other.
+dynamic = ["version"]
+description = "Local-first acoustic playlist generator - a modern successor to MusicIP Mixer."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { file = "LICENSE" }
+license = "MIT"
+license-files = ["LICENSE", "NOTICE.md"]
 keywords = ["music", "playlist", "acoustic-similarity", "musicip", "librosa",
             "self-hosted", "plex", "jellyfin", "mfcc", "local-first"]
 authors = [{ name = "Joe Schmidt" }]
@@ -12,9 +16,9 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
     "Intended Audience :: End Users/Desktop",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Topic :: Multimedia :: Sound/Audio :: Analysis",
+    "Private :: Do Not Upload",
 ]
 dependencies = [
     "librosa>=0.11,<0.12",
@@ -23,19 +27,34 @@ dependencies = [
     "soundfile>=0.12",
 ]
 
-# Optional feature sets. Core install (above) runs the standalone librosa engine.
-#   pip install attune-mixer[neural]   -> hybrid CLAP engine (embed.py + hybrid.py)
-#   pip install attune-mixer[bridge]   -> LAN web UI over a live MusicIP
-#   pip install attune-mixer[learned]  -> ONNX inference: distilled-metric engine
-#                                         (--engine learned) AND the torch-free CLAP
-#                                         embedder (embed_onnx.py); keeps runtime torch-free
-#   pip install attune-mixer[all]
+# NOT PUBLISHED TO PyPI for this release. The name "attune-mixer" is not registered and no
+# upload is planned this release; the supported way to get Attune is the Windows
+# installer or the portable zip from the GitHub Releases page. This file exists so the
+# source tree is installable for development and so the dependency set is declared
+# honestly in one place. The "Private :: Do Not Upload" classifier above makes PyPI
+# reject an accidental upload.
+# (The SPDX license string and license-files replace the older license table and the
+# "License :: OSI Approved" classifier, both of which setuptools deprecates.)
+
+# Optional feature sets. The core install above runs the standalone librosa engine only.
+#   pip install -e .[app]       -> the desktop app and its web UI (what the installer ships)
+#   pip install -e .[neural]    -> hybrid CLAP engine (embed.py + hybrid.py), needs torch
+#   pip install -e .[bridge]    -> the LAN web UI over a live MusicIP
+#   pip install -e .[learned]   -> ONNX inference: the distilled-metric engine
+#                                  (--engine learned) AND the torch-free CLAP embedder
+#                                  (embed_onnx.py); keeps the runtime torch-free
+#   pip install -e .[dev]       -> the test suite
+#   pip install -e .[all]
 # torch is intentionally unpinned: install the right CPU/CUDA build from pytorch.org first.
 [project.optional-dependencies]
+app = ["flask>=3.0", "mutagen>=1.47", "requests>=2.31", "pywebview>=5", "watchdog>=6",
+       "onnxruntime>=1.20"]
 neural = ["torch", "transformers>=4.40"]
 bridge = ["flask>=3.0", "mutagen>=1.47", "watchdog>=6"]
 learned = ["onnxruntime>=1.20"]
-all = ["torch", "transformers>=4.40", "flask>=3.0", "mutagen>=1.47", "onnxruntime>=1.20", "watchdog>=6"]
+dev = ["pytest>=8"]
+all = ["flask>=3.0", "mutagen>=1.47", "requests>=2.31", "pywebview>=5", "watchdog>=6",
+       "onnxruntime>=1.20", "torch", "transformers>=4.40"]
 
 [project.scripts]
 attune-scan   = "scan:main"      # import/analyze a library -> mixer.db
@@ -48,12 +67,33 @@ attune-hybrid = "hybrid:main"    # hybrid V2 engine (needs [neural] + a clap tab
 Homepage = "https://github.com/Maestro8484/attune"
 Issues = "https://github.com/Maestro8484/attune/issues"
 
-# Note: also requires ffmpeg/ffprobe on PATH (external program, not a Python dependency).
+# External program, not a Python dependency: ffmpeg/ffprobe.
+#   - the library scan shells out to `ffprobe` to read tags
+#   - librosa falls back to ffmpeg for formats libsndfile cannot decode (m4a, wma)
+# Only needed when installing FROM SOURCE. The shipped Windows app does not need it on
+# PATH; if it is absent, those two container formats are simply skipped with a message.
+# Install: https://ffmpeg.org/download.html (or winget install ffmpeg / brew install
+# ffmpeg / apt install ffmpeg). ffmpeg is LGPL/GPL and is used as a separate program,
+# never linked into this codebase.
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]   # 77 is where the SPDX `license` string above is supported
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.dynamic]
+version = { file = "VERSION" }
 
 [tool.setuptools]
 package-dir = { "" = "src" }
-py-modules = ["features", "db", "scan", "mixer", "hybrid", "embed", "embed_onnx", "validate", "make_validation_set"]
+# Every module under src/, listed explicitly. src/ is a flat set of modules, not
+# packages, so setuptools' automatic discovery does not find them; the previous list
+# named 9 of the 20 that exist, which meant `pip install -e .` produced an installation
+# missing half the product, including the engine the app actually runs. Adding a file to
+# src/ means adding it here. Checked with:
+#   python -c "import glob,os;print(sorted(os.path.basename(p)[:-3] for p in glob.glob('src/*.py')))"
+py-modules = [
+    "config", "db", "embed", "embed_onnx", "engine", "exp_run", "export",
+    "features", "features_exp", "genre_cluster", "hybrid", "make_validation_set",
+    "mixer", "musicip_engine", "plexmatch", "plexsync", "scan", "textsearch",
+    "tune", "validate",
+]
