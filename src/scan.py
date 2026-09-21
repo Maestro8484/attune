@@ -8,7 +8,8 @@ Usage:
   python scan.py stats
 """
 from __future__ import annotations
-import sys, os, json, time, shutil, argparse, subprocess, concurrent.futures as cf
+import sys, os, json, time, shutil, argparse, subprocess, sqlite3
+import concurrent.futures as cf
 import db as dbm
 import features as feat
 
@@ -385,9 +386,9 @@ def _analyze_one(path, read_path=None):
     r = feat.extract(read_path or path)
     dt = time.time() - t0
     if r and "vec" in r:
-        return (path, r["vec"], r["tempo"], None, dt)
+        return (path, r["vec"], r["tempo"], None, dt, bool(r.get("redecoded")))
     err = (r or {}).get("error", "unknown")
-    return (path, None, None, err, dt)
+    return (path, None, None, err, dt, False)
 
 
 def appdata_bin():
@@ -418,7 +419,9 @@ def add_user_bin_to_path():
 
 
 def _retry_paths(conn, retry_failed):
-    """Failed rows worth another attempt on THIS run.
+    """Failed rows worth another attempt on THIS run, as {path: why}. The reason travels
+    with the path because the two kinds are retried for different reasons and printing one
+    of them under the other's heading would make the run log say something untrue.
 
     A features row carrying an error counts as up to date (db.py up_to_date_paths), so
     without this a track that failed once is never looked at again until the file
@@ -429,51 +432,92 @@ def _retry_paths(conn, retry_failed):
     failed row."""
     if retry_failed:
         q = "SELECT path FROM features WHERE error IS NOT NULL"
-        return {r[0] for r in conn.execute(q)}
+        return {r[0]: "--retry-failed" for r in conn.execute(q)}
     if not feat.decoder_available():
-        return set()
+        return {}
     q = "SELECT path FROM features WHERE error LIKE ?"
-    return {r[0] for r in conn.execute(q, (feat.NEEDS_DECODER + "%",))}
+    no_decoder = {r[0] for r in conn.execute(q, (feat.NEEDS_DECODER + "%",))}
+    # Rows written before 2026-09-20 recorded a short decode as "too short" without ever
+    # asking a second decoder, and on this library ffmpeg gets a whole song, or enough of
+    # one to analyze, out of 14 of the 18 such rows.
+    # Each gets exactly one more attempt now that there is a second decoder: the attempt
+    # rewrites the row whichever way it goes, and no reason features.py writes today can
+    # begin with either of these, so the match cannot pick the same row up twice.
+    short = set()
+    for prefix in feat.LEGACY_SHORT_ERROR_PREFIXES:
+        short |= {r[0] for r in conn.execute(q, (prefix + "%",))}
+    out = {p: "failed for want of a decoder, and an ffmpeg is now on PATH"
+           for p in no_decoder}
+    for p in short - no_decoder:
+        out[p] = "recorded as too short before anything asked a second decoder"
+    return out
 
 
-def _clear_failed_clap(conn, paths):
-    """Drop the CLAP failure rows for tracks that have just analyzed successfully.
+def _clear_clap(conn, paths, only_failed=True):
+    """Drop CLAP rows for tracks the analyze stage has just settled, so the embed stage
+    looks at them again. Two callers, two scopes:
 
-    embed_onnx.py treats a clap row with `err` set as done and never retries it, so a
-    track rescued here would gain a librosa vector, still have no embedding, and still
-    sit outside the mix pool. Only rows with no vector are removed; a real embedding is
-    never touched.
+    only_failed=True, after a track that failed for want of a decoder analyzes at last.
+    embed_onnx.py treats a clap row with `err` set as done and never retries it, so the
+    track would gain a librosa vector, still have no embedding, and still sit outside the
+    mix pool. Only rows with no vector go; a real embedding is never touched.
 
-    Done in batches because --retry-failed can hand this thousands of paths at once and
-    SQLite refuses a statement with more bound variables than its limit allows. One
-    oversized statement would raise, be swallowed, and silently clear nothing."""
+    only_failed=False, after a track whose audio had to be decoded a second time. Any
+    embedding it already holds was computed from the same truncated read, so it describes
+    a fragment rather than the song -- on this library, three such CLAP vectors were built
+    from about three seconds of audio padded out with silence. Those rows go, vector and
+    all, because the value in them is wrong rather than missing.
+
+    Both callers pass a single path, one track at a time, so that the delete lands in the
+    same transaction as that track's features row. The batching is kept for any caller that
+    passes many at once: SQLite refuses a statement with more bound variables than its limit
+    allows, and one oversized statement would raise and clear nothing."""
     if not paths:
         return 0
     paths = list(paths)
     n = 0
+    where = "vec IS NULL AND " if only_failed else ""
     for i in range(0, len(paths), 400):
         chunk = paths[i:i + 400]
         try:
             cur = conn.execute(
-                "DELETE FROM clap WHERE vec IS NULL AND path IN (%s)"
-                % ",".join("?" * len(chunk)), tuple(chunk))
+                "DELETE FROM clap WHERE %spath IN (%s)"
+                % (where, ",".join("?" * len(chunk))), tuple(chunk))
             n += cur.rowcount or 0
-        except Exception as e:
-            # The usual reason is that there is no clap table at all, because embedding
-            # has never run here. Say so rather than returning a quiet zero.
-            print(f"note: could not clear stale CLAP failures ({e}); "
-                  f"run the embed stage again if those tracks stay out of the mix")
+        except sqlite3.OperationalError as e:
+            # ONLY a missing clap table is survivable, and it is the common case: embedding
+            # has never run in this database. Say so rather than returning a quiet zero,
+            # but once per run, because this is called per track and the same line repeated
+            # a thousand times buries everything else in the log.
+            #
+            # Anything else -- a locked database above all -- is re-raised on purpose. The
+            # features row for this track is in the same uncommitted transaction, and
+            # swallowing the failure would commit a good vector beside the very CLAP row
+            # this call exists to remove, with nothing left to say so.
+            if "no such table" not in str(e):
+                raise
+            global _SAID_NO_CLAP_TABLE
+            if not _SAID_NO_CLAP_TABLE:
+                _SAID_NO_CLAP_TABLE = True
+                print(f"note: could not clear CLAP rows ({e}); run the embed stage "
+                      f"again if those tracks stay out of the mix")
             return n
     return n
+
+
+_SAID_NO_CLAP_TABLE = False
 
 
 def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
             retry_failed=False):
     conn = dbm.connect(db_path)
+    # Ask once, on this thread, so the worker threads all find the answer cached rather
+    # than each spawning its own `ffmpeg -version` on first use.
+    feat.decoder_available()
     done = dbm.up_to_date_paths(conn)   # skip only unchanged, already-analyzed tracks
     retry = _retry_paths(conn, retry_failed)
     if retry:
-        done -= retry
+        done -= retry.keys()
     mtimes = {r[0]: r[1] for r in conn.execute("SELECT path, mtime FROM tracks")}
     if paths_file:
         want = [l.strip() for l in open(paths_file, encoding="utf-8") if l.strip()]
@@ -484,17 +528,18 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
         todo = todo[:limit]
     # Counted AFTER --paths-file and --limit have narrowed the list, so the number is
     # what this run will actually re-attempt rather than what was eligible.
-    n_retry = sum(1 for p in todo if p in retry)
-    if n_retry:
-        why = ("all failed rows (--retry-failed)" if retry_failed else
-               "failed for want of a decoder, and an ffmpeg is now on PATH")
+    by_why = {}
+    for p in todo:
+        if p in retry:
+            by_why[retry[p]] = by_why.get(retry[p], 0) + 1
+    for why, n_retry in sorted(by_why.items()):
         print(f"retrying {n_retry} previously failed tracks: {why}")
     print(f"{len(want)} candidates, {len(done)} already done, {len(todo)} to analyze, workers={workers}")
     if not todo:
         print("nothing to do"); return
 
     t0 = time.time()
-    n_ok = n_err = 0
+    n_ok = n_err = n_redecoded = n_held = 0
     rescued = []
     # I/O + numba release the GIL enough that threads give real speedup and avoid
     # re-importing librosa per task (process pool would be far slower to spin up).
@@ -504,20 +549,32 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_analyze_one, p, _read_path(p, read_map)): p for p in todo}
         for i, fut in enumerate(cf.as_completed(futs), 1):
-            path, vec, tempo, err, dt = fut.result()
-            dbm.save_features(conn, path, vec, tempo, int(time.time()), err,
-                              src_mtime=mtimes.get(path))
+            path, vec, tempo, err, dt, redecoded = fut.result()
+            # A row being retried that fails because the drive is offline or the file is
+            # locked has learned nothing about the file. Writing that answer would replace
+            # the reason that made it eligible, and neither of these is ever retried
+            # automatically, so one absent drive would spend every such row's single
+            # attempt for good. Leave the old row exactly where it is.
+            if err in feat.TRANSIENT_ERRORS and path in retry:
+                n_held += 1
+            else:
+                dbm.save_features(conn, path, vec, tempo, int(time.time()), err,
+                                  src_mtime=mtimes.get(path))
             if err:
                 n_err += 1
             else:
                 n_ok += 1
+                # In the SAME transaction as the features row, never at the end of the
+                # run. Once this row has a vector its error is gone, so the retry query
+                # will not select it again; a cancel between the commit below and a late
+                # cleanup would leave the stale CLAP row behind and the track out of the
+                # pool, or in it on a fragment, for good.
+                if redecoded:
+                    _clear_clap(conn, [path], only_failed=False)
+                    n_redecoded += 1
+                elif path in retry:
+                    _clear_clap(conn, [path])
                 if path in retry:
-                    # In the SAME transaction as the features row, never at the end of
-                    # the run. Once this row has a vector its error is gone, so the
-                    # retry query will not select it again; a cancel between the commit
-                    # below and a late cleanup would leave the stale CLAP failure behind
-                    # and the track out of the pool for good.
-                    _clear_failed_clap(conn, [path])
                     rescued.append(path)
             if i % 25 == 0 or i == len(todo):
                 conn.commit()
@@ -528,6 +585,14 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     if rescued:
         print(f"{len(rescued)} previously failed tracks now analyze; their stale CLAP "
               f"failures were cleared as each one landed, so the embed stage retries them")
+    if n_held:
+        print(f"{n_held} tracks being retried could not be reached at all - the drive is "
+              f"offline or the file is locked - so their rows were left as they were and "
+              f"they will be retried again next time")
+    if n_redecoded:
+        print(f"{n_redecoded} tracks came back short from the first decoder and were "
+              f"decoded again with ffmpeg; any CLAP row they held was built from the "
+              f"same short read and was cleared with them")
     conn.commit()
     print(f"DONE ok={n_ok} err={n_err} in {(time.time()-t0)/60:.1f}m")
     print("stats:", dbm.stats(conn))
