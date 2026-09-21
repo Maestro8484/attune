@@ -16,7 +16,10 @@ here — embed.py stays as the reference/training path.
 """
 from __future__ import annotations
 import os, sys, time, json, sqlite3, argparse, threading, queue
-import numpy as np
+try:
+    import numpy as np
+except ImportError:                                    # a bare Python, before pip install
+    sys.exit("this needs numpy.\n  pip install -r requirements.txt")
 
 MODEL = "laion/larger_clap_music"   # provenance; the weights live in the .onnx
 SR = 48000
@@ -45,6 +48,39 @@ def _import_stack():
     except ImportError as e:
         sys.exit(f"onnx embedding needs librosa + onnxruntime ({e}).\n"
                  "  pip install librosa onnxruntime")
+
+
+_LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
+_FETCH_HINT = "from the repository root, run:  python tools/fetch_model.py"
+
+
+def _check_model_present(onnx_path=ONNX_PATH):
+    """The model is not in the repository: it is 263 MiB and lives on a release instead.
+    Say that in one sentence rather than letting onnxruntime raise a stack trace about a file
+    it could not parse. A checkout made without git-lfs leaves a 134-byte text stub here, which
+    looks present to `os.path.exists` and fails exactly the same way.
+
+    This also fires inside the frozen analyzer if the machine that built it had a stub rather
+    than the model, which is why the message names the file as well as the fix: in a packaged
+    copy there is no tools/ directory to run, and the right answer is to reinstall."""
+    if not os.path.exists(onnx_path):
+        sys.exit(f"CLAP model not found: {onnx_path}\n"
+                 f"  It is not kept in the repository. Fetch it:  {_FETCH_HINT}\n"
+                 f"  (In an installed copy of Attune this file should have shipped inside the "
+                 f"program folder; if it is missing there, reinstall.)")
+    try:
+        with open(onnx_path, "rb") as fh:
+            head = fh.read(len(_LFS_POINTER_PREFIX))
+    except OSError as e:
+        sys.exit(f"CLAP model at {onnx_path} could not be read: {e}")
+    if head == _LFS_POINTER_PREFIX:
+        sys.exit(f"CLAP model at {onnx_path} is a Git LFS pointer stub, not the model.\n"
+                 f"  That is what a clone made without git-lfs leaves behind. Fetch the real "
+                 f"one:  {_FETCH_HINT}")
+    if onnx_path == ONNX_PATH and os.path.getsize(onnx_path) < 1_000_000:
+        # only the bundled model has a known size; a --onnx path is the caller's business
+        sys.exit(f"CLAP model at {onnx_path} is {os.path.getsize(onnx_path)} bytes, far too "
+                 f"small to be the model.\n  Fetch it again:  {_FETCH_HINT}")
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +201,7 @@ def _decode(librosa, path, path_map):
 
 
 def make_session(onnxruntime, onnx_path=ONNX_PATH):
+    _check_model_present(onnx_path)
     return onnxruntime.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
 
 
@@ -176,6 +213,7 @@ def track_mels(clips, mel_filters, window) -> np.ndarray:
 def embed(db_path, workers=6, batch=8, path_map=None, onnx_path=ONNX_PATH):
     librosa, onnxruntime = _import_stack()
     _check_norm_json()
+    _check_model_present(onnx_path)   # fail here, not after a full pass over the track table
     path_map = path_map or []
     workers = max(1, int(workers))   # 0 producers => consumer would block on q.get() forever
     batch = max(1, int(batch))
