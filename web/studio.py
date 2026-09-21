@@ -103,6 +103,85 @@ def _split_genres(g):
     return [p.strip() for p in str(g).split(";") if p.strip()]
 
 
+# ------------------------------------------------------------------- the three states
+
+# The Status column had exactly two values, "Analyzed" and "Not analyzed", and the
+# second was doing the work of two completely different situations: a song Attune has
+# not reached yet, and a song Attune tried and cannot use. They looked identical, so the
+# list could not separate what needs patience from what needs attention. These are the
+# three words Joe asked for, in his words rather than the code's.
+#
+# No new column and no new query. `features.error` and `features.vec` have always
+# carried the distinction; only the collapsed two-state answer was ever read out of
+# them. Counted on the real library 2026-09-21: 21,237 analyzed, 19 unanalyzable, 0
+# pending -- pending is a state a library passes THROUGH during a scan, which is
+# exactly when somebody looks at this column.
+ANALYZED = "Analyzed"
+PENDING = "Pending"
+UNANALYZABLE = "Unanalyzable"
+
+# What is done, then what is coming, then what needs a decision.
+STATUS_ORDER = {ANALYZED: 0, PENDING: 1, UNANALYZABLE: 2}
+
+
+def _status_of(err, hasvec, dim, has_clap=True):
+    """Which of the three states a track is in.
+
+    A stored error means Attune tried and cannot use it. A stored vector and no error
+    means analyzed -- unless the vector is the wrong width, which means an older build
+    wrote it and this one cannot read it, so it needs a rescan rather than patience.
+    Neither means it has not been reached yet.
+
+    `has_clap` is the sound-fingerprint half. A track that analyzed cleanly but has no
+    fingerprint yet is PENDING, not analyzed: the work is genuinely unfinished and one
+    more scan finishes it. That is patience, not attention, which is the whole line the
+    three states are drawn along.
+    """
+    if err:
+        return UNANALYZABLE
+    if not hasvec:
+        return PENDING
+    if dim and dim != 79:
+        return UNANALYZABLE
+    return ANALYZED if has_clap else PENDING
+
+
+def _why_sentences(err, hasvec, dim, has_clap):
+    """The plain-English reason, or "" for a track with nothing to explain.
+
+    PLAIN ENGLISH, and the stored reason VERBATIM when there is one. The analyzer writes
+    its failures as sentences meant for a person, so the old "librosa analysis failed: "
+    prefix was jargon AND a second sentence opening in the middle of the first: a
+    stranger read "librosa analysis failed: .m4a files need ffmpeg, which Attune does
+    not carry." (Raised by the bundle-diet stream, 2026-09-20.) The name of the library
+    that did the work is ours to know, not theirs to read.
+
+    Factored out of _load_failures on 2026-09-21 so the main song list and the Not
+    Mixable view say the same sentence about the same track instead of one of them
+    saying nothing at all.
+    """
+    why = []
+    analysis_ok = hasvec and not err and (not dim or dim == 79)
+    if not hasvec:
+        if err:
+            why.append(err)
+        else:
+            why.append("Not analyzed yet. Rescan the library to try again.")
+    elif err:
+        why.append(err)
+    elif dim and dim != 79:
+        why.append(f"Analyzed by an older version of Attune ({dim} numbers wide, "
+                   f"this build reads 79). Rescan the library to redo it.")
+    # Only worth saying when the analysis half actually succeeded. On a track that
+    # failed to decode, both halves are missing and the decode error is the whole
+    # story -- repeating "and no fingerprint either" adds nothing but a second
+    # line to read.
+    if analysis_ok and not has_clap:
+        why.append("Analyzed, but Attune has not made its sound fingerprint yet. "
+                   "Rescan the library to finish that last step.")
+    return " ".join(why)
+
+
 # ----------------------------------------------------------------------- library index
 
 class LibraryIndex:
@@ -160,12 +239,28 @@ class LibraryIndex:
             i = idx.get(p)
             if i is not None:
                 self.tempo[i] = float(tempo or 0.0)
+        # One pass over `features` now gives all three states instead of a bool. The
+        # older query asked only "error IS NULL AND vec IS NOT NULL", which answered
+        # "analyzed or not" and threw away the difference between not-yet and cannot.
+        # `self.analyzed` keeps its exact old meaning: several sorts, the stats footer
+        # and userdata.py read it, and none of them wants a third value.
         self.analyzed = [False] * self.n
-        for (p,) in con.execute(
-                "SELECT path FROM features WHERE error IS NULL AND vec IS NOT NULL"):
+        self.state = [PENDING] * self.n
+        self.why = [""] * self.n
+        clap_paths = set()
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clap'"
+                       ).fetchone():
+            clap_paths = {p for (p,) in
+                          con.execute("SELECT path FROM clap WHERE vec IS NOT NULL")}
+        for p, err, hasvec, dim in con.execute(
+                "SELECT path, error, vec IS NOT NULL, dim FROM features"):
             i = idx.get(p)
-            if i is not None:
-                self.analyzed[i] = True
+            if i is None:
+                continue
+            err, hasvec = err or "", bool(hasvec)
+            self.analyzed[i] = hasvec and not err
+            self.state[i] = _status_of(err, hasvec, dim, p in clap_paths)
+            self.why[i] = _why_sentences(err, hasvec, dim, p in clap_paths)
         self.db_tracks = con.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
         self.failures = self._load_failures(con, set(paths))
         con.close()
@@ -261,29 +356,11 @@ class LibraryIndex:
             if p in pool:
                 continue
             err, hasvec, dim = feat.get(p, ("", False, 0))
-            why = []
-            # PLAIN ENGLISH, and the stored reason VERBATIM when there is one. The
-            # analyzer writes its failures as sentences meant for a person now, so the old
-            # "librosa analysis failed: " prefix was jargon AND a second sentence opening
-            # in the middle of the first: a stranger read "librosa analysis failed: .m4a
-            # files need ffmpeg, which Attune does not carry." (Raised by the bundle-diet
-            # stream, 2026-09-20.) The name of the library that did the work is ours to
-            # know, not theirs to read.
-            analysis_ok = hasvec and not err and (not dim or dim == 79)
-            if not hasvec:
-                why.append(err or "Not analyzed yet. Rescan the library to try again.")
-            elif err:
-                why.append(err)
-            elif dim and dim != 79:
-                why.append(f"Analyzed by an older version of Attune ({dim} numbers wide, "
-                           f"this build reads 79). Rescan the library to redo it.")
-            # Only worth saying when the analysis half actually succeeded. On a track that
-            # failed to decode, both halves are missing and the decode error is the whole
-            # story -- repeating "and no fingerprint either" adds nothing but a second
-            # line to read.
-            if p not in clap and analysis_ok:
-                why.append("Analyzed, but Attune has not made its sound fingerprint yet. "
-                           "Rescan the library to finish that last step.")
+            # The sentences and the state both come from the shared helpers at the top
+            # of this module, so this view and the main song list can never drift into
+            # describing the same track two different ways.
+            why = _why_sentences(err, hasvec, dim, p in clap)
+            state = _status_of(err, hasvec, dim, p in clap)
             out.append({
                 "path": p,
                 "file": os.path.basename(p),
@@ -294,8 +371,9 @@ class LibraryIndex:
                 "year": int(year or 0) or None,
                 "seconds": int(secs or 0),
                 "length": _seconds_to_len(secs),
-                "why": " ".join(why) or "Attune cannot tell from the library why this "
-                                       "one is not mixable.",
+                "state": state,
+                "why": why or "Attune cannot tell from the library why this "
+                              "one is not mixable.",
             })
         return out
 
@@ -373,7 +451,10 @@ class LibraryIndex:
         "rating": lambda s, i: (-s.rating[i], s.f_artist[i], s.f_album[i], s.fno[i]),
         "plays": lambda s, i: (-s.plays[i], -s.last_played[i]),
         "added": lambda s, i: -s.date_added[i],
-        "status": lambda s, i: (not s.analyzed[i], s.f_artist[i]),
+        # Three states now, so the old "analyzed first, everything else second" is not
+        # an order any more: analyzed, then pending, then unanalyzable -- done, coming,
+        # needs a decision.
+        "status": lambda s, i: (STATUS_ORDER.get(s.state[i], 9), s.f_artist[i]),
         # New file/encoding sorts. Unread bitrate and missing BPM sort LAST rather
         # than as zero, so "sort by bitrate" does not park every not-yet-read row at
         # the top and read as "these are all 0 kbps".
@@ -422,7 +503,14 @@ class LibraryIndex:
             "loved": self.loved[i],
             "plays": self.plays[i],
             "added": self.date_added[i] or None,
-            "status": "Analyzed" if self.analyzed[i] else "Not analyzed",
+            # One of Analyzed / Pending / Unanalyzable. "Not analyzed" was two
+            # situations wearing one word; see the three-states block at the top.
+            "status": self.state[i],
+            # The reason, for a row that has one. Blank for an ordinary analyzed track,
+            # which is almost all of them. The front end hangs it on the Status cell's
+            # own tooltip -- the same per-cell mechanism the File path column already
+            # uses -- rather than on the row tooltip, which already means "the path".
+            "why": self.why[i],
             "missing": bool(self.missing[i]),
             # file + encoding detail. `path` was always in RAM and simply never sent.
             # bitrate/sample_rate/channels are None until audioinfo.py has read that
@@ -645,7 +733,12 @@ def register(app, ctx):
         another machine (app.py's Plex route strips paths for exactly this reason)."""
         if request.remote_addr not in ("127.0.0.1", "::1"):
             return jsonify(error="only available on the Attune machine itself"), 403
+        # pending / unanalyzable counted separately, because the whole point of the
+        # three states is that "not mixable" was two different situations and the view
+        # could not say which was which.
+        pending = sum(1 for r in lib.failures if r.get("state") == PENDING)
         return jsonify(total=len(lib.failures), pool=lib.n, db_tracks=lib.db_tracks,
+                       pending=pending, unanalyzable=len(lib.failures) - pending,
                        rows=lib.failures)
 
     def _multi(key):

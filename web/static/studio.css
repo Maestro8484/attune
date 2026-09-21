@@ -490,8 +490,13 @@ tbody tr.dragover td { border-top:2px solid var(--accent); }
 .c-genre { width:130px; color:var(--muted); }
 .c-rating { width:92px; }
 .c-plays { width:56px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+/* Three states, and the colour carries the distinction Joe asked for: Pending is
+   amber because it needs patience, Unanalyzable is red because it needs attention.
+   `.no` still means exactly what it always meant, "not analyzed", so anything that
+   already keyed on it is unaffected; `.bad` is the new, narrower one. */
 .c-status { width:96px; color:var(--muted); }
 .c-status.no { color:var(--warn); }
+.c-status.no.bad { color:var(--err); }
 .c-album, .c-artist { color:var(--muted); }
 /* File + encoding columns. Numbers right-aligned and tabular so a bitrate or a size
    column reads as a column and not as ragged text. File path is the one that can be

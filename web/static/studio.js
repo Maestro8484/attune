@@ -541,11 +541,23 @@ function rowsHtml(rows, opts = {}) {
     const tune = S.view === 'mix' && S.stats.engine === 'v2' &&
                  r.i >= 0 && r.i !== seed;
     const tds = cols.map(c => {
-      const extra = (c.id === 'status' && r.status !== 'Analyzed') ? ' no' : '';
+      // Three states, two of them worth colouring: Pending is amber (wait) and
+      // Unanalyzable is red (this one needs you). Analyzed stays the ordinary muted
+      // grey. The 'no' class is the one that has always existed and it still means
+      // exactly what it meant -- not analyzed -- so nothing that styled it breaks.
+      let extra = '';
+      if (c.id === 'status' && r.status !== 'Analyzed') {
+        extra = (r.status === 'Unanalyzable') ? ' no bad' : ' no';
+      }
       const cell = cellHtml(c, r) + (tune && c.id === 'title' ? tuneHtml(r.i) : '');
       // A path is wider than any sane column, so the cell truncates and hover shows
       // the whole thing rather than forcing the table to scroll to read one row.
-      const ct = (c.id === 'path' && r.path) ? ` title="${esc(r.path)}"` : '';
+      // The Status cell borrows the SAME per-cell mechanism for the reason a track
+      // cannot be used: the row tooltip already means "the file path" in the Not
+      // Mixable view, and one thing should not mean two.
+      let ct = '';
+      if (c.id === 'path' && r.path) ct = ` title="${esc(r.path)}"`;
+      else if (c.id === 'status' && r.why) ct = ` title="${esc(r.why)}"`;
       return `<td class="${c.cls}${extra}"${ct}>${cell}</td>`;
     }).join('');
     // r.tip: hover text for the whole row. Set by the Not Mixable view, which has to be
@@ -1307,13 +1319,20 @@ async function showFailures() {
   $('queueTools').hidden = true;
   try {
     const j = await jget('/api/lib/failures');
+    // The Status column used to hold the whole reason sentence, in 96 pixels. It now
+    // holds the WORD -- Pending or Unanalyzable -- and the sentence is the tooltip on
+    // that same cell, which is how it becomes readable rather than clipped.
     renderRows(j.rows.map(r => ({
       i: -1, track: 0, title: r.title, length: r.length, artist: r.artist,
       album: r.album, genre: r.genre, year: r.year, rating: 0, plays: 0,
-      seconds: r.seconds, status: r.why, unmixable: true, tip: r.path })));
-    $('viewSub').textContent = `${fmt(j.total)} of ${fmt(j.db_tracks)} tracks could not be `
-      + `analyzed, so they are in no mix. ${fmt(j.pool)} tracks are mixable. `
-      + `Re-scan a track to try again; hover a row for its file path.`;
+      seconds: r.seconds, status: r.state, why: r.why, unmixable: true, tip: r.path })));
+    const parts = [];
+    if (j.pending) parts.push(`${fmt(j.pending)} still waiting to be analyzed`);
+    if (j.unanalyzable) parts.push(`${fmt(j.unanalyzable)} Attune cannot use`);
+    $('viewSub').textContent = `${fmt(j.total)} of ${fmt(j.db_tracks)} tracks are in no mix`
+      + (parts.length ? `: ${parts.join(', ')}. ` : '. ')
+      + `${fmt(j.pool)} tracks are mixable. `
+      + `Hover the Status of a row for the reason, or the row itself for its file path.`;
   } catch (e) { toast(e.message, true); }
 }
 
