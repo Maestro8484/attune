@@ -193,6 +193,31 @@ def test_get_settings_never_hands_the_token_back(client):
         "on it never being there")
 
 
+# ------------------------------------------------ the engine choice that did nothing
+
+def test_the_learned_metric_cannot_be_chosen_in_preferences(client):
+    """ISSUES.md row 16. Picking it gave ordinary V2 mixes and switched off Radio,
+    Blend, Adventure, thumbs-up steering and Explain. The option is gone from the
+    window; this is the half that stops a script setting what the window no longer
+    offers."""
+    r = client.post("/api/settings", json={"engine": "learned"}, environ_base=LOCAL)
+    assert r.status_code == 400
+    assert "learned metric" in r.get_data(as_text=True).lower()
+    assert _stored(client).get("engine") != "learned"
+
+
+@pytest.mark.parametrize("engine", ["auto", "v2", "musicip"])
+def test_the_three_engines_that_do_work_are_still_choosable(client, engine):
+    assert client.post("/api/settings", json={"engine": engine},
+                       environ_base=LOCAL).status_code == 200
+    assert _stored(client)["engine"] == engine
+
+
+def test_a_nonsense_engine_is_refused_too(client):
+    assert client.post("/api/settings", json={"engine": "banana"},
+                       environ_base=LOCAL).status_code == 400
+
+
 def test_a_cold_start_did_not_copy_a_real_key_from_the_workspace_env(client):
     """ISSUES.md row 48. Redirecting APPDATA alone does not stop export.find_env
     walking up to the workspace .env and the carryover writing a real Plex key into

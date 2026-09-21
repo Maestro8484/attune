@@ -1220,8 +1220,25 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 return jsonify(ok=False, error="A Plex library is chosen from the list, "
                                "not typed."), 400
             patch["plex_section_key"] = k
+        # "learned" is refused here, and this is the cheap half of ISSUES.md row 16 --
+        # the broken CHOICE goes, the engine stays (release ruling 10). Picking it did
+        # not select it: _active_mix_indices has one engine branch, `if is_musicip`, and
+        # everything else falls through to the built-in hybrid, so every mix came out
+        # V2 regardless. Worse, Radio, Blend, Adventure, thumbs-up steering and Explain
+        # are all gated on capabilities the learned engine does not claim, so the
+        # setting quietly removed five things that worked and delivered nothing it
+        # promised. Wiring it properly is a day's work and needs an ear test under
+        # LAW 1, so it is not done here and must not be done casually.
+        # --engine learned on the command line is deliberately still allowed: that is a
+        # developer choosing it knowingly, and the launch config uses it.
+        if patch.get("engine") == "learned":
+            return jsonify(ok=False, error="The learned metric is not ready to be "
+                           "chosen here yet. Picking it would give you ordinary mixes "
+                           "and switch off Radio, Blend, Adventure, thumbs-up steering "
+                           "and Explain. Attune V2 is the one to use."), 400
         for key, allowed in (("path_flavor", ("local", "unc", "plex")),
-                             ("copy_layout", ("flat", "tree"))):
+                             ("copy_layout", ("flat", "tree")),
+                             ("engine", ("auto", "v2", "musicip"))):
             if key in patch and patch[key] not in allowed:
                 return jsonify(ok=False,
                                error=f"{key} must be one of: {', '.join(allowed)}"), 400

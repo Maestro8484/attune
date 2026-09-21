@@ -64,10 +64,21 @@ MusicIP is closed third-party software. Attune neither bundles it nor launches i
 A small ONNX network distilled onto the CLAP features already in the database, replacing the
 hand-tuned weights above with a learned distance. `--engine learned` selects it.
 
-**Selectable, not the default.** It is built, it runs, and its output was checked against
-the reference implementation it was distilled from and matched. What it has not had is a
-blind listening test against V2, and in this project a retrieval number never decides what
-ships. Until somebody sits down and listens, V2 stays the default.
+**Where its judgment comes from, said plainly.** It was trained to reproduce **MusicIP's**
+rankings over the author's own library, obtained through MusicIP's local HTTP interface on
+his own audio. No MusicIP code or data is in this repository, but the weights encode
+another program's judgments, and that is a thing to disclose rather than leave for somebody
+to find in a source comment. [NOTICE.md](../NOTICE.md) section 4 is the full account.
+
+**Selectable from the command line, and no longer offered in Preferences.** It is built and
+it runs. It was removed from the Preferences engine list on 2026-09-21 because choosing it
+there did not actually select it: every mix still came out as the ordinary V2 mix, and the
+setting also switched off Radio, Blend, Adventure, thumbs-up steering and Explain, which the
+learned engine does not provide. So it promised a different mix, delivered the same one, and
+quietly removed five things that worked.
+
+What it has never had is a blind listening test against V2, and in this project a retrieval
+number never decides what ships. Until somebody sits down and listens, V2 stays the default.
 
 ## The librosa-only engine
 

@@ -735,7 +735,16 @@
                   <option value="auto">Auto — probe MusicIP, fall back to V2</option>
                   <option value="v2">Attune V2 (built-in)</option>
                   <option value="musicip">MusicIP Mixer (needs its API running)</option>
-                  <option value="learned">Learned metric (ONNX head, not yet the default)</option>
+                  <!-- "Learned metric" was removed on 2026-09-21. Choosing it did not
+                       select it: every mix came out as the ordinary V2 mix, and it also
+                       switched off Radio, Blend, Adventure, thumbs-up steering and
+                       Explain, because the learned engine claims none of those. So the
+                       option did nothing it promised and quietly removed five things
+                       that worked. The ENGINE is kept and still runs behind
+                       --engine learned; it is the broken choice that has gone. Wiring
+                       it up properly needs an ear test (LAW 1). POST /api/settings
+                       refuses the value too, so a script cannot set what this no longer
+                       offers. -->
                 </select><span class="hint">Needs restart.</span></div></div>
             <div class="prefrow"><span class="k">Default recipe</span>
               <div class="v"><select id="prefDefaultRecipe">
