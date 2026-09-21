@@ -376,7 +376,7 @@ TITLE_TOKENS = {
 _TOKEN_RE = re.compile(r"\{(\w+)\}")
 
 
-def resolve_title(template, when=None):
+def resolve_title(template, when=None, extra=None, strip=True):
     """Expand {date}/{ymd}/{year}/{month} in a playlist name template.
 
     `when` is a datetime the CALLER supplies, so the resolved name is stamped once and
@@ -384,18 +384,36 @@ def resolve_title(template, when=None):
     one name and create another, which is precisely the kind of "the thing I approved is
     not the thing that happened" the preview/apply split exists to prevent.
 
-    An unknown token is left standing as literal text rather than blanked -- a name that
-    still visibly says {foo} tells the operator he mistyped something; a silently empty
-    one does not.
+    `extra` is an optional {token: literal string} mapping checked alongside the date
+    tokens above -- web/app.py's expand_playlist_name() uses it for {seed} and {artist}
+    in playlist_name_template (contract CONNECT_2026-09-20 §G). Existing callers that
+    don't pass it see no change: nothing here is checked unless a template names it.
+
+    An unknown token (not a date token, not in `extra`) is left standing as literal text
+    rather than blanked -- a name that still visibly says {foo} tells the operator he
+    mistyped something; a silently empty one does not.
+
+    `strip` is True for every existing caller and for the Plex folder mirror, where a
+    name is typed by hand and stray edge whitespace is always a slip. The .m3u8 export
+    routes pass False, because the filename they have always written caps an over-long
+    seed at 60 characters WITHOUT re-stripping, so four titles in the operator's own
+    library legitimately end in a space. Stripping here would quietly rename them.
     """
     import datetime
     when = when or datetime.datetime.now()
+    extra = extra or {}
 
     def sub(m):
-        fmt = TITLE_TOKENS.get(m.group(1))
-        return when.strftime(fmt) if fmt else m.group(0)
+        key = m.group(1)
+        fmt = TITLE_TOKENS.get(key)
+        if fmt:
+            return when.strftime(fmt)
+        if key in extra:
+            return str(extra[key])
+        return m.group(0)
 
-    return _TOKEN_RE.sub(sub, template or DEFAULT_TITLE_TEMPLATE).strip()
+    out = _TOKEN_RE.sub(sub, template or DEFAULT_TITLE_TEMPLATE)
+    return out.strip() if strip else out
 
 
 def zone_chooser(px):

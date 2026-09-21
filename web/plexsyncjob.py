@@ -304,24 +304,33 @@ def _shape(rep, title, existing_count, web_url="", scanning=False, template="",
 
 
 def _friendly(e):
-    """Turn the usual failures into something that names the fix, not the exception."""
+    """Turn the usual failures into something that names the fix, not the exception.
+
+    Never returns the exception's own text for anything this function does not
+    recognise (contract CONNECT_2026-09-20 E3): an unrecognised failure used to fall
+    through to `return s` -- the raw string -- and for a malformed Plex address that
+    string could still have carried the token before src/export.py's header fix. This is
+    the second line of defence: unknown failures now surface only a fixed sentence plus
+    the exception's own class name, never its message text.
+    """
     s = str(e) or e.__class__.__name__
     low = s.lower()
     if "cancelled" in low:
         return ""
     if "getaddrinfo" in low or "refused" in low or "timed out" in low or "urlopen" in low:
         return ("Could not reach your Plex server. Is it switched on, and is the "
-                "address in .env still right?")
+                "address right, in Preferences -> Plex?")
     if "401" in s or "unauthorized" in low:
-        return "Plex refused the token in .env. It may have expired."
+        return "Plex refused the key in Preferences -> Plex. It may have expired."
     if "winerror 53" in low or "cannot find the path" in low or "no such file" in low:
         return "That folder is not reachable. Is the drive connected?"
-    return s
+    return f"Something went wrong talking to Plex: {e.__class__.__name__}."
 
 
 def register(app, ctx):
-    """ctx: dict(cfgmod, locked). Connection settings come from .env via src/export.py,
-    exactly as /api/export/plex already does -- the token never moves into settings.json.
+    """ctx: dict(cfgmod, locked). Connection settings come from settings.json now
+    (Preferences -> Plex), via export.plex_from_settings() -- the same settings-first
+    source /api/export/plex uses (contract CONNECT_2026-09-20 E1/E5).
     """
     cfgmod = ctx["cfg"]
     locked = ctx["locked"]
@@ -331,19 +340,23 @@ def register(app, ctx):
     _MODS["export"] = _load("export")
 
     def _connect():
-        """Build a PlexExporter, or raise a message naming what is missing."""
+        """Build a PlexExporter from settings.json, or raise a message naming what is
+        missing. Settings-first now (contract E1) -- .env no longer supplies this
+        module's Plex connection at all; only mapper_from_settings()'s library-path
+        roots still consult it, exactly as /api/export/plex's mapper does."""
         export = _MODS["export"]
         env = export.load_env()
         settings = cfgmod.load()
         mapper = export.mapper_from_settings(settings, env)
-        missing = [k for k in ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID")
-                   if not env.get(k)]
-        if missing:
-            raise RuntimeError("Plex is not set up on this machine yet: .env is missing "
-                               + ", ".join(missing))
-        return export.PlexExporter(env["PLEX_URL"], env["PLEX_ACCOUNT_TOKEN"],
-                                   env.get("PLEX_SECTION_KEY", "1"),
-                                   env["PLEX_MACHINE_ID"], mapper, timeout=60)
+        try:
+            px = export.plex_from_settings(settings, env, mapper)
+        except (SystemExit, ValueError) as e:
+            # plex_from_settings raises SystemExit (BaseException, not Exception) so the
+            # CLI can exit cleanly -- but this is the web app, where an uncaught
+            # SystemExit would kill the worker thread instead of being reported.
+            raise RuntimeError(str(e))
+        px.timeout = 60          # preview/apply page a whole library; keep the longer wait
+        return px
 
     def _guard():
         # Reading a local folder and writing to the household Plex server is a

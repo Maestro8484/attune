@@ -299,8 +299,46 @@ def _migrate_env_roots_once(cfgmod, settings, env_cfg):
         if not settings.get(setting_key) and env_cfg.get(env_key):
             patch[setting_key] = env_cfg[env_key]
     if patch:
-        cfgmod.update(patch)
+        try:
+            cfgmod.update(patch)
+        except OSError as e:          # unreadable settings file: same reasoning as the
+            print(f"Export-root carryover skipped this time: {e}")   # Plex one below
+            return False
     return bool(patch)
+
+
+def _migrate_plex_env_once(cfgmod, settings, env_cfg):
+    """One-time carryover for the FOUR Plex connection values (contract
+    CONNECT_2026-09-20 E2) -- gated on a REAL flag, unlike _migrate_env_roots_once above.
+    That function's "copy whenever the settings key is empty" pattern is wrong for a
+    secret: a person who clears plex_token in Preferences would get it handed straight
+    back from .env on the very next launch. plex_env_migrated is set True whether or not
+    anything was actually copied, so this runs its copy at most once per machine, ever --
+    a machine with no .env at all is a no-op that still sets the flag. Never prints, logs
+    or echoes the token."""
+    if settings.get("plex_env_migrated"):
+        return False
+    patch = {}
+    for env_key, setting_key in (("PLEX_URL", "plex_url"),
+                                 ("PLEX_ACCOUNT_TOKEN", "plex_token"),
+                                 ("PLEX_SECTION_KEY", "plex_section_key"),
+                                 ("PLEX_MACHINE_ID", "plex_machine_id"),
+                                 ("PLEX_SERVER_NAME", "plex_server_name")):
+        if not settings.get(setting_key) and env_cfg.get(env_key):
+            patch[setting_key] = env_cfg[env_key]
+    patch["plex_env_migrated"] = True
+    try:
+        cfgmod.update(patch)
+    except OSError as e:
+        # The settings file is there and could not be read. This function is the ONLY
+        # write a stranger's cold start performs, so before config.update() learned to
+        # refuse, a file held for a moment by a backup agent or an antivirus scanner was
+        # replaced by pure defaults here and the owner lost every preference. Skipping
+        # costs nothing: the flag is still False, so the copy simply happens on the next
+        # launch that can read the file.
+        print(f"Plex settings carryover skipped this time: {e}")
+        return False
+    return True
 
 
 def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
@@ -351,21 +389,75 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 return fn(*a, **kw)
         return _wrapper
 
-    # export: path-map (+ optional Plex). Roots live in settings.json (Preferences ->
-    # Advanced); .env is a dev override that also still holds Plex's connection secrets.
-    # See PROPOSAL_EXPORT_ROOTS_2026-07-28.md for why (paths aren't secrets, secrets stay
-    # in .env) and its "RULING 2 AMENDED" section for why the unc default didn't change.
+    # export: path-map (+ optional Plex). The three roots live in settings.json
+    # (Preferences -> Playlists and export) with .env still winning as a dev override;
+    # see PROPOSAL_EXPORT_ROOTS_2026-07-28.md and its "RULING 2 AMENDED" section for why
+    # the unc default did not change. The Plex CONNECTION no longer works that way: as
+    # of CONNECT (2026-09-20) its four values live in settings.json and the web app
+    # never reads them from .env again after the one-time carryover, so a key cleared in
+    # Preferences stays cleared. The CLI still reads .env for its own connection.
     exp_spec = importlib.util.spec_from_file_location("attune_export", os.path.join(SRC, "export.py"))
     export = importlib.util.module_from_spec(exp_spec)
     exp_spec.loader.exec_module(export)
+    # plexmatch.resolve_title is the one expander every playlist-naming route shares
+    # (contract CONNECT_2026-09-20 §G, expand_playlist_name below) -- loaded the same way
+    # export.py is, just above.
+    pm_spec = importlib.util.spec_from_file_location("attune_plexmatch", os.path.join(SRC, "plexmatch.py"))
+    plexmatch = importlib.util.module_from_spec(pm_spec)
+    pm_spec.loader.exec_module(plexmatch)
     cfgmod = _load_config()             # also reused below by the /api/settings routes
-    cfg = export.load_env()             # .env: Plex secrets + a dev override for the 3 roots
+    cfg = export.load_env()             # .env: dev override for the 3 export roots (CLI-only for Plex now)
     ledger = _load_ledger()
     ledger.init(cfgmod.config_dir())    # <config_dir>/ledger.jsonl (ruling B1)
     settings = cfgmod.load()
     _migrate_env_roots_once(cfgmod, settings, cfg)
-    settings = cfgmod.load()            # re-read: the migration may have just written roots
+    settings = cfgmod.load()            # re-read: the roots migration may have just written roots
+    _migrate_plex_env_once(cfgmod, settings, cfg)
+    settings = cfgmod.load()            # re-read again: the Plex migration may have just written keys
     mapper = export.mapper_from_settings(settings, cfg)
+
+    _NAME_OK = lambda c: c.isalnum() or c in " -_"
+
+    def _sanitize_stem(s, cap=60):
+        # Character filter + 60-char cap + "mix" fallback, EXACTLY what the m3u download
+        # route has always applied to a seed title alone (never to a whole assembled
+        # name) -- see expand_playlist_name's docstring for why that distinction is load
+        # bearing.
+        safe = "".join(c for c in (s or "") if _NAME_OK(c)).strip()[:cap]
+        return safe or "mix"
+
+    def _setting_flavor():
+        """The stored 'how paths are written' choice, read fresh. Not a restart key, so
+        a Preferences save takes effect on the very next export."""
+        return cfgmod.load().get("path_flavor") or "unc"
+
+    def expand_playlist_name(template, seed_title, artist=None):
+        """One shared expander for all three playlist-naming routes (contract
+        CONNECT_2026-09-20 §G): download .m3u8, save-to-folder, copy-to-folder. {seed}
+        and {artist} are sanitized and capped BEFORE they are substituted into the
+        template -- this is what keeps the default template "like-{seed}" byte-identical
+        to the name Attune has always written for every seed: capping the ASSEMBLED name
+        afterward would truncate the literal "like-" prefix off a title already at the
+        60-char limit, five characters nobody exporting today has ever lost. The one
+        filter pass over the assembled result, below, only removes illegal characters a
+        CUSTOM template's own literal text might contain -- a no-op on the default
+        template, whose only literal text ("like-") is already legal.
+
+        It deliberately does NOT strip the assembled name. _sanitize_stem already strips
+        the seed BEFORE capping it, so a title longer than 60 characters whose cap lands
+        inside a run of spaces has always produced a name ending in those spaces. Ugly,
+        and four tracks in the operator's own 21,255-track library hit it (measured
+        2026-09-20 against a scratch copy: "Mendelssohn - Violin Concerto in E minor, Op.
+        64 - Vivace Non Troppo" and three others). Tidying it here would silently rename
+        four of his existing exports, which is exactly the drift the byte-identical rule
+        exists to stop. The name stays as it has always been.
+        """
+        safe_seed = _sanitize_stem(seed_title)
+        safe_artist = _sanitize_stem(artist) if artist else ""
+        expanded = plexmatch.resolve_title(template, extra={"seed": safe_seed, "artist": safe_artist},
+                                           strip=False)
+        final = "".join(c for c in expanded if _NAME_OK(c))
+        return final or "mix"
     # A candidate local root to SHOW in the UI when the operator has not set one. Never
     # applied to a rewrite (ruling (a), MORNING_REPORT §5.1) -- it exists so the notice on
     # a refused export can name a folder instead of only saying "not configured". '' when
@@ -376,9 +468,19 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # gets every one of them wrong -- refusing to guess cannot catch that, counting can.
     # Measured once here over the whole pool; a prefix test per track.
     root_coverage = mapper.coverage(eng.paths) if mapper.local_root else {"ok": 0, "total": len(eng.paths)}
-    plex_holder = {}                    # lazily-built PlexExporter (indexes Plex on first use)
-    plex_configured = bool(mapper.plex_root) and all(
-        cfg.get(k) for k in ("PLEX_URL", "PLEX_ACCOUNT_TOKEN", "PLEX_MACHINE_ID"))
+    plex_holder = {}                    # lazily-built PlexExporter (indexes Plex on first
+                                        # use); cleared whenever a Plex settings key
+                                        # changes (POST /api/settings, /api/plex/test,
+                                        # /api/plex/forget) -- contract E5.
+
+    def _plex_configured():
+        """Read fresh on every call: Plex can be tested and saved without a restart
+        (contract CONNECT_2026-09-20 E5), so a bool computed once at startup would keep
+        reporting "not configured" for the rest of the run even after Preferences ->
+        Plex succeeds."""
+        s = cfgmod.load()
+        return bool(s.get("plex_url") and s.get("plex_token") and s.get("plex_machine_id")
+                   and mapper.plex_root)
 
     DEDUP_FIELDS = ("song", "title", "file")   # what counts as a "duplicate"
 
@@ -583,7 +685,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     @_locked
     def classic():
         return render_template_string(
-            PAGE, count=len(eng.paths), plex=plex_configured, engine=engine_name,
+            PAGE, count=len(eng.paths), plex=_plex_configured(), engine=engine_name,
             weights={k: eng.w.get(k, 0.0) for k in SLIDER_KEYS},
             musicip_style=MUSICIP_STYLE_DEFAULT, musicip_variety=MUSICIP_VARIETY_DEFAULT,
             musicip_style_max=MUSICIP_STYLE_MAX)
@@ -917,7 +1019,14 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error="bad request"), 400
         except IndexError:
             return jsonify(error="unknown seed"), 404
-        flavor = request.args.get("flavor", "unc")
+        # An explicit ?flavor wins; with none, the SETTING answers, and only then the
+        # built-in default. Until this read existed, path_flavor was a field the window
+        # showed and no Python ever consulted: it seeded the export dropdown at page
+        # load and nothing else, so saving a new value in Preferences did nothing to any
+        # export made in that same session. (Cold Fable audit, 2026-09-20.) The
+        # regression gate passes ?flavor=unc on every call, so its 16/16 is unaffected
+        # either way -- see tools/regression_gate.py:152.
+        flavor = request.args.get("flavor") or _setting_flavor()
         if flavor not in ("local", "unc", "plex"):
             flavor = "unc"
         try:
@@ -939,13 +1048,14 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             lines.append(f"#EXTINF:-1,{artist} - {title}")
             lines.append(out)
         body = "\n".join(lines) + "\n"
-        stem = eng.meta.get(eng.paths[i], {}).get("title") or "mix"
-        safe = "".join(c for c in stem if c.isalnum() or c in " -_").strip()[:60] or "mix"
+        sm = eng.meta.get(eng.paths[i], {})
+        template = cfgmod.load().get("playlist_name_template") or "like-{seed}"
+        name_stem = expand_playlist_name(template, sm.get("title"), sm.get("artist"))
         ledger.record("export_m3u", seed=labels[i], dest="download",
-                      name=f"like-{safe}.m3u8", flavor=report["used"], n=len(tracks),
+                      name=f"{name_stem}.m3u8", flavor=report["used"], n=len(tracks),
                       tracks=[labels[eng.idx[p]] for p in tracks if p in eng.idx])
         resp = Response(body, mimetype="audio/x-mpegurl",
-                        headers={"Content-Disposition": f'attachment; filename="like-{safe}.m3u8"'})
+                        headers={"Content-Disposition": f'attachment; filename="{name_stem}.m3u8"'})
         resp.headers["X-Attune-Export-Flavor-Requested"] = report["requested"]
         resp.headers["X-Attune-Export-Flavor-Used"] = report["used"]
         resp.headers["X-Attune-Export-Fallback"] = "1" if report["fallback"] else "0"
@@ -963,6 +1073,14 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     @app.post("/api/export/plex")
     @_locked
     def export_plex():
+        # Same rule the folder mirror already applies to itself (plexsyncjob._guard) and
+        # the copy export applies to itself: writing to the household Plex server is a
+        # this-machine action. It matters more now that the server address is a setting
+        # rather than a line in the developer's own .env -- belt to the braces of the
+        # guard on POST /api/settings above.
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(ok=False, error="only available on the Attune machine "
+                                           "itself"), 403
         try:
             i, size = _seed_index()
         except ValueError:
@@ -975,8 +1093,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(ok=False, error="bad request"), 400
         try:
             if "plex" not in plex_holder:
-                plex_holder["plex"] = export.plex_from_env(cfg, mapper)
+                plex_holder["plex"] = export.plex_from_settings(cfgmod.load(), cfg, mapper)
         except SystemExit as e:
+            return jsonify(ok=False, error=str(e)), 400
+        except ValueError as e:
             return jsonify(ok=False, error=str(e)), 400
         title = f"Attune — like {labels[i]}"
         try:
@@ -1011,24 +1131,193 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                     ("unc_library_root", "UNC_LIBRARY_ROOT"),
                     ("plex_library_root", "PLEX_LIBRARY_ROOT"))
 
+    # The five Plex connection keys -- POST /api/settings clears the cached PlexExporter
+    # (plex_holder) whenever any of these changes, so the very next export or test uses
+    # what was just saved instead of a connection built from what used to be there.
+    _PLEX_KEYS = ("plex_url", "plex_token", "plex_section_key",
+                 "plex_machine_id", "plex_server_name")
+
+    def _find_ffmpeg():
+        """The ffmpeg the ANALYSIS step would actually use, for a read-only status line
+        (contract CONNECT_2026-09-20 B -- ffmpeg_path was dropped from Preferences
+        because nothing reads a setting for it; desktop/worker_entry.py:52 always puts
+        the bundled copy ahead of PATH). Frozen build: check that same bundled location
+        first. Dev run: there is no bundle, so this is just whatever PATH resolves."""
+        import shutil
+        import sys
+        if getattr(sys, "frozen", False):
+            bundled = os.path.join(getattr(sys, "_MEIPASS", ""), "attune", "bin", "ffmpeg.exe")
+            if os.path.isfile(bundled):
+                return bundled
+        return shutil.which("ffmpeg") or ""
+
+    def _public_settings(s):
+        """The settings dict as the browser is allowed to see it (contract B/H): never
+        the Plex key itself, plus two DERIVED read-only fields the client cannot compute
+        on its own -- whether a key is stored at all, and where ffmpeg was found."""
+        out = dict(s)
+        out["plex_token_set"] = bool(out.pop("plex_token", ""))
+        out["ffmpeg_found"] = _find_ffmpeg()
+        return out
+
     @app.get("/api/settings")
     def get_settings():
         s = cfgmod.load()
-        return jsonify(settings=s, path=cfgmod.settings_path(),
+        return jsonify(settings=_public_settings(s), path=cfgmod.settings_path(),
                        restart_keys=sorted(cfgmod.RESTART_KEYS),
                        env_overrides={sk: cfg[ek] for sk, ek in ENV_SHADOWED if cfg.get(ek)})
 
     @app.post("/api/settings")
     def post_settings():
+        # This-machine only, and this guard is NEW WITH the Plex connection move.
+        # Before it, PLEX_URL came solely from .env, so nothing a client could send
+        # changed where the key was sent. Now plex_url is an ordinary settings key, and
+        # on a deliberately LAN-bound server (--host 0.0.0.0, see the bottom of this
+        # file) any machine on the network could have pointed it at a host of its own
+        # and then asked for a Plex export, putting the owner's key on the wire to a
+        # stranger. Two requests, no action by the owner. Reading settings stays open
+        # (GET never returns the key); WRITING them is a Preferences action, and
+        # Preferences already only works on this machine because its folder picker does
+        # (/api/fs/dirs). Raised by the cold Fable audit of this change, 2026-09-20.
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(ok=False, error="settings can only be changed on the Attune "
+                                           "machine itself"), 403
         patch = request.get_json(silent=True)
         if not isinstance(patch, dict):
             return jsonify(ok=False, error="expected a JSON object"), 400
         patch.pop("settings_version", None)          # managed by config.py, not the client
+        if "plex_token" in patch and not patch["plex_token"]:
+            # A present-but-empty token is IGNORED, not stored (contract H). GET never
+            # returns the real token, so the field is always blank when the window opens
+            # -- an ordinary save would otherwise wipe a working key every single time.
+            patch.pop("plex_token")
         unknown = sorted(k for k in patch if k not in cfgmod.DEFAULTS)
         if unknown:
             return jsonify(ok=False, error=f"unknown settings: {', '.join(unknown)}"), 400
-        s, needs_restart = cfgmod.update(patch)
-        return jsonify(ok=True, settings=s, needs_restart=needs_restart)
+        # Normalise and refuse here, not only in the browser. The window's own hints are
+        # guidance for a person typing; they are not a check, because this endpoint is
+        # also reachable from a script, and a value stored now is read by the export
+        # path much later, where a bad one is far harder to explain.
+        if "plex_url" in patch:
+            raw = (patch["plex_url"] or "").strip()
+            if raw:
+                clean = export.valid_plex_url(raw)
+                if clean is None:
+                    return jsonify(ok=False, error="That does not look like a server "
+                                   "address. It should look like "
+                                   "http://192.168.1.50:32400."), 400
+                patch["plex_url"] = clean        # trailing slash stripped, as contract B says
+            else:
+                patch["plex_url"] = ""
+        if "plex_section_key" in patch:
+            k = str(patch["plex_section_key"] or "").strip()
+            if k and not k.isdigit():
+                return jsonify(ok=False, error="A Plex library is chosen from the list, "
+                               "not typed."), 400
+            patch["plex_section_key"] = k
+        for key, allowed in (("path_flavor", ("local", "unc", "plex")),
+                             ("copy_layout", ("flat", "tree"))):
+            if key in patch and patch[key] not in allowed:
+                return jsonify(ok=False,
+                               error=f"{key} must be one of: {', '.join(allowed)}"), 400
+        if "playlist_name_template" in patch:
+            t = str(patch["playlist_name_template"] or "").strip()
+            if not t:
+                return jsonify(ok=False, error="Give your playlists a name pattern."), 400
+            bad = sorted({c for c in t if c in '<>:"/\\|?*'})
+            if bad:
+                return jsonify(ok=False, error="The characters "
+                               + ", ".join(f'"{c}"' for c in bad)
+                               + " are not allowed in a file name."), 400
+            patch["playlist_name_template"] = t
+        if any(k in patch for k in _PLEX_KEYS):
+            plex_holder.clear()
+        try:
+            s, needs_restart = cfgmod.update(patch)
+        except OSError as e:
+            # Say it rather than reporting a save that did not happen. The old settings
+            # are intact on disk; nothing was lost.
+            return jsonify(ok=False, error=str(e)), 503
+        return jsonify(ok=True, settings=_public_settings(s), needs_restart=needs_restart)
+
+    @app.post("/api/plex/test")
+    def plex_test():
+        """Try a Plex address/key without saving anything (contract E4). Loopback-guarded
+        like /api/fs/dirs -- the address and key travel in the POST body, not in
+        werkzeug's request log the way a query string would."""
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(ok=False, error="only available on the Attune machine itself"), 403
+        body = request.get_json(silent=True) or {}
+        url = (body.get("url") or "").strip()
+        token = (body.get("token") or "").strip()
+        if not token:
+            token = cfgmod.load().get("plex_token") or ""     # blank field = "use the stored one"
+        bad_url = ("That does not look like a server address. "
+                  "It should look like http://192.168.1.50:32400.")
+        if export.valid_plex_url(url) is None:
+            return jsonify(ok=False, error=bad_url), 400
+        # A test can be tried against a DIFFERENT address/key than what's currently
+        # saved -- drop any cached exporter so the next real export doesn't reuse a
+        # connection built from what used to be there (contract E5).
+        plex_holder.clear()
+        try:
+            res = export.probe_plex(url, token)
+        except ValueError:
+            return jsonify(ok=False, error=bad_url), 400
+        except export.PlexUnreachable:
+            return jsonify(ok=False, error="Could not reach a Plex server at that "
+                                           "address. Is the server switched on, and is "
+                                           "the address right?"), 400
+        except export.PlexAuthError:
+            return jsonify(ok=False, error="Plex refused that key. Check you copied "
+                                           "all of it."), 400
+        except Exception as e:
+            return jsonify(ok=False, error=f"Plex answered, but something went wrong: "
+                                           f"{e.__class__.__name__}."), 400
+        return jsonify(ok=True, server_name=res["server_name"], machine_id=res["machine_id"],
+                      libraries=res["libraries"])
+
+    @app.post("/api/plex/forget")
+    def plex_forget():
+        """The only way to clear a saved Plex connection (contract H). Loopback-guarded
+        like /api/plex/test."""
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(ok=False, error="only available on the Attune machine itself"), 403
+        try:
+            cfgmod.update({"plex_url": "", "plex_token": "", "plex_section_key": "",
+                          "plex_machine_id": "", "plex_server_name": ""})
+        except OSError as e:
+            return jsonify(ok=False, error=str(e)), 503
+        plex_holder.clear()
+        return jsonify(ok=True)
+
+    # Plex's own instructions for finding a key. The ONE thing in the whole of
+    # Preferences a person cannot read off their own screen or pick from a list, so it is
+    # the one place a pointer outward is worth having.
+    PLEX_KEY_HELP_URL = ("https://support.plex.tv/articles/"
+                        "204059436-finding-an-authentication-token-x-plex-token/")
+
+    @app.post("/api/help/plex-key")
+    def help_plex_key():
+        """Open Plex's "finding an authentication token" page in the real browser.
+
+        Server-side `webbrowser.open` for the same reason /api/plexsync/open is: Attune's
+        shipped surface is a pywebview window, where a plain external link can land in
+        the embedded view or nowhere at all.
+
+        It takes NO url from the caller. /api/plexsync/open has to accept one and guards
+        it by refusing anything that is not a link to the configured Plex server; this
+        one has a single destination known at import time, so there is nothing to guard
+        and nothing that could turn it into an open-anything hole.
+        """
+        if request.remote_addr not in ("127.0.0.1", "::1"):
+            return jsonify(ok=False, error="only available on the Attune machine itself"), 403
+        try:
+            import webbrowser
+            webbrowser.open(PLEX_KEY_HELP_URL)
+        except Exception as e:                                  # noqa: BLE001
+            return jsonify(ok=False, error=str(e), url=PLEX_KEY_HELP_URL), 500
+        return jsonify(ok=True, url=PLEX_KEY_HELP_URL)
 
     # ---- Folder picker: a read-only local directory browser for the first-run wizard
     # and Preferences -> Library. Attune is local-first — the server already reads audio
@@ -1167,7 +1456,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "root_coverage": root_coverage,
         "playlist_dir": playlist_dir,
         "engine_name": engine_name,
-        "plex_configured": plex_configured,
+        "plex_configured": _plex_configured,
+        "cfgmod": cfgmod,
+        "expand_playlist_name": expand_playlist_name,
         "active_mix_tracks": _active_mix_tracks,
         "ledger": ledger.record,
         "locked": _locked,
@@ -1287,7 +1578,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     exportjob = importlib.util.module_from_spec(ej_spec)
     ej_spec.loader.exec_module(exportjob)
     exportjob.register(app, {"eng": eng, "active_mix_tracks": _active_mix_tracks,
-                             "locked": _locked, "ledger": ledger.record})
+                             "locked": _locked, "ledger": ledger.record,
+                             "cfgmod": cfgmod, "expand_playlist_name": expand_playlist_name})
 
     # ---- folder -> Plex playlist mirror (plexsyncjob.py). The other Plex route
     # (/api/export/plex, above) exports a MIX and resolves each track by swapping the
@@ -1295,8 +1587,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # outside the library root -- a hand-built car roster -- where a prefix swap cannot
     # work at all, and resolves by tags and duration instead (src/plexmatch.py). Two
     # endpoints on purpose: preview parks an answer, apply writes only that parked
-    # answer. Loopback-guarded; reads .env for the Plex token exactly as /api/export/plex
-    # does, so no secret moves into settings.json.
+    # answer. Loopback-guarded; reads its Plex connection from settings.json now
+    # (Preferences -> Plex), the same settings-first source /api/export/plex uses --
+    # see export.plex_from_settings() and plexsyncjob.py's own _connect().
     px_spec = importlib.util.spec_from_file_location(
         "attune_plexsyncjob", os.path.join(HERE, "plexsyncjob.py"))
     plexsyncjob = importlib.util.module_from_spec(px_spec)

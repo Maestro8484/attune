@@ -359,7 +359,8 @@ def _resolve_target(dest, folder):
 
 
 def register(app, ctx):
-    """ctx: dict(eng, active_mix_tracks=callable(i,size,field)->[paths], locked)."""
+    """ctx: dict(eng, active_mix_tracks=callable(i,size,field)->[paths], locked, ledger,
+    cfgmod, expand_playlist_name=callable(template,seed_title,artist)->stem)."""
     eng = ctx["eng"]
     active_mix_tracks = ctx["active_mix_tracks"]
     locked = ctx["locked"]
@@ -387,7 +388,13 @@ def register(app, ctx):
         dest = (body.get("dest") or "").strip()
         if not dest or not os.path.isdir(dest):
             return jsonify(ok=False, error="destination folder not found"), 400
-        layout = body.get("layout") if body.get("layout") in ("flat", "tree") else "flat"
+        # Falls back to the stored Preferences default (contract §C/§I), not a hardcoded
+        # "flat" -- an explicit request still wins either way.
+        default_layout = "flat"
+        cfgmod = ctx.get("cfgmod")
+        if cfgmod:
+            default_layout = cfgmod.load().get("copy_layout") or "flat"
+        layout = body.get("layout") if body.get("layout") in ("flat", "tree") else default_layout
 
         # Resolve the track list NOW, on the request thread (request context is not
         # available in the worker). `ids` (the exact on-screen rows) is primary; the
@@ -420,8 +427,16 @@ def register(app, ctx):
                           "title": (m.get("title") or "").strip(),
                           "album": (m.get("album") or "").strip()})
 
+        # The client stopped sending a stand-in name when the field is blank (contract
+        # §G), so `folder` now arrives absent rather than as the literal "Attune mix" it
+        # always used to be. _resolve_target treats absent as "no subfolder" and would
+        # copy twenty-five loose files straight onto the root of the USB stick. This
+        # destination is a FOLDER, not a playlist filename, and in the only case the
+        # window can produce (a row selection) no playlist file is written at all, so
+        # there is no name for a template to disagree with. It keeps the name the client
+        # has always sent; a typed name still wins.
         try:
-            target = _resolve_target(dest, body.get("folder"))
+            target = _resolve_target(dest, body.get("folder") or "Attune mix")
         except ValueError as e:
             return jsonify(ok=False, error=str(e)), 400
         # Selection scope (`ids`) copies files only -- no .m3u8, the numbered
@@ -433,7 +448,19 @@ def register(app, ctx):
             sm = eng.meta.get(eng.paths[i], {})
             seed_name = (sm.get("title")
                          or os.path.splitext(os.path.basename(eng.paths[i]))[0]).strip()
-            stem = f"like-{seed_name or 'mix'}"
+            # Same shared expander studio.py and app.py's m3u download use (contract
+            # §G). NOT byte-identical to the old f"like-{seed_name}": the expander
+            # keeps only letters, digits, space, hyphen and underscore and caps at 60,
+            # where the old stem kept apostrophes and commas and was capped at 120 by
+            # _sanitize_component. Only an API caller passing i/size with no name ever
+            # reached this branch -- the window always sends a row list -- and the one
+            # name with a sealed baseline behind it is the .m3u8 download, which IS
+            # byte-identical. Said plainly here because the comment used to claim
+            # otherwise (cold Fable audit, 2026-09-20).
+            template = "like-{seed}"
+            if cfgmod:
+                template = cfgmod.load().get("playlist_name_template") or template
+            stem = ctx["expand_playlist_name"](template, seed_name, sm.get("artist"))
         try:
             job.start(items, target, layout, playlist=not selection,
                       playlist_stem=stem)

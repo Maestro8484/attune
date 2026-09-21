@@ -15,6 +15,14 @@ const Prefs = (() => {
   let serverSettings = null;
   let scanTimer = 0;
   let tagI = null;
+  // Plex connection (CONTRACT_CONNECT_2026-09-20 §E, §H, §I). The key field is always
+  // blank when the modal opens -- GET /api/settings never returns it -- so `dirty`
+  // is the only way save() can tell "typed a new key" apart from "left it alone",
+  // which matters because sending a blank one would wipe the saved key (§H).
+  let plexTokenDirty = false;
+  let plexTest = null;   // last successful POST /api/plex/test response this session
+  let recipesLoaded = false;  // the Mixing recipe list has arrived; until then its
+                              // <select> reads "" and must not be saved over the top
 
   /* ---------------------------------------------------------------- theme */
   function applyTheme(id) {
@@ -30,7 +38,9 @@ const Prefs = (() => {
     applyTheme(store.get('themeChosen', false) ? store.get('theme', 'bee') : 'bee');
   }
   function paintThemeGrid() {
-    const cur = store.get('theme', 'bee');
+    // The setting wins once it is known (contract F2) -- fall back to the localStorage
+    // guess only before settings have loaded at all.
+    const cur = (serverSettings && serverSettings.theme) || store.get('theme', 'bee');
     $('themeGrid').innerHTML = THEMES.map(t => `
       <div class="themecard ${t.id === cur ? 'on' : ''}" data-theme="${t.id}">
         <div class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</div>
@@ -42,10 +52,17 @@ const Prefs = (() => {
   function open() {
     $('prefsWrap').hidden = false;
     $('prefsMsg').textContent = '';
+    plexTokenDirty = false;
     paintThemeGrid();
     jget('/api/settings').then(j => {
       serverSettings = j.settings;
       $('prefsPath').textContent = j.path;
+      $('prefsPath').title = j.path;   // the header clips it to one line; Advanced shows it whole
+      // Same value, shown a second time inside the Advanced section itself (contract
+      // §I) -- #prefsPath in the modal head stays the id prefs.js has always read/set
+      // (kept unchanged so nothing about the existing open/close wiring can break);
+      // this mirrors it rather than duplicating that id, which HTML does not allow.
+      if ($('prefsPathAdvanced')) $('prefsPathAdvanced').textContent = j.path;
       $('prefDb').value = serverSettings.db_path || '';
       $('prefPlaylistDir').value = serverSettings.playlist_dir || '';
       $('prefEngine').value = serverSettings.engine || 'auto';
@@ -57,7 +74,47 @@ const Prefs = (() => {
       $('prefScanLaunch').checked = !!serverSettings.scan_on_launch;
       $('prefWatch').checked = !!serverSettings.watch_folders;
       paintFolders(serverSettings.library_folders || []);
+      paintFolders(serverSettings.exclude_folders || [], 'excludeFolders');
       paintEnvOverrides(j.env_overrides || {});
+
+      // Playlists and export
+      $('prefNameTemplate').value = serverSettings.playlist_name_template || 'like-{seed}';
+      $('prefFlavor').value = serverSettings.path_flavor || 'unc';
+      $('prefCopyLayout').value = serverSettings.copy_layout || 'flat';
+      updateNamePreview();
+      updatePlexUrlValidity();
+      updateFlavorEnabled();
+
+      // Plex. The key itself never comes back from the server (contract H) -- the
+      // field starts blank every time and only the saved/not-saved fact is shown.
+      $('prefPlexUrl').value = serverSettings.plex_url || '';
+      $('prefPlexToken').value = '';
+      $('prefPlexToken').type = 'password';
+      $('prefPlexTokenShow').textContent = 'Show';
+      $('prefPlexTokenStatus').textContent = serverSettings.plex_token_set
+        ? 'A key is saved.' : 'No key saved yet.';
+      $('prefPlexTestMsg').className = 'hint'; $('prefPlexTestMsg').textContent = '';
+      $('prefPlexServer').textContent = serverSettings.plex_server_name
+        ? `Connected to ${serverSettings.plex_server_name}.` : '';
+      plexTest = null;
+      paintPlexSectionOptions(null);
+      $('prefSyncFolder').value = serverSettings.plex_sync_folder || '';
+      $('prefSyncTitle').value = serverSettings.plex_sync_title || '';
+      $('prefSyncOrder').value = serverSettings.plex_sync_order || 'folder';
+      updatePlexSyncEnabled();
+
+      // Mixing — the recipe list is a separate endpoint (GET /api/recipe/list), not
+      // part of /api/settings, so it loads independently and degrades on its own.
+      loadRecipeOptions();
+
+      // Analysis. ffmpeg_found is nested in settings (web/app.py _public_settings()),
+      // not top-level on the response -- verified against the live route, which
+      // landed while this file was being written.
+      $('prefFfmpegStatus').textContent = serverSettings.ffmpeg_found || 'not found';
+
+      // Theme grid painted again now settings are actually in hand (contract F2) —
+      // the earlier call above was only so the grid isn't blank while this loads.
+      paintThemeGrid();
     }).catch(e => { $('prefsMsg').className = 'msg err'; $('prefsMsg').textContent = e.message; });
     // playback tab mirrors the player's persisted knobs
     $('prefXfade').value = store.get('xfade', 0);
@@ -65,6 +122,206 @@ const Prefs = (() => {
     $('prefRg').checked = store.get('rg', false);
   }
   function close() { $('prefsWrap').hidden = true; }
+
+  /* --------------------------------------------------------- Playlists and export
+     Name-pattern live preview + validation, and the path-flavor parent/child
+     enabling. All three CONTRACT_CONNECT_2026-09-20 §G/§I. */
+  const NAME_ILLEGAL_RE = /[<>:"/\\|?*\x00-\x1f]/g;
+  // A fixed, recognizable example track — not read from anywhere, just something a
+  // person can tell is a preview and not a real result.
+  const PREVIEW_SEED = 'Black Dog', PREVIEW_ARTIST = 'Led Zeppelin';
+  function dateToken(d, which) {
+    const pad = n => String(n).padStart(2, '0');
+    const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July',
+      'August', 'September', 'October', 'November', 'December'];
+    if (which === 'date') return String(d.getFullYear()).slice(-2) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    if (which === 'ymd') return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate());
+    if (which === 'year') return String(d.getFullYear());
+    if (which === 'month') return MONTHS[d.getMonth()];
+    return null;
+  }
+  // Mirrors src/plexmatch.py's resolve_title(): {date}/{ymd}/{year}/{month}, an
+  // unknown token left standing as literal text. {seed}/{artist} are this preview's
+  // stand-ins for what the server adds by passing them into that same expander
+  // (contract G) — this file never re-implements the server's token table, just the
+  // display of it, with fixed sample values.
+  function expandNameTemplate(tpl, when) {
+    const d = when || new Date();
+    return (tpl || 'like-{seed}').replace(/\{(\w+)\}/g, (whole, token) => {
+      if (token === 'seed') return PREVIEW_SEED;
+      if (token === 'artist') return PREVIEW_ARTIST;
+      const v = dateToken(d, token);
+      return v === null ? whole : v;
+    });
+  }
+  // Mirrors web/app.py export_m3u()'s sanitizer exactly: keep only alphanumerics,
+  // space, hyphen and underscore, strip, cap at 60, 'mix' if that leaves nothing.
+  function sanitizeFileStem(s) {
+    const kept = Array.from(s).filter(c => /[a-zA-Z0-9 _-]/.test(c)).join('');
+    return kept.trim().slice(0, 60) || 'mix';
+  }
+  function updateNamePreview() {
+    const tpl = $('prefNameTemplate').value;
+    const errEl = $('prefNameTemplateErr');
+    if (!tpl.trim()) {
+      errEl.hidden = false; errEl.textContent = 'Give your playlists a name pattern.';
+    } else {
+      const bad = [...new Set(tpl.match(NAME_ILLEGAL_RE) || [])];
+      if (bad.length) {
+        errEl.hidden = false;
+        errEl.textContent = `The character${bad.length > 1 ? 's' : ''} `
+          + bad.map(c => `"${c}"`).join(', ')
+          + `${bad.length > 1 ? " aren't" : " isn't"} allowed in a file name.`;
+      } else { errEl.hidden = true; errEl.textContent = ''; }
+    }
+    $('prefNamePreview').textContent =
+      'Example file name: ' + sanitizeFileStem(expandNameTemplate(tpl)) + '.m3u8';
+  }
+  const FLAVOR_ROOT = { local: 'prefLocalRoot', unc: 'prefUncRoot', plex: 'prefPlexRoot' };
+  function updateFlavorEnabled() {
+    const chosen = $('prefFlavor').value;
+    for (const [flavor, inputId] of Object.entries(FLAVOR_ROOT)) {
+      const input = $(inputId);
+      const on = flavor === chosen;
+      input.disabled = !on;
+      const row = input.closest('.prefrow');
+      const reason = row && row.querySelector('.flavorReason');
+      if (reason) reason.hidden = on;
+    }
+  }
+
+  /* ------------------------------------------------------------------------ Plex
+     Test connection, forget, and the mirror fields that only turn on once a library
+     is picked. CONTRACT_CONNECT_2026-09-20 §E/§I. */
+  // Kept in step with src/export.py's valid_plex_url, which is the one that decides.
+  // A hint that reddens a field the server then accepts is worse than no hint: it makes
+  // a person retype something that was already right. So an IPv6 literal in brackets
+  // passes, and so does a trailing slash, which the server strips on save. A name and
+  // password in the address is refused in both places.
+  const PLEX_URL_RE = /^https?:\/\/(\[[0-9a-f:]+\]|[^/\s:@]+)(:\d+)?\/?$/i;
+  function updatePlexUrlValidity() {
+    const v = $('prefPlexUrl').value.trim();
+    const errEl = $('prefPlexUrlErr');
+    if (!v || PLEX_URL_RE.test(v)) { errEl.hidden = true; errEl.textContent = ''; }
+    else {
+      errEl.hidden = false;
+      errEl.textContent = 'That does not look like a server address. It should look '
+        + 'like http://192.168.1.50:32400.';
+    }
+  }
+  // libraries === null: nothing tested yet this session — show what is already saved
+  // (if anything), from the raw key alone, since a name for it is only known after a
+  // test. libraries === []/[...]: a fresh POST /api/plex/test result.
+  function paintPlexSectionOptions(libraries) {
+    const sel = $('prefPlexSection');
+    if (libraries) {
+      // Plex does not promise a track count on a section, and a missing one used to
+      // render as "Music (null tracks)". Show the count only when there is one.
+      sel.innerHTML = libraries.length
+        ? libraries.map(l => {
+            const n = Number(l.count);
+            const size = Number.isFinite(n) && n > 0 ? ` (${n.toLocaleString()} tracks)` : '';
+            return `<option value="${esc(l.key)}">${esc(l.title)}${size}</option>`;
+          }).join('')
+        : '<option value="">No music libraries found</option>';
+      const want = serverSettings && serverSettings.plex_section_key;
+      if (want && libraries.some(l => String(l.key) === String(want))) sel.value = want;
+    } else if (serverSettings && serverSettings.plex_section_key) {
+      // This dropdown asks WHICH LIBRARY, and until a test runs Attune only has its
+      // number, not its name. Showing the SERVER's name here would answer a different
+      // question with something that looks like an answer to this one.
+      sel.innerHTML = `<option value="${esc(serverSettings.plex_section_key)}">`
+        + `Your saved library - press Test connection to see its name</option>`;
+    } else {
+      sel.innerHTML = '<option value="">Test the connection to see your libraries</option>';
+    }
+  }
+  function updatePlexSyncEnabled() {
+    const on = !!$('prefPlexSection').value;
+    $('plexSyncBlock').classList.toggle('off', !on);
+    $('plexSyncReason').hidden = on;
+    ['prefSyncFolder', 'syncFolderBrowse', 'prefSyncTitle', 'prefSyncOrder'].forEach(id => {
+      const el = $(id); if (el) el.disabled = !on;
+    });
+  }
+  async function testPlex() {
+    const url = $('prefPlexUrl').value.trim();
+    $('prefPlexTestMsg').className = 'hint'; $('prefPlexTestMsg').textContent = 'Testing...';
+    const body = { url };
+    // Omitted entirely unless this session actually typed a new key — "use the
+    // stored one" is how Test works again after a restart when the field is blank.
+    if (plexTokenDirty && $('prefPlexToken').value) body.token = $('prefPlexToken').value;
+    try {
+      const j = await jpost('/api/plex/test', body);
+      plexTest = j;
+      const libs = j.libraries || [];
+      paintPlexSectionOptions(libs);
+      $('prefPlexServer').textContent = j.server_name ? `Connected to ${j.server_name}.` : '';
+      $('prefPlexTestMsg').className = 'hint ok';
+      // A server that answers but will not give up its name leaves server_name empty,
+      // and "Connected to , 1 music libraries found." is exactly the broken sentence
+      // this message was fixed for once already. Say it without the name instead, and
+      // count in English rather than always plural.
+      const n = libs.length;
+      const found = `${n} music ${n === 1 ? 'library' : 'libraries'} found.`;
+      $('prefPlexTestMsg').textContent = j.server_name
+        ? `Connected to ${j.server_name}, ${found}`
+        : `Connected, ${found}`;
+      updatePlexSyncEnabled();
+    } catch (e) {
+      // e.message is the server's own sentence (contract E4) — never the raw
+      // exception, and never logged: nothing here touches console.*.
+      $('prefPlexTestMsg').className = 'hint err';
+      $('prefPlexTestMsg').textContent = e.message;
+    }
+  }
+  async function forgetPlex() {
+    if (!confirm('Remove the saved Plex address and key?')) return;
+    try { await jpost('/api/plex/forget', {}); }
+    catch (e) {
+      $('prefPlexTestMsg').className = 'hint err'; $('prefPlexTestMsg').textContent = e.message;
+      return;
+    }
+    plexTest = null;
+    plexTokenDirty = false;
+    $('prefPlexUrl').value = '';
+    $('prefPlexToken').value = '';
+    $('prefPlexToken').type = 'password';
+    $('prefPlexTokenShow').textContent = 'Show';
+    $('prefPlexTokenStatus').textContent = 'No key saved yet.';
+    $('prefPlexServer').textContent = '';
+    $('prefPlexTestMsg').className = 'hint'; $('prefPlexTestMsg').textContent = '';
+    if (serverSettings) {
+      serverSettings.plex_url = ''; serverSettings.plex_token_set = false;
+      serverSettings.plex_section_key = ''; serverSettings.plex_machine_id = '';
+      serverSettings.plex_server_name = '';
+    }
+    paintPlexSectionOptions(null);
+    updatePlexSyncEnabled();
+  }
+
+  /* ---------------------------------------------------------------------- Mixing */
+  async function loadRecipeOptions() {
+    recipesLoaded = false;
+    const sel = $('prefDefaultRecipe');
+    sel.innerHTML = '<option value="">- engine defaults -</option>';
+    try {
+      const j = await jget('/api/recipe/list');
+      const cur = (serverSettings && serverSettings.default_recipe) || '';
+      sel.innerHTML += (j.recipes || [])
+        .map(r => `<option value="${esc(r.name)}">${esc(r.name)}</option>`).join('');
+      // A saved default whose recipe has since been renamed or deleted is no longer in
+      // the list, and assigning it to a <select> silently does nothing — the control
+      // would then read "- engine defaults -" and Save would make that true. Carry it
+      // as its own option instead, so what is stored is what is shown.
+      if (cur && ![...sel.options].some(o => o.value === cur)) {
+        sel.insertAdjacentHTML('beforeend',
+          `<option value="${esc(cur)}">${esc(cur)} (not in your recipes any more)</option>`);
+      }
+      sel.value = cur;
+      recipesLoaded = true;
+    } catch { /* keep the default-only option — the rest of Mixing still works */ }
+  }
 
   /* A .env file next to the app outranks these fields by design, and nothing used to say
      so: you could edit a root here, save it, restart, and find the old value back, with no
@@ -87,11 +344,19 @@ const Prefs = (() => {
     }
   }
 
+  // One widget, three lists, and they are not the same request: the music-folder lists
+  // ask for a folder to ADD, the skip list asks for one to LEAVE OUT. Sharing the empty
+  // line told someone looking at Folders to skip to "add your music folder(s)", which is
+  // the opposite of what that list does.
+  const EMPTY_LINE = {
+    excludeFolders: 'Nothing skipped. Add a folder here to leave it out of the library.',
+  };
   function paintFolders(folders, containerId = 'libFolders') {
     $(containerId).innerHTML = folders.map((f, k) => `
       <div class="fr"><input type="text" value="${esc(f)}" data-k="${k}">
         <button data-del="${k}" title="Remove">✕</button></div>`).join('')
-      || '<span class="hint">No folders yet — add your music folder(s).</span>';
+      || `<span class="hint">${EMPTY_LINE[containerId]
+           || 'No folders yet — add your music folder(s).'}</span>`;
   }
   function collectFolders(containerId = 'libFolders') {
     return [...$(containerId).querySelectorAll('input')]
@@ -130,11 +395,46 @@ const Prefs = (() => {
       scan_on_launch: $('prefScanLaunch').checked,
       watch_folders: $('prefWatch').checked,
       library_folders: collectFolders(),
+      exclude_folders: collectFolders('excludeFolders'),
       theme: store.get('theme', 'bee'),
+      playlist_name_template: $('prefNameTemplate').value.trim(),
+      path_flavor: $('prefFlavor').value,
+      copy_layout: $('prefCopyLayout').value,
+      plex_url: $('prefPlexUrl').value.trim(),
+      plex_sync_folder: $('prefSyncFolder').value.trim(),
+      plex_sync_title: $('prefSyncTitle').value.trim(),
+      plex_sync_order: $('prefSyncOrder').value,
     };
+    // Only send the default recipe once its list has actually arrived. The list is
+    // fetched asynchronously when the window opens; press Save before it lands, or
+    // after that fetch failed, and the control reads "" — which would store "" and
+    // silently clear a default the person never touched.
+    if (recipesLoaded) patch.default_recipe = $('prefDefaultRecipe').value;
+    // The key travels ONLY when this session actually typed one (contract H) — a
+    // present-but-blank field would otherwise wipe whatever key was already saved.
+    if (plexTokenDirty && $('prefPlexToken').value) patch.plex_token = $('prefPlexToken').value;
+    // machine_id/server_name are never typed by hand (contract E4/B): they come from
+    // the last successful Test this session; if the modal was reopened and Save
+    // pressed without re-testing, keep whatever was already saved instead of
+    // blanking them just because this session never ran a test.
+    const chosenKey = $('prefPlexSection').value || '';
+    patch.plex_section_key = chosenKey;
+    if (plexTest && chosenKey) {
+      patch.plex_machine_id = plexTest.machine_id || '';
+      patch.plex_server_name = plexTest.server_name || '';
+    } else {
+      patch.plex_machine_id = (serverSettings && serverSettings.plex_machine_id) || '';
+      patch.plex_server_name = (serverSettings && serverSettings.plex_server_name) || '';
+    }
     try {
       const j = await jpost('/api/settings', patch);
       serverSettings = j.settings;
+      plexTokenDirty = false;
+      $('prefPlexToken').value = '';
+      $('prefPlexToken').type = 'password';
+      $('prefPlexTokenShow').textContent = 'Show';
+      $('prefPlexTokenStatus').textContent = serverSettings.plex_token_set
+        ? 'A key is saved.' : 'No key saved yet.';
       $('prefsMsg').className = 'msg ok';
       $('prefsMsg').textContent = j.needs_restart && j.needs_restart.length
         ? `Saved. Restart Attune for: ${j.needs_restart.join(', ')}`
@@ -284,6 +584,13 @@ const Prefs = (() => {
     let j;
     try { j = await jget('/api/settings'); } catch { return; }  // unreachable — don't nag on a fluke
     serverSettings = j.settings;
+    // Theme: the SETTING wins on first paint once settings are known (contract F2).
+    // applyThemeEarly() already painted a guess from localStorage before this fetch
+    // resolved (so the window never flashes unstyled); this is the earliest point in
+    // boot serverSettings is known, so it corrects that guess to what was actually
+    // saved. checkFirstRun() runs on every boot regardless of whether the wizard
+    // itself ends up showing (the early returns below are after this line).
+    if (serverSettings.theme) applyTheme(serverSettings.theme);
 
     // NOTHING TO PLAY is the one condition that opens this, and it is a fact about the
     // library, not about the settings. A configured scan folder is not the same thing as
@@ -682,6 +989,71 @@ const Prefs = (() => {
       const cur = collectFolders(); cur.splice(+del.dataset.del, 1);
       paintFolders(cur);
     });
+    // Folders to skip (exclude_folders) — the exact same folderlist widget and
+    // Browse/Add/Remove functions as Music folders above, pointed at a second
+    // container id. pickFolder() is the one server-side picker both go through.
+    $('addExclude').onclick = () => {
+      const cur = readFolderInputs('excludeFolders'); cur.push('');
+      paintFolders(cur, 'excludeFolders'); focusLast('excludeFolders');
+    };
+    $('excludeBrowse').onclick = async () => {
+      const p = await pickFolder(firstFolder('excludeFolders'));
+      if (p) addFolderRow('excludeFolders', p);
+    };
+    $('excludeFolders').addEventListener('click', e => {
+      const del = e.target.closest('button[data-del]'); if (!del) return;
+      const cur = collectFolders('excludeFolders'); cur.splice(+del.dataset.del, 1);
+      paintFolders(cur, 'excludeFolders');
+    });
+    $('prefPlaylistDirBrowse').onclick = async () => {
+      const p = await pickFolder($('prefPlaylistDir').value.trim());
+      if (p) $('prefPlaylistDir').value = p;
+    };
+    // Playlists and export
+    $('prefNameTemplate').addEventListener('input', updateNamePreview);
+    $('prefFlavor').addEventListener('change', updateFlavorEnabled);
+    // Plex
+    $('prefPlexUrl').addEventListener('input', updatePlexUrlValidity);
+    $('prefPlexToken').addEventListener('input', () => { plexTokenDirty = true; });
+    $('prefPlexTokenShow').onclick = () => {
+      const show = $('prefPlexToken').type === 'password';
+      $('prefPlexToken').type = show ? 'text' : 'password';
+      $('prefPlexTokenShow').textContent = show ? 'Hide' : 'Show';
+    };
+    $('prefPlexForget').onclick = forgetPlex;
+    // The server opens it, not the page: a plain external link inside the pywebview
+    // shell can land in the embedded view or nowhere at all. If that fails, show the
+    // address so the person can still get there by hand.
+    $('prefPlexKeyHelp').onclick = async () => {
+      const msg = $('prefPlexKeyHelpMsg');
+      msg.className = 'hint'; msg.textContent = 'Opening Plex’s instructions in your browser...';
+      try {
+        const j = await jpost('/api/help/plex-key', {});
+        msg.textContent = 'Opened in your browser: ' + j.url;
+      } catch (e) {
+        msg.className = 'hint err';
+        msg.textContent = 'Could not open your browser. The page is at '
+          + 'support.plex.tv, article "Finding an authentication token".';
+      }
+    };
+    $('prefPlexTest').onclick = testPlex;
+    $('prefPlexSection').addEventListener('change', updatePlexSyncEnabled);
+    $('syncFolderBrowse').onclick = async () => {
+      const p = await pickFolder($('prefSyncFolder').value.trim());
+      if (p) $('prefSyncFolder').value = p;
+    };
+    // Advanced — the one existing read-only diagnostics route (web/applog.py), just
+    // shown rather than opened: there is no route that opens a folder in Explorer.
+    $('prefLogsOpen').onclick = async () => {
+      $('prefLogsInfo').textContent = 'Reading...';
+      try {
+        const j = await jget('/api/diag/logs');
+        const n = (j.files || []).length;
+        $('prefLogsInfo').textContent = n
+          ? `${n} log file${n === 1 ? '' : 's'} in ${j.dir}`
+          : `No log files yet, in ${j.dir}`;
+      } catch (e) { $('prefLogsInfo').textContent = e.message; }
+    };
     // first-run wizard folder controls (its own list; Skip/✕ close via generic [data-close])
     $('wizAddFolder').onclick = () => {
       const cur = readFolderInputs('wizFolders'); cur.push('');
@@ -731,10 +1103,11 @@ const Prefs = (() => {
     $('fsCancel').onclick = () => fsClose(null);
     $('fsX').onclick = () => fsClose(null);
     $('fsWrap').addEventListener('mousedown', e => { if (e.target === $('fsWrap')) fsClose(null); });
-    // tabs
-    $('prefTabs').addEventListener('click', e => {
+    // section nav (was a horizontal tab strip, #prefTabs; same click-to-switch
+    // idiom, now a vertical list of eight, #prefNav — CONTRACT_CONNECT_2026-09-20 §I)
+    $('prefNav').addEventListener('click', e => {
       const b = e.target.closest('button[data-tab]'); if (!b) return;
-      $('prefTabs').querySelectorAll('button').forEach(x =>
+      $('prefNav').querySelectorAll('button').forEach(x =>
         x.classList.toggle('on', x === b));
       document.querySelectorAll('.tabpage').forEach(p =>
         p.hidden = p.dataset.page !== b.dataset.tab);
@@ -744,6 +1117,11 @@ const Prefs = (() => {
       const c = e.target.closest('.themecard'); if (!c) return;
       applyTheme(c.dataset.theme);
       store.set('themeChosen', true);
+      // Picking a theme is included in the next Save's patch for free (save() reads
+      // it back out of `store`, which applyTheme() above just updated) — this just
+      // keeps THIS session's in-memory copy in step too, so a grid repaint before
+      // the next server round trip still shows the right card as chosen.
+      if (serverSettings) serverSettings.theme = c.dataset.theme;
       paintThemeGrid();
     });
     // playback tab mirrors -> player state (same localStorage keys player.js reads)

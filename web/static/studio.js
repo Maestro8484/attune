@@ -1505,10 +1505,19 @@ function fallbackNote(rep) {
 async function exportSaveDir() {
   const ids = currentExportIds();
   if (!ids.length) return toast('Nothing to export', true);
-  const name = $('plName').value.trim() || 'Attune mix';
+  // Contract G: send the typed name, or nothing when blank -- never the old 'Attune
+  // mix' stand-in, which silently overrode whatever pattern was set in Preferences.
+  // A blank name lets the server expand the stored playlist_name_template instead.
+  const name = $('plName').value.trim();
+  const body = { ids, flavor: $('flavor').value };
+  if (name) body.name = name;
+  // The rows are always sent as ids, even when they ARE a mix, so the server cannot
+  // tell the two apart on its own. This says which track the mix grew from, for the
+  // NAME only: without it the name pattern in Preferences would govern the Download
+  // button and nothing else.
+  if (S.view === 'mix' && S.seed != null) body.seed = S.seed;
   try {
-    const j = await jpost('/api/export/m3u_dir',
-      { ids, name, flavor: $('flavor').value });
+    const j = await jpost('/api/export/m3u_dir', body);
     const note = fallbackNote(j.fallback);
     $('exportMsg').className = note ? 'msg warn' : 'msg ok';
     $('exportMsg').textContent = `Wrote ${j.count} tracks → ${j.name}` + (note ? `. ${note}` : '');
@@ -1572,6 +1581,10 @@ async function exportPlex() {
    list every other export uses (currentExportIds). Backend job = exportjob.py. */
 let copyDest = '';
 let copyTimer = 0;
+// The path_flavor value currently on disk. initCore() sets it from GET /api/settings and
+// the #flavor change handler compares against it, so the synthetic change event fired at
+// boot does not POST the value straight back (contract F1).
+let savedFlavor = '';
 function copyErr(m) { $('copyMsg').className = 'msg err'; $('copyMsg').textContent = m; }
 async function copyBrowse() {
   const picked = await Prefs.pickFolder(copyDest || '');
@@ -1588,11 +1601,15 @@ async function startCopy(overrideIds) {
   const ids = Array.isArray(overrideIds) ? overrideIds : currentExportIds();
   if (!ids.length) return copyErr('Nothing to export');
   if (!copyDest) return copyErr('Pick a destination folder first');
-  const folder = $('plName').value.trim() || 'Attune mix';
+  // Same contract-G change as exportSaveDir() above: send the typed name, or nothing
+  // when blank, never the old 'Attune mix' stand-in -- the server expands the template.
+  const folder = $('plName').value.trim();
   const layout = $('copyLayout').value;
+  const body = { ids, dest: copyDest, layout };
+  if (folder) body.folder = folder;
   $('copyMsg').className = 'msg'; $('copyMsg').textContent = 'Starting…';
   try {
-    await jpost('/api/export/copy', { ids, dest: copyDest, folder, layout });
+    await jpost('/api/export/copy', body);
     startCopyPoll();
   } catch (e) { copyErr(e.message); }
 }
@@ -2318,18 +2335,29 @@ function bindEvents() {
       el.textContent = short
         ? `Paths will read: ${tail} — but only ${fmt(cov.ok)} of ${fmt(cov.total)} tracks `
           + `sit under your library folder, so ${fmt(cov.total - cov.ok)} will keep local `
-          + `paths. Check the Local library root in Preferences, Advanced.`
+          + `paths. Check the path in Preferences, Playlists and export.`
         : 'Paths will read: ' + tail;
     } else {
       el.className = 'hint warn';
       el.textContent = `Paths will stay local: Attune still needs ${missing.join(' and ')}. `
-        + `Set it in Preferences, Advanced`
+        + `Set it in Preferences, Playlists and export`
         + (r.local_suggested && !r.local ? ` (your music looks like it lives under ${r.local_suggested})` : '')
         + '.';
     }
   };
   $('flavor').addEventListener('change', showRoot);
   showRoot._run = showRoot;
+  // path_flavor is now the one memory for this choice (contract F1) -- the old
+  // localStorage restore in studio.html is gone. Guarded against the synthetic change
+  // event initCore() dispatches at boot: without the guard every page load would
+  // rewrite settings.json with the value it had just read out of it, moving the file's
+  // timestamp on a plain refresh and making a real edit impossible to spot.
+  $('flavor').addEventListener('change', () => {
+    const v = $('flavor').value;
+    if (v === savedFlavor) return;
+    savedFlavor = v;
+    jpost('/api/settings', { path_flavor: v }).catch(() => {});
+  });
   $('btnSaveDir').onclick = exportSaveDir;
   $('btnDownload').onclick = exportDownload;
   $('btnPlex').onclick = exportPlex;
@@ -2599,6 +2627,20 @@ async function initCore() {
   // /api/recipe/list costs the recipe select, never the library or the player.
   try { await initRecipes(); }
   catch (e) { console.error('[core] recipes', e); }
+
+  // #flavor and #copyLayout start from the SAVED settings now (contract F1/F3) --
+  // this replaces the localStorage-only flavor restore that used to run inline in
+  // studio.html before this script loaded. Read here, before the dispatch below, so
+  // showRoot() shows the real starting value on first paint instead of flashing
+  // whatever the <select> markup defaults to.
+  try {
+    const st = await jget('/api/settings');
+    const sv = (st && st.settings) || {};
+    if (['unc', 'local', 'plex'].includes(sv.path_flavor)) $('flavor').value = sv.path_flavor;
+    if (['flat', 'tree'].includes(sv.copy_layout)) $('copyLayout').value = sv.copy_layout;
+    savedFlavor = $('flavor').value;   // what is on disk, so the change handler below
+                                       // can tell a real choice from this boot restore
+  } catch (e) { console.error('[core] settings (flavor/copyLayout)', e); }
 
   try { $('flavor').dispatchEvent(new Event('change')); }
   catch (e) { console.error('[core] flavor', e); }

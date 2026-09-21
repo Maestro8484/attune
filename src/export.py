@@ -12,7 +12,10 @@ stored outside it, REFUSES the rewrite and the export keeps local paths with a n
 (ruling (a), MORNING_REPORT_2026-07-29.md §5.1 -- see PathMapper and convert_all).
 suggest_local_root() exists only to SHOW the operator a candidate; nothing applies it.
 A .env file is a dev override for those same three, plus where Plex's real secrets live:
-  PLEX_URL, PLEX_ACCOUNT_TOKEN, PLEX_SECTION_KEY, PLEX_MACHINE_ID  (never in settings.json)
+  PLEX_URL, PLEX_ACCOUNT_TOKEN, PLEX_SECTION_KEY, PLEX_MACHINE_ID -- for the CLI only.
+The web app no longer reads Plex secrets from .env at all: they live in settings.json
+now (Preferences -> Plex; see plex_from_settings() below), migrated out of .env once if
+they were ever there (web/app.py's _migrate_plex_env_once).
 mapper_from_env()/load_env() below still exist for the CLI, which is a dev tool run from a
 workspace checkout and keeps reading straight from .env.
 
@@ -27,6 +30,7 @@ import argparse
 import importlib.util
 import json
 import os
+import urllib.error
 import urllib.parse
 import urllib.request
 
@@ -40,8 +44,9 @@ def find_env(explicit=None):
     Export roots (LOCAL/UNC/PLEX_LIBRARY_ROOT) no longer depend on this chain finding
     anything -- they live in settings.json now (see mapper_from_settings()), which every
     install can always find regardless of cwd. What's left behind this search is a dev
-    override for those same three roots, plus Plex's actual connection secrets
-    (PLEX_URL, PLEX_ACCOUNT_TOKEN, ...), which never move out of .env.
+    override for those same three roots, plus the CLI's own Plex connection secrets
+    (PLEX_URL, PLEX_ACCOUNT_TOKEN, ...) -- the web app moved its own copies of these into
+    settings.json (Preferences -> Plex); only the CLI still reads them from .env.
 
     No repo-root or app-root fallback is added on purpose
     (PROPOSAL_EXPORT_ROOTS_2026-07-28.md §5): once settings.json is the answer for an
@@ -241,10 +246,41 @@ def write_m3u8(items, outfile, mapper, flavor="unc"):
     return outfile
 
 
+def valid_plex_url(url):
+    """A cleaned http(s)://host[:port] string, or None.
+
+    Refuses no scheme (what a person typing a bare "192.168.1.50:32400" gets), a scheme
+    that isn't http/https, an empty host, or any path/query/fragment -- a server address
+    should never grow a stray "/library" the way a copy-pasted browser URL sometimes
+    does. Trailing slashes are stripped so the caller never has to.
+    """
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return None
+    parsed = urllib.parse.urlsplit(u)
+    if parsed.scheme not in ("http", "https"):
+        return None
+    if not parsed.hostname:
+        return None
+    if parsed.path or parsed.query or parsed.fragment:
+        return None
+    # A Plex server address never carries a name and password. Accepting one would store
+    # a password in settings.json where nothing expects to find one, and urllib would
+    # then hand "user:pass@host" straight to getaddrinfo and fail with a message about
+    # an unreachable server, which is not what went wrong.
+    if parsed.username or parsed.password:
+        return None
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
 # -------------------------------------------------------------------------- plex
 class PlexExporter:
     def __init__(self, url, token, section_key, machine_id, mapper, timeout=30):
-        self.url = url.rstrip("/")
+        clean = valid_plex_url(url)
+        if clean is None:
+            raise ValueError("That does not look like a server address. "
+                             "It should look like http://192.168.1.50:32400.")
+        self.url = clean
         self.token = token
         self.section_key = str(section_key)
         self.machine_id = machine_id
@@ -252,20 +288,28 @@ class PlexExporter:
         self.timeout = timeout
         self._index = None                      # {plex_path: ratingKey}
 
+    # The token travels as the X-Plex-Token HEADER on every call below, never as a query
+    # parameter. It used to be a param, which meant a malformed url (no "http://", exactly
+    # what a person types) made urllib raise ValueError with the WHOLE url in its message,
+    # token included -- and that text reached the UI verbatim (plexsyncjob.py's old
+    # _friendly() fell through to `return s` for anything it didn't recognise). A header
+    # can't leak into an exception's str(). (contract CONNECT_2026-09-20 E3.)
     def _get(self, path, params=None):
         params = dict(params or {})
-        params["X-Plex-Token"] = self.token
         q = urllib.parse.urlencode(params)
-        req = urllib.request.Request(f"{self.url}{path}?{q}", headers={"Accept": "application/json"})
+        url = f"{self.url}{path}" + (f"?{q}" if q else "")
+        req = urllib.request.Request(url, headers={"Accept": "application/json",
+                                                    "X-Plex-Token": self.token})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             return json.load(r)
 
     def _post(self, path, params):
         params = dict(params)
-        params["X-Plex-Token"] = self.token
         q = urllib.parse.urlencode(params)
-        req = urllib.request.Request(f"{self.url}{path}?{q}", method="POST",
-                                     headers={"Accept": "application/json"})
+        url = f"{self.url}{path}" + (f"?{q}" if q else "")
+        req = urllib.request.Request(url, method="POST",
+                                     headers={"Accept": "application/json",
+                                              "X-Plex-Token": self.token})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             body = r.read()
             return json.loads(body) if body else {}
@@ -279,9 +323,11 @@ class PlexExporter:
     def _verb(self, method, path, params=None):
         """PUT/DELETE share _post's shape; Plex answers DELETE with 204 and no body."""
         p = dict(params or {})
-        p["X-Plex-Token"] = self.token
-        req = urllib.request.Request(f"{self.url}{path}?{urllib.parse.urlencode(p)}",
-                                     method=method, headers={"Accept": "application/json"})
+        q = urllib.parse.urlencode(p)
+        url = f"{self.url}{path}" + (f"?{q}" if q else "")
+        req = urllib.request.Request(url, method=method,
+                                     headers={"Accept": "application/json",
+                                              "X-Plex-Token": self.token})
         with urllib.request.urlopen(req, timeout=self.timeout) as r:
             body = r.read()
             return json.loads(body) if body else {}
@@ -635,8 +681,10 @@ def mapper_from_settings(settings, env_cfg):
 
 
 def plex_from_env(cfg, mapper):
-    """Build a PlexExporter. PLEX_URL/ACCOUNT_TOKEN/MACHINE_ID are connection secrets and
-    only ever come from .env (they never move to settings.json). The library-path root is
+    """Build a PlexExporter for the CLI. PLEX_URL/ACCOUNT_TOKEN/MACHINE_ID are read from
+    .env only -- this is the CLI-only path (see main() below); the web app builds its
+    exporter through plex_from_settings() instead, which reads settings.json and never
+    touches .env for these. The library-path root is
     read off `mapper.plex_root` instead of straight off `cfg`, so a root configured only
     in Preferences (settings.json) still satisfies this check -- mapper is already
     resolved through mapper_from_settings()'s env-then-settings chain by the caller."""
@@ -648,6 +696,103 @@ def plex_from_env(cfg, mapper):
         raise SystemExit(f"Plex export needs: {', '.join(missing)}")
     return PlexExporter(cfg["PLEX_URL"], cfg["PLEX_ACCOUNT_TOKEN"],
                         cfg.get("PLEX_SECTION_KEY", "1"), cfg["PLEX_MACHINE_ID"], mapper)
+
+
+def plex_from_settings(settings, env_cfg, mapper):
+    """Settings-first sibling of plex_from_env(), for the web app (contract
+    CONNECT_2026-09-20 E1/E5). Reads plex_url/plex_token/plex_machine_id/plex_section_key
+    from `settings` ONLY -- `env_cfg` is accepted only so callers can hand this the same
+    two config objects mapper_from_settings() takes; it is never consulted here. A person
+    who clears their token in Preferences must not get it back from a stray .env value on
+    the next export. The library-path root still comes off `mapper.plex_root`, exactly as
+    plex_from_env() does.
+
+    An empty plex_section_key gets its OWN message and no "1" fallback (contract E6): the
+    old fallback silently added tracks to a server's first library, music or not.
+    """
+    need = {"plex_url": "server address", "plex_token": "key",
+            "plex_machine_id": "machine id (from Test connection)"}
+    missing = [label for key, label in need.items() if not settings.get(key)]
+    if not mapper.plex_root:
+        missing.append("library path root")
+    if missing:
+        raise SystemExit("Plex export needs a " + ", ".join(missing)
+                         + " -- set it up in Preferences -> Plex.")
+    section = str(settings.get("plex_section_key") or "")
+    if not section:
+        raise SystemExit("Pick which Plex library to add to, in Preferences -> Plex.")
+    return PlexExporter(settings["plex_url"], settings["plex_token"], section,
+                        settings["plex_machine_id"], mapper)
+
+
+class PlexUnreachable(Exception):
+    """probe_plex(): the server itself did not answer GET /identity (contract E4 step 2).
+    Distinct from PlexAuthError so the caller can hand back a different sentence for
+    "nothing is listening there" versus "something is listening but the key is wrong"."""
+
+
+class PlexAuthError(Exception):
+    """probe_plex(): GET /library/sections came back 401 (contract E4 step 3) -- the
+    server answered, so the address is right and the key is the problem."""
+
+
+def probe_plex(url, token):
+    """GET /identity (no token needed), then GET /library/sections (with token). Writes
+    nothing. Built for POST /api/plex/test (contract E4), whose four sentences need four
+    distinguishable outcomes:
+
+      1. `url` doesn't parse                    -> raises ValueError
+      2. the server itself can't be reached      -> raises PlexUnreachable
+      3. the server answers, the key is wrong     -> raises PlexAuthError (401)
+      4. anything else                            -> the original exception, uncaught here
+
+    The caller turns each into its own plain sentence rather than showing a stranger an
+    exception message. On success: {"server_name", "machine_id", "libraries": [{"key",
+    "title", "count"}]} -- music libraries only (a section whose Plex "type" is "artist").
+    """
+    clean = valid_plex_url(url)
+    if clean is None:
+        raise ValueError("not a valid Plex server address")
+    try:
+        req = urllib.request.Request(f"{clean}/identity",
+                                     headers={"Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            identity = json.load(r)
+    except Exception as e:
+        raise PlexUnreachable(str(e)) from e
+    req = urllib.request.Request(f"{clean}/library/sections",
+                                 headers={"Accept": "application/json",
+                                          "X-Plex-Token": token or ""})
+    try:
+        with urllib.request.urlopen(req, timeout=10) as r:
+            sections = json.load(r)
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise PlexAuthError(str(e)) from e
+        raise
+    mc = identity.get("MediaContainer", {})
+    libs = [{"key": str(d.get("key")), "title": d.get("title"),
+            "count": d.get("count")}
+           for d in sections.get("MediaContainer", {}).get("Directory", [])
+           if d.get("type") == "artist"]
+    # The server's own name comes from the ROOT endpoint, not /identity: observed against
+    # a real Plex server on 2026-09-20, /identity answers with apiVersion, claimed,
+    # machineIdentifier, size and version and NO friendlyName, so reading the name off it
+    # gave an empty string and the window would have said "Connected to , 1 music library
+    # found". The root endpoint needs the token, which is why it runs last -- a wrong key
+    # must still produce the key sentence above rather than failing here. Best effort: a
+    # server that answers everything else but not this is still connected, it just has no
+    # name to show.
+    server_name = ""
+    try:
+        req = urllib.request.Request(f"{clean}/", headers={"Accept": "application/json",
+                                                           "X-Plex-Token": token or ""})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            server_name = json.load(r).get("MediaContainer", {}).get("friendlyName") or ""
+    except Exception:
+        pass
+    return {"server_name": server_name, "machine_id": mc.get("machineIdentifier") or "",
+           "libraries": libs}
 
 
 def main():

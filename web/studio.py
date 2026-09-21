@@ -566,6 +566,14 @@ def register(app, ctx):
     locked = ctx["locked"]
     # hands-out record (ruling B1); absent in older callers, so no-op fallback
     ledger = ctx.get("ledger") or (lambda *_a, **_k: None)
+    _cfgmod = ctx.get("cfgmod")
+
+    def _template():
+        # Read fresh, never cached: playlist_name_template is not a restart key, so a
+        # Preferences save should take effect on the very next export (contract §G).
+        if not _cfgmod:
+            return "like-{seed}"
+        return _cfgmod.load().get("playlist_name_template") or "like-{seed}"
 
     @bp.get("/api/lib/stats")
     @locked
@@ -591,7 +599,7 @@ def register(app, ctx):
             artists=len({a for a in lib.artist if a}),
             albums=len({a for a in lib.album if a}),
             engine=ctx["engine_name"],
-            plex=ctx["plex_configured"],
+            plex=ctx["plex_configured"](),
             playlist_dir=playlist_dir,
             # the actual library roots, read from .env at startup. Kept out of tracked
             # source (leak_check) and handed to the UI here so the export dropdown can
@@ -831,7 +839,10 @@ def register(app, ctx):
         if not playlist_dir or not os.path.isdir(playlist_dir):
             return jsonify(ok=False, error="no playlist folder configured"), 400
         body = request.get_json(silent=True) or {}
-        flavor = body.get("flavor", "unc")
+        # An explicit flavor wins; with none, the stored Preferences choice answers.
+        # Same change and same reason as /api/export/m3u in web/app.py.
+        flavor = body.get("flavor") or (
+            _cfgmod.load().get("path_flavor") if _cfgmod else "") or "unc"
         if flavor not in ("local", "unc", "plex"):
             flavor = "unc"
         ids = body.get("ids")
@@ -840,7 +851,29 @@ def register(app, ctx):
                 tracks = [eng.paths[int(x)] for x in ids if 0 <= int(x) < lib.n]
             except (ValueError, TypeError):
                 return jsonify(ok=False, error="bad ids"), 400
+            # An id list on its own is a hand-picked selection: not a mix "like"
+            # anything, so the template does not govern it and the name stays what the
+            # client has always sent for this case.
+            #
+            # But the window ALWAYS sends ids, even when what is on screen is a mix
+            # (studio.js currentExportIds), so without the `seed` below this branch
+            # swallowed every Save-to-folder and the name pattern in Preferences
+            # governed the Download button alone while the window claimed it governed
+            # every playlist. (Cold Fable audit, 2026-09-20.) `seed` names the mix these
+            # rows came from; it is used for the NAME only, never for the contents,
+            # which stay exactly the rows the person is looking at.
+            seed = body.get("seed")
             default_name = "Attune mix"
+            try:
+                si = int(seed)
+            except (TypeError, ValueError):
+                si = None
+            if si is not None and 0 <= si < lib.n:
+                sm = eng.meta.get(eng.paths[si], {})
+                stem = (sm.get("title")
+                        or os.path.splitext(os.path.basename(eng.paths[si]))[0]).strip()
+                default_name = ctx["expand_playlist_name"](_template(), stem,
+                                                           sm.get("artist"))
         else:
             try:
                 i = int(body.get("i"))
@@ -850,12 +883,17 @@ def register(app, ctx):
             if not (0 <= i < lib.n):
                 return jsonify(ok=False, error="unknown seed"), 404
             tracks = ctx["active_mix_tracks"](i, size, body.get("dedup") or None)
-            # Default name follows the operator's own 2021 convention (ruling C9):
-            # a mix is "like-<seed>". An explicit client name still wins.
+            # Default name comes from the shared template expander (contract §G), which
+            # reproduces the operator's own 2021 convention (ruling C9) -- "like-<seed>".
+            # The expander sanitises harder than the old inline stem did (letters,
+            # digits, space, hyphen, underscore, capped at 60), so a title with an
+            # apostrophe comes out slightly shorter than it used to. The route with a
+            # sealed baseline behind it is the .m3u8 download, not this one. An explicit
+            # client name still wins (see below).
             sm = eng.meta.get(eng.paths[i], {})
             seed_name = (sm.get("title")
                          or os.path.splitext(os.path.basename(eng.paths[i]))[0]).strip()
-            default_name = f"like-{seed_name or 'mix'}"
+            default_name = ctx["expand_playlist_name"](_template(), seed_name, sm.get("artist"))
         if not tracks:
             return jsonify(ok=False, error="empty playlist"), 400
         try:

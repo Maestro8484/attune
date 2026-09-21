@@ -559,109 +559,241 @@
 <div id="toast" class="toast" hidden></div>
 <div id="why" class="why" hidden></div>
 
-<!-- Preferences modal -->
+<!-- Preferences modal: eight sections down the left, that section's fields on the
+     right (CONTRACT_CONNECT_2026-09-20 §I). #prefNav replaces the old 4-tab strip
+     #prefTabs -- same click-to-switch idiom, just a vertical list instead of a
+     horizontal one, since eight names read better stacked than crowded into one row. -->
 <div id="prefsWrap" class="modalwrap" hidden>
   <div class="modal">
     <div class="modalHead">Preferences
       <span id="prefsPath" class="hint" style="font-weight:400"></span>
       <button class="x" data-close="prefsWrap">✕</button></div>
-    <div class="tabs" id="prefTabs">
-      <button data-tab="library" class="on">Library</button>
-      <button data-tab="playback">Playback</button>
-      <button data-tab="appearance">Appearance</button>
-      <button data-tab="advanced">Advanced</button>
-    </div>
     <div class="modalBody">
-      <div class="tabpage" data-page="library">
-        <div class="prefrow"><span class="k">Music folders</span>
-          <div class="v">
-            <div class="folderlist" id="libFolders"></div>
-            <div class="btnrow"><button id="libBrowse">📁 Browse…</button>
-              <button id="addFolder">+ Add another</button>
-              <button id="btnRescan" class="primary">⟳ Rescan library</button></div>
-            <span class="hint">Folders scanned for new/changed music. The scan is
-              incremental — unchanged tracks are skipped.</span>
-          </div></div>
-        <div class="prefrow"><span class="k">Playlist folder</span>
-          <div class="v"><input type="text" id="prefPlaylistDir" placeholder="e.g. M:\Playlists">
-            <span class="hint">Shown in the Playlists tree; the only folder Attune writes
-              playlists into. Needs restart.</span></div></div>
-        <div class="prefrow"><span class="k">Database</span>
-          <div class="v"><input type="text" id="prefDb" placeholder="path\to\mixer.db">
-            <span class="hint">The analyzed library. Needs restart.</span></div></div>
-        <div class="prefrow"><span class="k">On launch</span>
-          <div class="v"><label class="chk"><input type="checkbox" id="prefScanLaunch">
-            Scan library folders when the app starts</label></div></div>
-        <div class="prefrow"><span class="k">Live watch</span>
-          <div class="v"><label class="chk"><input type="checkbox" id="prefWatch">
-            Watch library folders — analyze new music automatically</label>
-            <span class="hint">New/changed audio in your library folders triggers an
-              incremental scan (20 s quiet period).</span></div></div>
-        <div id="scanDetail" hidden>
-          <div class="progressbar"><div class="fill" id="scanFill2" style="width:0%"></div></div>
-          <div id="scanNote" class="hint"></div>
-          <div class="scanlog" id="scanLog"></div>
+      <div class="prefsSplit">
+        <div class="prefNav" id="prefNav">
+          <button data-tab="library" class="on">Library</button>
+          <button data-tab="playlists">Playlists and export</button>
+          <button data-tab="plex">Plex</button>
+          <button data-tab="mixing">Mixing</button>
+          <button data-tab="playback">Playback</button>
+          <button data-tab="analysis">Analysis</button>
+          <button data-tab="appearance">Appearance</button>
+          <button data-tab="advanced">Advanced</button>
         </div>
-      </div>
-      <div class="tabpage" data-page="playback" hidden>
-        <div class="prefrow"><span class="k">Crossfade</span>
-          <div class="v"><label class="chk"><input type="range" id="prefXfade" min="0" max="10"
-            step="0.5" style="flex:1"> <em id="prefXfadeV">0s</em></label>
-            <span class="hint">Seconds of overlap between tracks. 0 = start the next track
-              the instant the current one ends (preloaded).</span></div></div>
-        <div class="prefrow"><span class="k">ReplayGain</span>
-          <div class="v"><label class="chk"><input type="checkbox" id="prefRg">
-            Level track volume from ReplayGain tags</label>
-            <span class="hint">Uses gain values already written in your files' tags;
-              tracks without tags play unchanged.</span></div></div>
-        <div class="prefrow"><span class="k">Play counting</span>
-          <div class="v"><span class="hint">A play is counted at 50% listened (or 4 minutes,
-            whichever comes first) — the scrobble standard.</span></div></div>
-      </div>
-      <div class="tabpage" data-page="appearance" hidden>
-        <div class="prefrow"><span class="k">Theme</span>
-          <div class="v"><div class="themegrid" id="themeGrid"></div></div></div>
-        <div class="prefrow"><span class="k">Columns</span>
-          <div class="v"><span class="hint">Right-click any table header to choose visible
-            columns.</span></div></div>
-      </div>
-      <div class="tabpage" data-page="advanced" hidden>
-        <div class="prefrow"><span class="k">Engine</span>
-          <div class="v"><select id="prefEngine">
-              <option value="auto">Auto — probe MusicIP, fall back to V2</option>
-              <option value="v2">Attune V2 (built-in)</option>
-              <option value="musicip">MusicIP Mixer (needs its API running)</option>
-              <option value="learned">Learned metric (ONNX head, not yet the default)</option>
-            </select><span class="hint">Needs restart.</span></div></div>
-        <div class="prefrow"><span class="k">MusicIP URL</span>
-          <div class="v"><input type="text" id="prefMipUrl"
-            placeholder="http://localhost:10002"><span class="hint">Needs restart.</span></div></div>
-        <div class="prefrow"><span class="k">ML python</span>
-          <div class="v"><input type="text" id="prefMlPython"
-            placeholder="...\.venv-ml\Scripts\python.exe">
-            <span class="hint">Optional. Points at a heavy analyze venv (librosa + torch)
-              for the reference encoder. Empty = Rescan analyzes audio torch-free with the
-              built-in ONNX encoder, under Attune's own Python — no second environment.</span></div></div>
-        <div class="prefrow"><span class="k">Local library root</span>
-          <div class="v"><input type="text" id="prefLocalRoot" placeholder="e.g. D:\Music">
-            <span class="hint">The folder your music sits under, spelled the way the
-              library stores it (export path style: local). Never guessed: left blank,
-              every other path style falls back to local paths and says so. Needs
-              restart.</span>
-            <span class="hint warn" id="envLocalRoot" hidden></span></div></div>
-        <div class="prefrow"><span class="k">UNC library root</span>
-          <div class="v"><input type="text" id="prefUncRoot" placeholder="e.g. \\NAS\Music">
-            <span class="hint">Network path for playlists played on other devices on the
-              LAN (export path style: UNC, the default for playlist export). Never
-              guessed — leave blank and that path style falls back to local paths until
-              set. Needs restart.</span>
-            <span class="hint warn" id="envUncRoot" hidden></span></div></div>
-        <div class="prefrow"><span class="k">Plex library root</span>
-          <div class="v"><input type="text" id="prefPlexRoot" placeholder="e.g. /music">
-            <span class="hint">Path prefix as your Plex server sees the library (export
-              path style: Plex). Plex's own connection details (server URL, token) stay
-              in .env — this is only a path. Needs restart.</span>
-            <span class="hint warn" id="envPlexRoot" hidden></span></div></div>
+        <div class="prefPages">
+          <div class="tabpage" data-page="library">
+            <div class="prefrow"><span class="k">Music folders</span>
+              <div class="v">
+                <div class="folderlist" id="libFolders"></div>
+                <div class="btnrow"><button id="libBrowse">📁 Browse…</button>
+                  <button id="addFolder">+ Add another</button>
+                  <button id="btnRescan" class="primary">⟳ Rescan library</button></div>
+                <span class="hint">Folders scanned for new/changed music. The scan is
+                  incremental — unchanged tracks are skipped.</span>
+              </div></div>
+            <div class="prefrow"><span class="k">Folders to skip</span>
+              <div class="v">
+                <div class="folderlist" id="excludeFolders"></div>
+                <div class="btnrow"><button id="excludeBrowse">📁 Browse...</button>
+                  <button id="addExclude">+ Add another</button></div>
+                <span class="hint">Anything under one of these is skipped while scanning
+                  - an old backup, a sync app's version history, anything you don't want
+                  in the library.</span>
+              </div></div>
+            <div class="prefrow"><span class="k">On launch</span>
+              <div class="v"><label class="chk"><input type="checkbox" id="prefScanLaunch">
+                Scan library folders when the app starts</label></div></div>
+            <div class="prefrow"><span class="k">Live watch</span>
+              <div class="v"><label class="chk"><input type="checkbox" id="prefWatch">
+                Watch library folders — analyze new music automatically</label>
+                <span class="hint">New/changed audio in your library folders triggers an
+                  incremental scan (20 s quiet period).</span></div></div>
+            <div id="scanDetail" hidden>
+              <div class="progressbar"><div class="fill" id="scanFill2" style="width:0%"></div></div>
+              <div id="scanNote" class="hint"></div>
+              <div class="scanlog" id="scanLog"></div>
+            </div>
+          </div>
+          <div class="tabpage" data-page="playlists" hidden>
+            <div class="prefrow"><span class="k">Playlist folder</span>
+              <div class="v">
+                <div class="rowfield"><input type="text" id="prefPlaylistDir"
+                  placeholder="e.g. M:\Playlists" style="flex:1">
+                  <button id="prefPlaylistDirBrowse">📁 Browse...</button></div>
+                <span class="hint">Shown in the Playlists tree; the only folder Attune
+                  writes playlists into. Needs restart.</span></div></div>
+            <div class="prefrow"><span class="k">Name pattern</span>
+              <div class="v">
+                <input type="text" id="prefNameTemplate" placeholder="like-{seed}">
+                <span class="hint err" id="prefNameTemplateErr" hidden></span>
+                <span class="hint" id="prefNamePreview"></span>
+                <span class="hint">The name of a playlist file Attune writes for you, when
+                  you have not typed one yourself in the export panel. {seed} is the song
+                  you started the mix from, {artist} its artist, {date} today's date.
+                  Anything else you type stays as typed. A folder of songs copied to a USB
+                  stick is named in the export panel instead, because that is a folder
+                  rather than a playlist.</span></div></div>
+            <div class="prefrow"><span class="k">How paths are written</span>
+              <div class="v">
+                <select id="prefFlavor">
+                  <option value="local">This PC (a local drive)</option>
+                  <option value="unc">Network share - other devices on your LAN</option>
+                  <option value="plex">Plex server path</option>
+                </select>
+                <span class="hint">Which of the three folders below a playlist's paths
+                  use. Only one is ever needed - the other two are greyed out.</span></div></div>
+            <div class="prefrow sub"><span class="k">This PC path</span>
+              <div class="v"><input type="text" id="prefLocalRoot" placeholder="e.g. D:\Music">
+                <span class="hint">The folder your music sits under, spelled the way the
+                  library stores it. Never guessed: left blank, this path style falls back
+                  to local paths and says so. Needs restart.</span>
+                <span class="hint warn" id="envLocalRoot" hidden></span>
+                <span class="hint flavorReason">Only used when "how paths are written"
+                  above is set to This PC.</span></div></div>
+            <div class="prefrow sub"><span class="k">Network share path</span>
+              <div class="v"><input type="text" id="prefUncRoot" placeholder="e.g. \\NAS\Music">
+                <span class="hint">Network path for playlists played on other devices on
+                  the LAN. Never guessed - leave blank and this path style falls back to
+                  local paths until set. Needs restart.</span>
+                <span class="hint warn" id="envUncRoot" hidden></span>
+                <span class="hint flavorReason">Only used when "how paths are written"
+                  above is set to Network share.</span></div></div>
+            <div class="prefrow sub"><span class="k">Plex server path</span>
+              <div class="v"><input type="text" id="prefPlexRoot" placeholder="e.g. /music">
+                <span class="hint">Path prefix as your Plex server sees the library. Needs
+                  restart.</span>
+                <span class="hint warn" id="envPlexRoot" hidden></span>
+                <span class="hint flavorReason">Only used when "how paths are written"
+                  above is set to Plex server path.</span></div></div>
+            <div class="prefrow"><span class="k">USB copy layout</span>
+              <div class="v"><select id="prefCopyLayout">
+                  <option value="flat">Flat - plays in mix order</option>
+                  <option value="tree">Folders - Artist / Album</option>
+                </select>
+                <span class="hint">Starting layout for "Copy to folder / USB" in the
+                  export panel. You can still change it for one copy.</span></div></div>
+          </div>
+          <div class="tabpage" data-page="plex" hidden>
+            <div class="prefrow"><span class="k">Server address</span>
+              <div class="v"><input type="text" id="prefPlexUrl" placeholder="http://192.168.1.50:32400">
+                <span class="hint err" id="prefPlexUrlErr" hidden></span>
+                <span class="hint">The address of the Plex server on your network.</span></div></div>
+            <div class="prefrow"><span class="k">Key</span>
+              <div class="v">
+                <div class="rowfield"><input type="password" id="prefPlexToken"
+                  placeholder="Paste your Plex key" style="flex:1" autocomplete="off">
+                  <button id="prefPlexTokenShow" type="button">Show</button>
+                  <button id="prefPlexForget" type="button">Forget this server</button></div>
+                <span class="hint" id="prefPlexTokenStatus"></span>
+                <span class="hint">This is the only thing here you cannot pick off your
+                  own screen. In Plex, open any song, press the three dots, choose Get
+                  Info, then View XML - the key is the long code at the end of the
+                  address bar, after "X-Plex-Token=".</span>
+                <div class="btnrow"><button id="prefPlexKeyHelp" type="button">Show me
+                  where, on Plex's site</button></div>
+                <span class="hint" id="prefPlexKeyHelpMsg"></span></div></div>
+            <div class="prefrow"><span class="k">Connection</span>
+              <div class="v"><div class="btnrow">
+                  <button id="prefPlexTest" class="primary">Test connection</button></div>
+                <span class="hint" id="prefPlexTestMsg"></span></div></div>
+            <div class="prefrow"><span class="k">Library</span>
+              <div class="v"><select id="prefPlexSection">
+                  <option value="">Test the connection to see your libraries</option>
+                </select>
+                <span class="hint" id="prefPlexServer"></span></div></div>
+            <div id="plexSyncBlock">
+              <span class="hint" id="plexSyncReason">Test the connection and pick a
+                library above, then this turns on.</span>
+              <div class="prefrow sub"><span class="k">Mirror folder</span>
+                <div class="v">
+                  <div class="rowfield"><input type="text" id="prefSyncFolder"
+                    placeholder="The folder of mp3s to mirror..." style="flex:1" readonly>
+                    <button id="syncFolderBrowse" type="button">📁 Browse...</button></div>
+                  <span class="hint">A folder of songs Attune keeps matched onto one Plex
+                    playlist - a car-USB roster, say.</span></div></div>
+              <div class="prefrow sub"><span class="k">Mirror name</span>
+                <div class="v"><input type="text" id="prefSyncTitle"
+                  placeholder="DrivingTunesUSB ({date})">
+                  <span class="hint">The Plex playlist this mirror writes to and keeps
+                    updated.</span></div></div>
+              <div class="prefrow sub"><span class="k">Mirror order</span>
+                <div class="v"><select id="prefSyncOrder">
+                    <option value="folder">Folder order</option>
+                    <option value="shuffle">Shuffle</option>
+                    <option value="artist">Artist</option>
+                  </select></div></div>
+            </div>
+          </div>
+          <div class="tabpage" data-page="mixing" hidden>
+            <div class="prefrow"><span class="k">Engine</span>
+              <div class="v"><select id="prefEngine">
+                  <option value="auto">Auto — probe MusicIP, fall back to V2</option>
+                  <option value="v2">Attune V2 (built-in)</option>
+                  <option value="musicip">MusicIP Mixer (needs its API running)</option>
+                  <option value="learned">Learned metric (ONNX head, not yet the default)</option>
+                </select><span class="hint">Needs restart.</span></div></div>
+            <div class="prefrow"><span class="k">Default recipe</span>
+              <div class="v"><select id="prefDefaultRecipe">
+                  <option value="">- engine defaults -</option>
+                </select>
+                <span class="hint">Applied automatically by Genius, and preselected when
+                  you start a new mix.</span></div></div>
+          </div>
+          <div class="tabpage" data-page="playback" hidden>
+            <div class="prefrow"><span class="k">Crossfade</span>
+              <div class="v"><label class="chk"><input type="range" id="prefXfade" min="0" max="10"
+                step="0.5" style="flex:1"> <em id="prefXfadeV">0s</em></label>
+                <span class="hint">Seconds of overlap between tracks. 0 = start the next track
+                  the instant the current one ends (preloaded).</span></div></div>
+            <div class="prefrow"><span class="k">ReplayGain</span>
+              <div class="v"><label class="chk"><input type="checkbox" id="prefRg">
+                Level track volume from ReplayGain tags</label>
+                <span class="hint">Uses gain values already written in your files' tags;
+                  tracks without tags play unchanged.</span></div></div>
+            <div class="prefrow"><span class="k">Play counting</span>
+              <div class="v"><span class="hint">A play is counted at 50% listened (or 4 minutes,
+                whichever comes first) — the scrobble standard.</span></div></div>
+          </div>
+          <div class="tabpage" data-page="analysis" hidden>
+            <div class="prefrow"><span class="k">ffmpeg</span>
+              <div class="v"><span class="hint" id="prefFfmpegStatus">—</span>
+                <span class="hint">Needed to read some audio formats, like the ones
+                  iTunes creates. Attune bundles its own copy; this shows whether one was
+                  found.</span></div></div>
+            <div class="prefrow"><span class="k">Analyze engine</span>
+              <div class="v">
+                <details class="mlfold">
+                  <summary>Advanced: use a separate Python for analysis</summary>
+                  <input type="text" id="prefMlPython"
+                    placeholder="...\.venv-ml\Scripts\python.exe" style="margin-top:6px">
+                  <span class="hint">Optional. Points at a heavy analyze venv (librosa +
+                    torch) for the reference encoder. Empty = Rescan analyzes audio
+                    torch-free with the built-in ONNX encoder, under Attune's own Python —
+                    no second environment.</span>
+                </details></div></div>
+          </div>
+          <div class="tabpage" data-page="appearance" hidden>
+            <div class="prefrow"><span class="k">Theme</span>
+              <div class="v"><div class="themegrid" id="themeGrid"></div></div></div>
+            <div class="prefrow"><span class="k">Columns</span>
+              <div class="v"><span class="hint">Right-click any table header to choose visible
+                columns.</span></div></div>
+          </div>
+          <div class="tabpage" data-page="advanced" hidden>
+            <div class="prefrow"><span class="k">Database</span>
+              <div class="v"><input type="text" id="prefDb" placeholder="path\to\mixer.db">
+                <span class="hint">The analyzed library. Needs restart.</span></div></div>
+            <div class="prefrow"><span class="k">MusicIP URL</span>
+              <div class="v"><input type="text" id="prefMipUrl"
+                placeholder="http://localhost:10002"><span class="hint">Needs restart.</span></div></div>
+            <div class="prefrow"><span class="k">Settings file</span>
+              <div class="v"><span class="hint" id="prefsPathAdvanced"></span></div></div>
+            <div class="prefrow"><span class="k">Logs</span>
+              <div class="v"><div class="btnrow">
+                  <button id="prefLogsOpen" type="button">Show log files</button></div>
+                <span class="hint" id="prefLogsInfo"></span></div></div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="modalFoot">
@@ -812,30 +944,10 @@
   </div>
 </div>
 
-<!-- Path-style export flavor: remembers the operator's last choice across sessions.
-     Uses this page's own store.get/set('attune.'+key) key convention (see studio.js)
-     so a later native implementation there would pick up the same stored value with no
-     migration. Lives here, not in studio.js, because this build's file surface does not
-     include studio.js (P5A / PROPOSAL_EXPORT_ROOTS_2026-07-28.md item 6). Runs before
-     studio.js's own #flavor change listener binds (studio.js is loaded next, and that
-     listener is wired later still, from initCore() in boot.js), so the restored value
-     is what that listener and the startup dispatch both see. -->
-<script>
-(function () {
-  var KEY = 'attune.flavor';
-  var VALID = ['unc', 'local', 'plex'];
-  var sel = document.getElementById('flavor');
-  if (!sel) return;
-  try {
-    var raw = localStorage.getItem(KEY);
-    var saved = raw ? JSON.parse(raw) : null;
-    if (VALID.indexOf(saved) !== -1) sel.value = saved;
-  } catch (e) {}
-  sel.addEventListener('change', function () {
-    try { localStorage.setItem(KEY, JSON.stringify(sel.value)); } catch (e) {}
-  });
-})();
-</script>
+<!-- Path-style export flavor: the SETTING (path_flavor) is now the one memory (contract
+     F1) -- the localStorage restore that used to live here is gone. #flavor is filled
+     from path_flavor and posts it back on change from studio.js (see initCore() and
+     the #flavor change listener there). -->
 <script src="/studio.js"></script>
 <script src="/static/player.js"></script>
 <script src="/static/prefs.js"></script>

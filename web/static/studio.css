@@ -636,6 +636,11 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
   display:flex; flex-direction:column; overflow:hidden; }
 .modalHead { display:flex; align-items:center; gap:10px; padding:12px 16px;
   border-bottom:1px solid var(--line); background:var(--panel2); font-weight:600; }
+/* The settings file path sits in this header. A long one used to wrap and push the
+   header to two lines, so the title moved down the page depending on where Windows put
+   the profile folder. One line, clipped: Advanced shows the whole path, and the tooltip
+   carries it here. */
+#prefsPath { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .modalHead .x { margin-left:auto; background:none; border:0; color:var(--muted);
   font-size:16px; cursor:pointer; padding:2px 6px; border-radius:6px; }
 .modalHead .x:hover { color:var(--fg); background:var(--hover); }
@@ -655,10 +660,22 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 .tabs button.on { color:var(--fg); border-bottom-color:var(--accent); }
 .tabpage[hidden] { display:none; }
 .tabpage { display:flex; flex-direction:column; gap:10px; }
+/* ---------- Preferences: eight sections, left nav + right fields (CONTRACT_CONNECT_
+   2026-09-20 §I). This lives INSIDE .modalBody as its one child, so no other modal
+   (tag editor, first-run wizard, folder picker) is affected by the wider layout. */
+#prefsWrap .modal { width:840px; }
+.prefsSplit { display:flex; align-items:flex-start; gap:0; min-width:0; }
+.prefNav { display:flex; flex-direction:column; gap:2px; width:172px; flex:0 0 auto;
+  border-right:1px solid var(--line); padding-right:10px; margin-right:16px; }
+.prefNav button { background:none; border:0; border-radius:7px; text-align:left;
+  padding:8px 10px; cursor:pointer; color:var(--muted); font-weight:500; font-size:12.5px; }
+.prefNav button:hover { background:var(--hover); color:var(--fg); }
+.prefNav button.on { background:var(--panel2); color:var(--fg); }
+.prefPages { flex:1; min-width:0; display:flex; flex-direction:column; gap:10px; }
 .prefrow { display:flex; align-items:flex-start; gap:10px; }
 .prefrow .k { color:var(--muted); width:130px; flex:0 0 auto; font-size:12px; padding-top:7px; }
 .prefrow .v { flex:1; display:flex; flex-direction:column; gap:5px; min-width:0; }
-.prefrow input[type=text], .prefrow select, .prefrow textarea {
+.prefrow input[type=text], .prefrow input[type=password], .prefrow select, .prefrow textarea {
   background:var(--panel2); border:1px solid var(--line); border-radius:7px; padding:6px 8px;
   width:100%;
 }
@@ -666,6 +683,22 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 /* a field a .env file is currently overriding: still editable, but what you type here is
    not what the app is using (see paintEnvOverrides in prefs.js) */
 .prefrow input.shadowed { border-color:var(--warn); }
+/* a dependant field, indented under the parent setting that gates it (path style ->
+   the three roots; the Plex connection -> the folder mirror fields) */
+.prefrow.sub { margin-left:22px; padding-left:12px; border-left:2px solid var(--line); }
+.prefrow input:disabled, .prefrow select:disabled, .prefrow button:disabled { opacity:.45; cursor:not-allowed; }
+/* said beside the greyed-out field, only while it IS greyed out (toggled in prefs.js) */
+.hint.flavorReason { font-style:italic; }
+#plexSyncBlock.off .prefrow.sub { opacity:.6; }
+/* two elements sharing one row, e.g. a text field with its own Browse/Show/Clear button */
+.rowfield { display:flex; gap:6px; }
+.rowfield input { flex:1; min-width:0; }
+.rowfield button { background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; padding:5px 10px; white-space:nowrap; }
+/* Analysis section's ML python field: folded shut by default (CONTRACT §I), since it is
+   the one setting here almost nobody needs to touch. */
+.mlfold summary { cursor:pointer; color:var(--muted); font-size:12px; }
+.mlfold summary:hover { color:var(--fg); }
 .folderlist { display:flex; flex-direction:column; gap:4px; }
 .folderlist .fr { display:flex; gap:6px; }
 .folderlist .fr input { flex:1; }
