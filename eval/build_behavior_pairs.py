@@ -24,8 +24,8 @@ Exclusions (both are machine-generated evaluation artifacts, never taste):
     sealed ear-test sets, written by eval/abtest.py.
   * non-local entries (http://, radio streams).
 
-Reuse, not reinvent: path reconciliation between the DB's D:\Music\... paths and the
-playlists' \\NAS\..., /mnt/Diskstation/..., M:\... mirrors is
+Reuse, not reinvent: path reconciliation between the DB's paths and the playlists'
+own spelling of the same files (mapped drive, network share, Linux mount) is
 src/musicip_engine.relkey -- the same mirror-invariant MusicIPAdapter and
 eval/bakeoff_musicip.py already use. No new path logic here.
 
@@ -33,7 +33,7 @@ Runs under the LEAN venv (sqlite3 + numpy only, no torch).
 
 usage:
   python eval/build_behavior_pairs.py --db ..\mixer-ng\data\mixer.db \
-      --playlists "D:\Playlists" --out eval/behavior_pairs.json
+      --playlists "<your playlist folder>" --out eval/behavior_pairs.json
 """
 from __future__ import annotations
 

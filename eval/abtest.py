@@ -40,7 +40,9 @@ if _SRC not in sys.path:
 
 import config as cfgmod   # noqa: E402  (path shimmed above)
 
-FALLBACK_OUT = r"D:\Playlists\ABTest"
+# Default export folder when neither --out nor settings.json names one. Repo-local
+# on purpose: an eval script should never write into somebody's real library.
+FALLBACK_OUT = os.path.join(_HERE, "abtest_out")
 RESULTS_PATH = os.path.join(_HERE, "abtest_results.jsonl")
 
 

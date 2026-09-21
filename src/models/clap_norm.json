@@ -30,6 +30,13 @@
     "frames": 1001,
     "layout": "(frames, mels) float32 per clip"
   },
+  "_distribution": {
+    "note": "clap_music.onnx is not in the git repository: it is 263 MiB, it needed the git-lfs add-on to clone, and it drew on a shared monthly bandwidth allowance. It is published as a release asset and fetched with `python tools/fetch_model.py`, which verifies the sha256 below before putting it in place. The frozen Windows app is unaffected: its installer carries the model inside.",
+    "sha256": "02679faef2868832d051e4fa9c97f3be197887987b8b1cdd21b3a1b8a51a70ff",
+    "bytes": 275930879,
+    "hash_recomputed": "2026-09-20, from the file on disk; it matches the git-lfs pointer oid recorded at HEAD, which is the same sha256 by construction",
+    "url": "https://github.com/Maestro8484/attune/releases/download/model-clap-music-v1/clap_music.onnx"
+  },
   "_provenance": {
     "created": "2026-07-19",
     "exported_from": "transformers 5.13.0 ClapModel(laion/larger_clap_music) audio tower, torch 2.6.0, torch.onnx.export dynamo=False, CPU float32",

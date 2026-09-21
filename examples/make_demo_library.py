@@ -7,7 +7,9 @@ families; a good engine should mix within a family.
   python src/scan.py analyze --workers 4
   python src/mixer.py --seed examples/sample_library/warm_pad_02.wav --size 5
 
-No external deps beyond numpy (already required). Writes 16-bit PCM WAV.
+No dependencies at all: standard library only, so it runs on a bare Python before you have
+installed anything. Writes 16-bit PCM WAV. (The scan and mix steps above do need the project's
+requirements installed.) Takes about two seconds and writes 12 files.
 """
 import os, wave, struct, math
 

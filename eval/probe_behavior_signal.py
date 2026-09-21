@@ -35,7 +35,7 @@ Runs under the ML venv (needs torch for the trained-head controls + onnxruntime 
 
 usage:
   python eval/probe_behavior_signal.py --db ..\mixer-ng\data\mixer.db \
-      --pairs eval/behavior_pairs.json --playlists "D:\Playlists"
+      --pairs eval/behavior_pairs.json --playlists "<your playlist folder>"
 """
 from __future__ import annotations
 
