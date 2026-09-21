@@ -101,20 +101,47 @@ def test_hybrid_key_compat_none_safe(k1, k2):
 # coherence.key_compat  (mixer-ng/src/coherence.py) -- best-effort
 # ---------------------------------------------------------------------------
 
+def _coherence_candidates():
+    """Every place mixer-ng/src/coherence.py is plausibly found, best first.
+
+    ATTUNE_COHERENCE_PATH wins outright, so a checkout in an unusual place can
+    say where it is instead of being guessed at.
+
+    Otherwise walk up from this file. The main checkout keeps mixer-ng as a
+    sibling of attune/, but a git worktree sits one level deeper, so the fixed
+    "../.." this used to be resolved to a directory that does not exist and
+    switched 39 checks off without failing anything. Walking finds both.
+    """
+    override = os.environ.get("ATTUNE_COHERENCE_PATH")
+    if override:
+        yield os.path.normpath(override)
+        return
+    here = os.path.dirname(os.path.abspath(__file__))
+    for _ in range(6):
+        parent = os.path.dirname(here)
+        if parent == here:
+            return
+        here = parent
+        yield os.path.normpath(os.path.join(here, "mixer-ng", "src", "coherence.py"))
+
+
 def _load_coherence_module():
     """Load mixer-ng/src/coherence.py by file path (not by adding its dir to
     sys.path) so its `import db` / `from features import ...` statements
     resolve against attune/src's byte-identical copies already on sys.path,
     instead of risking a second, differently-ordered copy of those modules."""
-    coherence_path = os.path.normpath(os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "mixer-ng", "src", "coherence.py"))
-    if not os.path.exists(coherence_path):
-        raise RuntimeError(f"coherence.py not found at {coherence_path}")
-    spec = importlib.util.spec_from_file_location("coherence_under_test", coherence_path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
+    tried = []
+    for coherence_path in _coherence_candidates():
+        tried.append(coherence_path)
+        if not os.path.exists(coherence_path):
+            continue
+        spec = importlib.util.spec_from_file_location("coherence_under_test", coherence_path)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+    raise RuntimeError(
+        "coherence.py not found. Set ATTUNE_COHERENCE_PATH to it. Looked in: "
+        + "; ".join(tried))
 
 
 @pytest.fixture(scope="module")

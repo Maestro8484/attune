@@ -220,6 +220,25 @@ def check_inputs(allow_no_ffmpeg):
     is called AFTER build_gui() has already wiped dist\\Attune -- so on a default build
     the refusal arrived too late and destroyed the very install it exists to protect.
     A guard that fires after the damage is worse than no guard: it reads as safety."""
+    # The model first, because there is no --no-model and there should not be: a build
+    # without the encoder cannot analyze a single file, so it is not a reduced build,
+    # it is a broken one. It was left out of this list until 2026-09-21, and the only
+    # thing that noticed was _pyinstaller's own per-file check inside build_analyzer()
+    # -- which runs AFTER build_gui() has wiped dist/Attune. So the case this function
+    # was written for, a fresh worktree or a clone, where the 276 MB model is absent by
+    # design, destroyed the existing install and only then said why.
+    no_model = [src for src, _dest in ANALYZER_DATA
+                if src.startswith("src/models/")
+                and not os.path.exists(os.path.join(ATT, src))]
+    if no_model:
+        raise SystemExit(
+            f"[build] REFUSING to build: {', '.join(no_model)} is missing. NOTHING has "
+            f"been deleted or changed.\n"
+            f"[build]   looked in: {os.path.join(ATT, no_model[0])}\n"
+            f"[build] The 276 MB listening model is not kept in the repository, so a "
+            f"fresh clone or a git worktree never has it. Run tools/fetch_model.py, or "
+            f"copy src/models/ in from the main checkout.")
+
     missing = [src for src, _dest in FFBIN
                if not os.path.exists(os.path.join(ATT, src))]
     if not missing:

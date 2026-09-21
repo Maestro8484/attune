@@ -500,8 +500,12 @@ function renderRows(rows, opts = {}) {
     const pool = (S.stats && S.stats.songs) || 0;
     $('empty').textContent =
       !dbT
-        ? 'No music yet. Open Preferences (the ⚙ at the top right), choose Library, add '
-          + 'the folder your music is in, then press Rescan library.'
+        // Names the ☰ Preferences button, NOT the gear. The gear is ⚙ Options, which
+        // opens the mix sliders, and sending a stranger there was the first thing they
+        // were told to do (2026-09-21). The button now carries the word "Preferences"
+        // so this sentence has something on screen to point at.
+        ? 'No music yet. Open Preferences (the ☰ Preferences button at the top right), '
+          + 'choose Library, add the folder your music is in, then press Rescan library.'
         // Files are in the library but none of them reached the mixable pool. Different
         // problem, different fix, and it has its own view. (Cold Fable audit, 2026-09-20.)
         : !pool

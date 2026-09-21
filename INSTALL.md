@@ -73,9 +73,10 @@ pip install -e .[app]
 `source .venv/bin/activate` on macOS and Linux.
 
 **Install the `[app]` extra, not the bare package.** The bare `pip install -e .` gives you
-the librosa engine and no tag reader, so tags fall back to `ffprobe` if you happen to have
-ffmpeg on your PATH, and are simply missing if you do not. `[app]` adds the tag reader, the
-web UI and the ONNX runtime the good engine needs. The other extras:
+the librosa engine and **no ONNX runtime**, so the 263 MiB model cannot be loaded at all and
+the good engine never starts. `[app]` adds the web UI and that runtime. (The tag reader,
+mutagen, is a core dependency and comes with the bare install; this paragraph used to say
+otherwise and that was stale.) The other extras:
 
 ```
 pip install -e .[bridge]   # the LAN web UI over a live MusicIP Mixer

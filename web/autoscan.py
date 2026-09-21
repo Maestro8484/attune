@@ -244,6 +244,22 @@ def _under_any(path, roots):
     return False
 
 
+def _excluded(settings):
+    """The folder prefixes ruling B2 says never to walk, read the way the manual Rescan
+    path already reads them at scanjob.py:370.
+
+    Until 2026-09-21 neither automatic scan read this setting at all. Both called
+    `job.start(folders, ml)` with two arguments, and `start`'s third parameter defaults
+    to an empty tuple, so the default silently meant "exclude nothing" - no error, no
+    log line, just the excluded folders quietly coming back into the library. Since the
+    launch scan and the watcher are the two that actually run once the app is set up,
+    the setting was obeyed only by the button nobody presses twice. Ruling B2 was
+    written after 199 dead rows arrived from a sync tool's version-history folder.
+    """
+    return [e for e in (settings.get("exclude_folders") or [])
+            if isinstance(e, str) and e.strip()]
+
+
 def _resolve_ml(state, settings):
     """Same rule scanjob.scan_start applies to a manual scan: an empty ml_venv_python
     is fine (routes to the standalone ONNX path); a NON-empty one that doesn't exist on
@@ -316,7 +332,7 @@ def _supervisor(state, job, load_settings, handler_factory):
             continue   # last_error already set; drop this batch rather than crash-loop it
 
         try:
-            job.start(dirs, ml)
+            job.start(dirs, ml, _excluded(settings))
         except RuntimeError:
             # a scan (manual or the launch scan) is already running — put the dirs back
             # and let a later tick retry once it finishes.
@@ -341,7 +357,7 @@ def _launch_scan(job, load_settings, state):
     if not ok:
         return
     try:
-        job.start(folders, ml)
+        job.start(folders, ml, _excluded(settings))
     except RuntimeError:
         pass   # a user-started scan already won the race; nothing to do
 

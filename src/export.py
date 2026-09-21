@@ -54,13 +54,17 @@ def find_env(explicit=None):
     override the user's own Preferences, and precedence would depend on install layout --
     the original bug wearing a different hat.
 
-    The walk only accepts a .env whose directory is Attune-shaped (an `attune`
-    checkout beside it, or a pyproject.toml/.git marking a repo root). Without that
-    check the walk reaches the drive root and adopts ANY machine-level .env -- a real
-    drive-root .env belonging to an unrelated tool bit here (HANDOFF_RESUME S15/S17). So a
-    process whose cwd is outside an Attune workspace (a scheduled task starting in
-    System32, an installed copy under Program Files) finds no .env: correct, and now
-    actually true. ATTUNE_ENV stays the explicit escape hatch."""
+    The walk only accepts a .env whose directory looks like a development tree:
+    an `attune` checkout beside it, or a pyproject.toml or .git marking a repo root.
+    **That is a weaker test than "an Attune workspace", and this sentence used to claim
+    the stronger one.** Any Python project and any git repository passes it, so a .env
+    sitting at the root of an unrelated repo above the working directory would be
+    adopted. It is still enough for what it was written for: the walk no longer reaches
+    a bare drive root or a home directory, and a real drive-root .env belonging to an
+    unrelated tool bit here once (HANDOFF_RESUME S15/S17). A process whose cwd is
+    outside any such tree (a scheduled task starting in System32, an installed copy
+    under Program Files) finds no .env, which is the case that matters for a shipped
+    build. ATTUNE_ENV stays the explicit escape hatch, and is what a test should pin."""
     for cand in (explicit, os.environ.get("ATTUNE_ENV")):
         if cand and os.path.exists(cand):
             return cand

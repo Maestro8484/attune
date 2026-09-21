@@ -48,7 +48,12 @@
 
   <button id="btnRail" class="iconbtn" title="Show / hide the right rail (Up Next · Track Info)">▥</button>
   <button id="btnMini" class="iconbtn" title="Mini player (Ctrl+Shift+M)">▭</button>
-  <button id="btnPrefs" class="iconbtn" title="Preferences (Ctrl+,)">☰</button>
+  <!-- The word is not decoration. Until 2026-09-21 this button was the bare ☰ glyph, the
+       word "Preferences" appeared nowhere on screen, and the one instruction a stranger
+       with an empty library got was to press "the gear at the top right" - which is
+       Options, the mix sliders, three buttons away. A control nothing names cannot be
+       named in an instruction. -->
+  <button id="btnPrefs" class="iconbtn" title="Preferences (Ctrl+,)">☰ Preferences</button>
 </header>
 
 <!-- mini player strip (hidden unless body.mini) -->
@@ -833,8 +838,8 @@
         a while; you can leave this open or close it and watch the bar at the top. Nothing
         is lost if you stop — the next scan picks up where this one left off.</p>
       <p class="hint" style="font-size:12px;line-height:1.5">
-        To add more folders later, open <b>Preferences</b> (the ⚙ button at the top right)
-        and choose <b>Library</b>.</p>
+        To add more folders later, open <b>☰ Preferences</b> at the top right and
+        choose <b>Library</b>.</p>
     </div>
     <div class="modalFoot">
       <span id="wizMsg" class="msg"></span>

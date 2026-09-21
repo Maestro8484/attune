@@ -29,10 +29,20 @@ in over the next minute", never to a blocked page render. Columns read blank unt
 row lands, which is why row() emits None rather than 0 for an unread track -- 0 kbps is
 a claim, blank is the truth.
 
+NOT LOOPBACK-GUARDED, and this docstring used to say they were. Until 2026-09-21 the
+three lines below claimed both POST endpoints refused a caller from another machine.
+They never did: `grep -c remote_addr web/audioinfo.py` returns 0. The `@locked`
+decorator on them is the library-swap lock, which serialises against a pool reload and
+says nothing at all about who is calling. A reader auditing this file found a written
+guarantee and no code behind it, which is worse than a missing guard, so the claim is
+withdrawn here rather than quietly left. Adding the guard itself is `ISSUES.md` row 4,
+which covers all seventeen routes that forgot it and wants one decorator rather than an
+eighteenth hand-copied line.
+
 Endpoints:
-  POST /api/lib/audioinfo          loopback-guarded, starts a fill pass
+  POST /api/lib/audioinfo          starts a fill pass; library-lock only, NO caller check
   GET  /api/lib/audioinfo/status   {running, read, total, failed, started, finished}
-  POST /api/lib/audioinfo/cancel   loopback-guarded
+  POST /api/lib/audioinfo/cancel   library-lock only, NO caller check
 """
 from __future__ import annotations
 
