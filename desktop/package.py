@@ -61,7 +61,7 @@ WHAT IT STILL NEEDS ON THIS PC (not bundled -- too large / third-party)
     Mixing and browsing work without them; PLAYBACK and album ART need the files present.
   - Optional: MusicIP Mixer running with its API on port 10002. If it's up, Attune uses it
     as the mix engine; if not, Attune uses its own built-in V2 engine automatically.
-  - Optional: a Plex server + the .env config, for "Create Plex playlist".
+  - Optional: a Plex server. Its address and key are fields in Preferences, under Plex.
 
 PLAYLIST FOLDER
   Put a folder named  Playlists  next to Attune.exe, OR set the environment variable

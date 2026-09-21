@@ -90,7 +90,7 @@ At the time of writing that is 48 Python packages, 15 native libraries and progr
 | certifi | MPL-2.0 | The list of certificate authorities Python trusts. |
 | PyInstaller | GPL-2.0-or-later with bootloader exception | The tool the app is frozen with. See section 3. |
 
-The Microsoft redistributable runtimes in the bundle (the Visual C++ runtime, the OpenMP runtime, the WebView2 loader, and the .NET reference assemblies pythonnet carries) ship no licence file with the files themselves. They are named in THIRD_PARTY_NOTICES.md with a link to Microsoft's page for each and a sentence saying why no text is shipped. They are Microsoft's copyright under Microsoft's terms; pythonnet's MIT licence covers pythonnet's own code, not the assemblies it redistributes.
+The Microsoft redistributable runtimes in the bundle (the Visual C++ runtime, the OpenMP runtime, the WebView2 loader, and the .NET reference assemblies pythonnet carries) ship no licence file with the files themselves. The Visual C++ runtime, the OpenMP runtime and the WebView2 loader each have their own entry in THIRD_PARTY_NOTICES.md, with a link to Microsoft's page and a sentence saying why no text is shipped. The .NET reference assemblies do not have an entry of their own, because they arrive inside the pythonnet wheel rather than as a package the notices generator can see; they are accounted for in pythonnet's entry, which says plainly that the `System.*.dll` and `netstandard.dll` files beside `Python.Runtime.dll` are Microsoft's and not pythonnet's to license. They are Microsoft's copyright under Microsoft's terms; pythonnet's MIT licence covers pythonnet's own code, not the assemblies it redistributes.
 
 Regenerate the notices after any change to what the build bundles:
 
@@ -123,7 +123,7 @@ An earlier version of this section asserted that Attune did not practise any Mus
 
       This should return nothing. `tools/capture_groundtruth.py` is a script, not a capture, and the trailing slash above is what keeps it out of the results.
 
-- [ ] **Working tree is clean of personal strings:** `python tools/leak_check.py`. It must report clean.
+- [ ] **Working tree is clean of personal strings:** `python tools/leak_check.py --patterns <path to .leakpatterns> --require-patterns`. It must report clean. `--require-patterns` matters: without the machine-specific literals the scan runs the generic rules alone, still says OK, and has found nothing because it was looking for nothing. The flag turns that into a refusal. CI runs without it on purpose, since the literals file never reaches a CI checkout.
 - [ ] **History is clean too**, not just the current files. A string removed from the latest version still sits in old commits: `python tools/leak_check.py --all`, which runs the tree, the full history and the commit authors in one pass. The narrow manual equivalent is `git log -p -S '<email-or-token>' --all`.
 - [ ] If history is not clean, it must be rewritten before publishing. This bit the project once already: an email address that was clean at the tip and present in every old commit.
 - [ ] **Notices match the build that is actually shipping:** re-run the generator in section 7 against the release build, not a stale one, and commit the result.

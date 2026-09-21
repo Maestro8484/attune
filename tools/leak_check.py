@@ -669,6 +669,11 @@ def main(argv: list[str]) -> int:
                     help=f"read the machine-specific literals from FILE instead of "
                          f"<path>/{EXTRA_PATTERNS_FILE} (also: ATTUNE_LEAKPATTERNS). Needed in a "
                          f"worktree or CI checkout, where the ignored file is absent.")
+    ap.add_argument("--require-patterns", action="store_true",
+                    help="fail if no literals were loaded, instead of running the generic "
+                         "rules alone. Use this in the RELEASE procedure, where a scan that "
+                         "cannot see this machine's own strings is not a pass. Do NOT use it "
+                         "in CI, which runs without the literals on purpose.")
     args = ap.parse_args(argv[1:])
 
     SHOW_VALUES = args.show_values
@@ -703,6 +708,22 @@ def main(argv: list[str]) -> int:
                   f"than it looks"))
     if not SHOW_VALUES:
         print("leak_check: values withheld from this report (use --show-values locally)")
+
+    # --require-patterns turns "no literals" from a warning into a refusal, and it does so
+    # BEFORE scanning, so the answer is never a reassuring "OK" that was never in a position
+    # to find anything. The default stays a warning on purpose: .github/workflows/ci.yml runs
+    # this on every push without the literals file, which is gitignored and never reaches a
+    # CI checkout, and making that fail would make CI fail forever.
+    if args.require_patterns and not extras:
+        print("-" * 70)
+        print(f"leak_check: REFUSING - --require-patterns was given and no literals were "
+              f"loaded ({extras_from}).")
+        print(f"            The generic rules alone cannot see this machine's own paths, "
+              f"names or addresses,")
+        print(f"            so a pass here would mean nothing. Point --patterns at the "
+              f"{EXTRA_PATTERNS_FILE} file")
+        print(f"            in the main checkout, or set ATTUNE_LEAKPATTERNS.")
+        return 2
 
     if do_tree:
         publishable, n_new = publishable_files(target)

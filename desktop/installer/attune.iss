@@ -161,6 +161,9 @@ Name: "startupicon"; Description: "Start Attune when Windows starts"; Flags: unc
 ; itself, which is why the /VERYSILENT proof does not exercise it.
 Type: filesandordirs; Name: "{app}\_internal"
 Type: filesandordirs; Name: "{app}\analyzer"
+; Same reasoning for the licence texts: a component dropped between versions must not
+; leave its licence behind claiming to describe what is installed.
+Type: filesandordirs; Name: "{app}\licenses"
 
 [Files]
 ; The ENTIRE one-dir build tree: Attune.exe, _internal\ (its PyInstaller runtime),
@@ -180,13 +183,22 @@ Source: "{#SourceDir}\*"; DestDir: "{app}"; \
     Excludes: "*.db,*.db-wal,*.db-shm,*.db-journal,*.sqlite,*.sqlite-wal,*.sqlite-shm,*.sqlite-journal,*.sqlite3,*.sqlite3-wal,*.sqlite3-shm,*.sqlite3-journal"; \
     Flags: ignoreversion recursesubdirs createallsubdirs
 
-; --- LEGAL STREAM PLACEHOLDER: third-party license texts -------------------------------
-; The licenses folder that satisfies the GPL obligations of the bundled components
-; (rulings item 6) is owned by the LEGAL stream. When it exists in the repo, add its
-; line here, e.g.:
-;   Source: "{#SourcePath}..\..\licenses\*"; DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs
-; Nothing is installed for it today; this comment is the agreed hand-over point.
-; --- END LEGAL STREAM PLACEHOLDER ------------------------------------------------------
+; --- Third-party licence texts ---------------------------------------------------------
+; The installed application is conveyed under GPL-3.0-or-later (NOTICE.md section 3),
+; because mutagen is linked into it and ffmpeg ships beside it. The GPL requires the
+; licence texts to travel WITH the binary, not only with the source, so these four go in
+; next to Attune.exe. NOTICE.md's own text says the installer does this; these lines are
+; what makes that sentence true, and section 10 of NOTICE.md is the check.
+;
+; {#SourcePath} is Inno's own constant for the folder holding THIS .iss file
+; (desktop\installer\), so ..\..\ is the repository root whatever directory ISCC was
+; invoked from. That is deliberately NOT {#SourceDir}, which points at the BUILD output
+; and never contains these files.
+Source: "{#SourcePath}..\..\licenses\*";              DestDir: "{app}\licenses"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}..\..\THIRD_PARTY_NOTICES.md";  DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\..\NOTICE.md";               DestDir: "{app}"; Flags: ignoreversion
+Source: "{#SourcePath}..\..\LICENSE";                 DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+; --- END third-party licence texts -----------------------------------------------------
 
 [Icons]
 Name: "{group}\Attune"; Filename: "{app}\{#AppExeName}"

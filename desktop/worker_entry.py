@@ -44,10 +44,11 @@ def bundle_dir(fallback_root):
 def user_bin():
     r"""%APPDATA%\Attune\bin if it exists, else None.
 
-    The release build ships no ffmpeg (282 MB for the pair, operator ruling B5), so
-    m4a, aac and wma cannot be decoded out of the box. This folder is the answer a
-    person can act on: drop ffmpeg.exe in, rescan, and those tracks analyze. It is
-    looked at, never created, and its contents are never inspected."""
+    The release build DOES ship ffmpeg.exe inside the analyzer (ffprobe was dropped,
+    ruling B5 of 2026-08-04; ffmpeg stayed, release rulings item 7 of 2026-09-20), so
+    m4a, aac and wma decode out of the box. This folder stays as the override a person
+    can act on: drop a different or newer ffmpeg.exe in and it is used ahead of the
+    bundled one. It is looked at, never created, and its contents are never inspected."""
     base = os.environ.get("APPDATA")
     if not base:
         return None
@@ -83,9 +84,9 @@ def run(tool, rest, fallback_root, bin_fallback, analyzer=None):
     # `ffmpeg` for what libsndfile cannot read (m4a/aac/wma); tags no longer need
     # ffprobe at all since src/scan.py reads them with mutagen.
     #
-    # The release build carries no bin\ folder, so on most machines only the user's
-    # folder and the system are in play — which is the whole point of the 282 MB the
-    # bundle no longer ships.
+    # The analyzer bundle DOES carry bin\ffmpeg.exe (desktop/build.py FFBIN), so this
+    # works on a machine with nothing installed. ffprobe is the one that was dropped,
+    # 141 MB for the single job of reading tags, which src/scan.py now does with mutagen.
     # scanjob.py reads this process's stdout as UTF-8; Python would otherwise encode it
     # in the console codepage (cp1252 here) and mangle every track name with an accent
     # in the progress tail. Say it explicitly rather than relying on the environment.
