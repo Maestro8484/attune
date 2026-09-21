@@ -1,8 +1,21 @@
-"""Build Attune for Windows with PyInstaller — TWO programs, one install.
+r"""Build Attune for Windows with PyInstaller — TWO programs, one install.
 
     python attune/desktop/build.py                 # both bundles
-    python attune/desktop/build.py --gui-only      # skip the (slow) analyzer rebuild
+    python attune/desktop/build.py --gui-only      # rebuild the GUI, KEEP the analyzer
     python attune/desktop/build.py --analyzer-only # rebuild ONLY the analyzer, in place
+    python attune/desktop/build.py --dist D --work W    # build somewhere else entirely
+
+--gui-only rebuilds Attune.exe and keeps whatever analyzer\ is already in the output
+folder. It has to be said explicitly because PyInstaller's COLLECT step deletes
+dist\Attune wholesale before it writes, which used to take the analyzer with it and
+leave an install that could not analyze anything — a silent 700 MB hole, since the GUI
+runs perfectly well without it until you press Rescan. The analyzer is moved to a
+uniquely named sibling folder first and moved back afterwards, restored even if the
+build dies; if the restore itself fails the backup is kept and its path printed.
+
+--dist and --work put the output and the scratch anywhere, so a release or test build
+never has to touch the daily install. Defaults are unchanged (attune\dist,
+attune\build), which is what BUILD_ATTUNE.bat relies on.
 
 Output layout:
 
@@ -11,9 +24,20 @@ Output layout:
       _internal/…                and onnxruntime for the learned engine
       analyzer/
         AttuneAnalyzer.exe       the audio analyzer: librosa + numba + scipy +
-        _internal/…              onnxruntime + the 276 MB CLAP encoder + ffmpeg/ffprobe
+        _internal/…              onnxruntime, the 276 MB CLAP encoder, and ffmpeg.exe
 
-WHY TWO. Analyzing new audio needs ~800 MB of machinery that PLAYING and MIXING
+ffprobe.exe is gone: 141 MB for one job, reading tags, which src/scan.py now does with
+mutagen (operator ruling B5 of 2026-08-04, executed for v0.1.0). ffmpeg.exe STAYS. The
+v0.1.0 proof measured 22 of a random 300 mp3 files (7.33%) from a real library that
+libsndfile alone cannot decode; dropping ffmpeg too would have cost a stranger about one
+mp3 in fourteen. That is the fallback the release rulings sheet recorded for exactly this
+outcome (item 7, 2026-09-20). Saving: 141 MB installed, 42 MB of download.
+
+A build therefore needs desktop\ffbin\ffmpeg.exe. It is gitignored and absent from any
+fresh clone or worktree, so a build without it is REFUSED rather than quietly shipping an
+app that cannot read 7% of a library. Pass --no-ffmpeg to build one deliberately.
+
+WHY TWO. Analyzing new audio needs ~500 MB of machinery that PLAYING and MIXING
 never touch — the vectors a mix is built from are already in mixer.db. Shipping it
 all inside Attune.exe made the program the user launches every day eight times
 bigger than it needs to be, and gave the virus scanner that much more to walk on a
@@ -30,17 +54,31 @@ Needs: pip install pywebview pyinstaller
 NEVER run this while Attune.exe is running — PyInstaller's clean step half-deletes
 the live install and then dies on the locked .pyd.
 """
+import argparse
+import contextlib
+import glob
 import os
 import shutil
 import subprocess
 import sys
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ATT = os.path.dirname(HERE)                       # .../attune
-DIST = os.path.join(ATT, "dist")
-GUI_DIR = os.path.join(DIST, "Attune")
-STAGE = os.path.join(DIST, "_analyzer_stage")
-ANALYZER_DEST = os.path.join(GUI_DIR, "analyzer")
+DEFAULT_DIST = os.path.join(ATT, "dist")
+DEFAULT_WORK = os.path.join(ATT, "build")
+
+
+def gui_dir(dist):
+    return os.path.join(dist, "Attune")
+
+
+def stage_dir(dist):
+    return os.path.join(dist, "_analyzer_stage")
+
+
+def analyzer_dir(dist):
+    return os.path.join(gui_dir(dist), "analyzer")
 
 # ---------------------------------------------------------------- GUI bundle
 # (source path relative to attune/, destination dir inside the bundle)
@@ -123,14 +161,23 @@ ANALYZER_COLLECT_ALL = ["librosa", "numba", "llvmlite", "scipy", "soundfile",
                         "onnxruntime", "pooch", "audioread", "lazy_loader"]
 ANALYZER_EXCLUDE = ["torch", "transformers", "flask", "webview"]
 
-# Bundled ffmpeg/ffprobe (redistributed as separate unmodified programs, not linked —
-# see attune/NOTICE.md). worker_entry.run() prepends this dir to PATH inside the
-# analyzer process, so scan.py's ffprobe tag reads and librosa/audioread's ffmpeg
-# decode fallback resolve to these instead of a system install. Appended only if
-# present, so a machine without them can still produce a build.
+# Bundled ffmpeg (redistributed as a separate unmodified program, not linked — see
+# attune/NOTICE.md). worker_entry.run() prepends this dir to PATH inside the analyzer
+# process, so librosa/audioread's decode fallback resolves to it rather than a system
+# install. Added only if present, so a machine without it can still produce a build.
+#
+# ffprobe.exe was dropped on 2026-09-20: 141 MB for one job, reading tags, which
+# src/scan.py now does with mutagen. Measured on 238 real library files the same day,
+# mutagen was never worse and was right where the two disagreed.
+#
+# ffmpeg.exe STAYS, against the original intent of ruling B5, because the proof said
+# so: on an unbiased random sample of 300 mp3 files from the operator's library, 22
+# (7.33%) could not be decoded by libsndfile alone and needed ffmpeg's more forgiving
+# mp3 decoder. flac was 0 of 59. Dropping both would have quietly cost a stranger
+# roughly one mp3 in fourteen. This is the fallback the release rulings sheet already
+# recorded for exactly this outcome (item 7, 2026-09-20).
 FFBIN = [
     ("desktop/ffbin/ffmpeg.exe",  "attune/bin"),
-    ("desktop/ffbin/ffprobe.exe", "attune/bin"),
 ]
 
 
@@ -159,53 +206,169 @@ def _pyinstaller(name, entry, data, hidden, collect_all, exclude, distpath,
         raise SystemExit(f"[build] {name} FAILED (rc={rc})")
 
 
-def build_gui():
+def build_gui(dist, work):
     _pyinstaller(
         "Attune", os.path.join(HERE, "app_desktop.py"),
         GUI_DATA, GUI_HIDDEN, GUI_COLLECT_ALL + ["webview"], GUI_EXCLUDE,
-        DIST, os.path.join(ATT, "build", "gui"), windowed=True)
+        dist, os.path.join(work, "gui"), windowed=True)
 
 
-def build_analyzer():
+def check_inputs(allow_no_ffmpeg):
+    """Refuse a build whose inputs are missing, BEFORE anything is deleted.
+
+    This runs at the very top of main(). It used to live inside build_analyzer(), which
+    is called AFTER build_gui() has already wiped dist\\Attune -- so on a default build
+    the refusal arrived too late and destroyed the very install it exists to protect.
+    A guard that fires after the damage is worse than no guard: it reads as safety."""
+    missing = [src for src, _dest in FFBIN
+               if not os.path.exists(os.path.join(ATT, src))]
+    if not missing:
+        return
+    if allow_no_ffmpeg:
+        for src in missing:
+            print(f"[build] --no-ffmpeg: building WITHOUT {src}. About 7% of real-world "
+                  f"mp3 files will not analyze in this build. Do not ship it.")
+        return
+    raise SystemExit(
+        f"[build] REFUSING to build: {', '.join(missing)} is missing. NOTHING has been "
+        f"deleted or changed.\n"
+        f"[build]   looked in: {os.path.join(ATT, missing[0])}\n"
+        f"[build] Without it roughly one mp3 in fourteen cannot be decoded (measured 22 "
+        f"of 300, 2026-09-20), and nothing at run time would say so. desktop\\ffbin\\ is "
+        f"gitignored, so a fresh clone or a git worktree never has it: copy ffmpeg.exe "
+        f"in from the main checkout.\n"
+        f"[build] To build without it on purpose, pass --no-ffmpeg.")
+
+
+def build_analyzer(dist, work, allow_no_ffmpeg=False):
     data = list(ANALYZER_DATA)
     for src, dest in FFBIN:
         if os.path.exists(os.path.join(ATT, src)):
             data.append((src, dest))
-        else:
-            print(f"[build] NOTE: {src} not found — analyzer will rely on a system "
-                  f"ffmpeg/ffprobe on PATH")
-    if os.path.isdir(STAGE):
-        shutil.rmtree(STAGE)
+        elif not allow_no_ffmpeg:
+            # check_inputs() already refused at the top of main(); this is the belt to
+            # that braces, for a caller that reaches build_analyzer() another way.
+            raise SystemExit(f"[build] {src} is missing and --no-ffmpeg was not given")
+    stage = stage_dir(dist)
+    if os.path.isdir(stage):
+        shutil.rmtree(stage)
     _pyinstaller(
         "AttuneAnalyzer", os.path.join(HERE, "analyzer_main.py"),
         data, ANALYZER_HIDDEN, ANALYZER_COLLECT_ALL, ANALYZER_EXCLUDE,
-        STAGE, os.path.join(ATT, "build", "analyzer"), windowed=False)
+        stage, os.path.join(work, "analyzer"), windowed=False)
     # Land it INSIDE the GUI install, as a subfolder. Built to a staging dir first
     # because the GUI build wipes dist/Attune wholesale (PyInstaller COLLECT removes
     # its output dir), which would take the analyzer with it if it were built first.
-    built = os.path.join(STAGE, "AttuneAnalyzer")
+    built = os.path.join(stage, "AttuneAnalyzer")
     if not os.path.isdir(built):
         raise SystemExit(f"[build] analyzer output not found: {built}")
-    if os.path.isdir(ANALYZER_DEST):
-        shutil.rmtree(ANALYZER_DEST)
-    shutil.move(built, ANALYZER_DEST)
-    shutil.rmtree(STAGE, ignore_errors=True)
+    dest = analyzer_dir(dist)
+    if os.path.isdir(dest):
+        shutil.rmtree(dest)
+    shutil.move(built, dest)
+    shutil.rmtree(stage, ignore_errors=True)
 
 
-def main():
-    gui_only = "--gui-only" in sys.argv
-    analyzer_only = "--analyzer-only" in sys.argv
-    if not analyzer_only:
-        build_gui()                   # first: it wipes dist/Attune
-    elif not os.path.isdir(GUI_DIR):
-        raise SystemExit(f"[build] --analyzer-only needs an existing GUI build at {GUI_DIR}")
-    if not gui_only:
-        build_analyzer()              # second: lands in dist/Attune/analyzer
-    exe = os.path.join(GUI_DIR, "Attune.exe")
-    ana = os.path.join(ANALYZER_DEST, "AttuneAnalyzer.exe")
+@contextlib.contextmanager
+def preserve_analyzer(dist, enabled):
+    """Carry an existing analyzer\\ folder across a GUI rebuild that would delete it.
+
+    The backup is a uniquely named sibling of dist\\Attune, so it is on the same volume
+    (the move is a rename, not a copy of 700 MB) and outside everything PyInstaller
+    removes. Rules, in order of how badly they would hurt:
+
+      - cannot move it aside  -> refuse to build at all, rather than destroy it.
+      - build fails or is interrupted -> still put it back (finally, and SystemExit
+        counts: _pyinstaller raises exactly that on a non-zero return code).
+      - cannot put it back    -> keep the backup, print where it is, and say what to do.
+
+    Doing nothing at all is the right behavior when there is no analyzer to keep, or
+    when the caller is about to rebuild it anyway."""
+    src = analyzer_dir(dist)
+    if not enabled or not os.path.isdir(src):
+        yield None
+        return
+    keep = os.path.join(dist, f"_analyzer_keep_{os.getpid()}_{int(time.time())}")
+    print(f"[build] --gui-only: holding the existing analyzer at {keep}")
+    try:
+        shutil.move(src, keep)
+    except OSError as e:
+        raise SystemExit(
+            f"[build] REFUSING to build: cannot move the existing analyzer aside.\n"
+            f"[build]   {src}\n[build]   {e}\n"
+            f"[build] Close Attune.exe and AttuneAnalyzer.exe and try again, or build "
+            f"to a different --dist.")
+    try:
+        yield keep
+    finally:
+        try:
+            if os.path.isdir(src):
+                # Nothing in a GUI build writes analyzer\, so this should be
+                # unreachable. If it happens, destroy neither copy and say so.
+                print(f"[build] WARNING: something else created {src} during the build. "
+                      f"Your original analyzer is still at {keep}; compare them and "
+                      f"delete the one you do not want.")
+            else:
+                shutil.move(keep, src)
+                print(f"[build] analyzer restored to {src}")
+        except OSError as e:
+            print(f"[build] WARNING: could not restore the analyzer: {e}")
+            print(f"[build] Your analyzer is SAFE but in the wrong place. Move it back "
+                  f"by hand:\n[build]   from: {keep}\n[build]   to  : {src}")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(
+        description="Build Attune's two Windows programs with PyInstaller.")
+    ap.add_argument("--gui-only", action="store_true",
+                    help="rebuild Attune.exe only, keeping the analyzer folder that is "
+                         "already in the output")
+    ap.add_argument("--analyzer-only", action="store_true",
+                    help="rebuild AttuneAnalyzer.exe only, into an existing GUI build")
+    ap.add_argument("--dist", default=DEFAULT_DIST,
+                    help=f"output folder (default {DEFAULT_DIST}). The built app lands "
+                         f"in <dist>\\Attune.")
+    ap.add_argument("--work", default=DEFAULT_WORK,
+                    help=f"PyInstaller scratch folder (default {DEFAULT_WORK})")
+    ap.add_argument("--no-ffmpeg", action="store_true",
+                    help="build the analyzer without desktop/ffbin/ffmpeg.exe. About 7%% "
+                         "of real mp3 files will not analyze. Never ship the result.")
+    a = ap.parse_args(argv)
+    if a.gui_only and a.analyzer_only:
+        raise SystemExit("[build] --gui-only and --analyzer-only are opposites; pick one")
+
+    dist = os.path.abspath(a.dist)
+    work = os.path.abspath(a.work)
+    gui = gui_dir(dist)
+    print(f"[build] dist: {dist}\n[build] work: {work}")
+
+    # A backup left behind by a build that was killed between move-aside and restore.
+    # Say so before doing anything: otherwise the next --gui-only finds no analyzer,
+    # reports it MISSING, and never mentions the 600 MB sitting next to it.
+    for leftover in sorted(glob.glob(os.path.join(dist, "_analyzer_keep_*"))):
+        print(f"[build] NOTE: {leftover} is left over from an interrupted build. "
+              f"Move it back to {analyzer_dir(dist)} or delete it.")
+
+    if a.analyzer_only and not os.path.isdir(gui):
+        raise SystemExit(f"[build] --analyzer-only needs an existing GUI build at {gui}")
+
+    # Every reason to refuse is checked HERE, before a single file is removed. --gui-only
+    # does not build the analyzer, so it does not need ffmpeg.
+    if not a.gui_only:
+        check_inputs(a.no_ffmpeg)
+
+    if not a.analyzer_only:
+        with preserve_analyzer(dist, a.gui_only):
+            build_gui(dist, work)         # wipes <dist>\Attune
+    if not a.gui_only:
+        # lands in <dist>\Attune\analyzer
+        build_analyzer(dist, work, allow_no_ffmpeg=a.no_ffmpeg)
+
+    exe = os.path.join(gui, "Attune.exe")
+    ana = os.path.join(analyzer_dir(dist), "AttuneAnalyzer.exe")
     print(f"\n[build] GUI      : {exe}  ({'ok' if os.path.exists(exe) else 'MISSING'})")
     print(f"[build] analyzer : {ana}  "
-          f"({'ok' if os.path.exists(ana) else 'skipped' if gui_only else 'MISSING'})")
+          f"({'ok' if os.path.exists(ana) else 'MISSING'})")
 
 
 if __name__ == "__main__":

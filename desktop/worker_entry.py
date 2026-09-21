@@ -41,18 +41,51 @@ def bundle_dir(fallback_root):
     return fallback_root
 
 
-def run(tool, rest, fallback_root, bin_fallback):
+def user_bin():
+    r"""%APPDATA%\Attune\bin if it exists, else None.
+
+    The release build ships no ffmpeg (282 MB for the pair, operator ruling B5), so
+    m4a, aac and wma cannot be decoded out of the box. This folder is the answer a
+    person can act on: drop ffmpeg.exe in, rescan, and those tracks analyze. It is
+    looked at, never created, and its contents are never inspected."""
+    base = os.environ.get("APPDATA")
+    if not base:
+        return None
+    d = os.path.join(base, "Attune", "bin")
+    return d if os.path.isdir(d) else None
+
+
+def is_analyzer_bundle(base):
+    r"""True when `base` is the ANALYZER bundle rather than the lean GUI bundle.
+
+    Until 2026-09-20 this was `isdir(base/bin)`, which was only ever true because the
+    analyzer bundled ffmpeg into `attune\bin`. With ffmpeg gone that test says "GUI" for
+    every analyzer build, and the ImportError message below would tell someone running
+    AttuneAnalyzer.exe to go run AttuneAnalyzer.exe. The test now asks what actually
+    distinguishes the two bundles: embed_onnx.py is in the analyzer's data list and in
+    no other (desktop/build.py ANALYZER_DATA vs GUI_DATA)."""
+    return os.path.exists(os.path.join(base, "src", "embed_onnx.py"))
+
+
+def run(tool, rest, fallback_root, bin_fallback, analyzer=None):
     """Run one analyzer tool in THIS process and exit. Never returns.
 
     tool          "scan" | "embed_onnx" (module under attune/src whose main() we call)
     rest          argv for that tool
     fallback_root the attune/ dir to use when not frozen
     bin_fallback  the ffmpeg/ffprobe dir to use when not frozen
+    analyzer      True/False to state outright which bundle this is; None to work it
+                  out. Keyword with a default because app_desktop.py, owned by another
+                  session, calls this with four arguments and must keep working.
     """
-    # Bundled ffmpeg/ffprobe must beat any system install for this process: scan.py
-    # shells out to `ffprobe` for tags, and librosa/audioread fall back to `ffmpeg`
-    # to decode what libsndfile cannot (m4a/aac/wma). Prepending here — worker only,
-    # the GUI never decodes — is what lets a first-run scan need NO system ffmpeg.
+    # PATH for the decoder, most specific first: the user's own folder, then whatever
+    # this bundle happens to carry, then the system. librosa/audioread shell out to
+    # `ffmpeg` for what libsndfile cannot read (m4a/aac/wma); tags no longer need
+    # ffprobe at all since src/scan.py reads them with mutagen.
+    #
+    # The release build carries no bin\ folder, so on most machines only the user's
+    # folder and the system are in play — which is the whole point of the 282 MB the
+    # bundle no longer ships.
     # scanjob.py reads this process's stdout as UTF-8; Python would otherwise encode it
     # in the console codepage (cp1252 here) and mangle every track name with an accent
     # in the progress tail. Say it explicitly rather than relying on the environment.
@@ -64,8 +97,11 @@ def run(tool, rest, fallback_root, bin_fallback):
 
     base = bundle_dir(fallback_root)
     bin_dir = os.path.join(base, "bin") if getattr(sys, "frozen", False) else bin_fallback
-    if os.path.isdir(bin_dir):
-        os.environ["PATH"] = bin_dir + os.pathsep + os.environ.get("PATH", "")
+    for d in (bin_dir, user_bin()):
+        if d and os.path.isdir(d):
+            cur = os.environ.get("PATH", "")
+            if d.lower() not in [x.lower() for x in cur.split(os.pathsep)]:
+                os.environ["PATH"] = d + os.pathsep + cur
 
     sys.path.insert(0, os.path.join(base, "src"))
     sys.argv = [tool] + list(rest)
@@ -86,10 +122,18 @@ def run(tool, rest, fallback_root, bin_fallback):
         # Two different situations reach here, so say which one it is rather than
         # guessing: the lean GUI bundle deliberately has no analyzer stack, while a
         # missing module inside the ANALYZER bundle means that build is incomplete.
-        here = "the analyzer" if os.path.isdir(os.path.join(base, "bin")) else "this GUI build"
-        hint = ("this build is missing a module the analyzer needs — rebuild it"
-                if here == "the analyzer" else
-                r"analysis lives in analyzer\AttuneAnalyzer.exe — run that instead")
+        if not getattr(sys, "frozen", False):
+            # A source run. attune/src/embed_onnx.py is on disk either way, so the
+            # bundle test below says nothing useful; the real cause is the interpreter.
+            here = "this Python"
+            hint = ("it has no librosa/onnxruntime — run under the ML venv, or set one "
+                    "in Preferences")
+        else:
+            me = is_analyzer_bundle(base) if analyzer is None else bool(analyzer)
+            here = "the analyzer" if me else "this GUI build"
+            hint = ("this build is missing a module the analyzer needs — rebuild it"
+                    if me else
+                    r"analysis lives in analyzer\AttuneAnalyzer.exe — run that instead")
         print(f"[attune-worker] {e}\n[attune-worker] {here}: {hint}", file=sys.stderr)
         sys.exit(2)
     except Exception:
