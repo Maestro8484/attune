@@ -72,7 +72,11 @@ LEAK_REGEXES = [
 # A `noreply` address is the deliberately non-identifying kind: GitHub's per-user alias and the
 # bot addresses in commit trailers. Flagging them buries the one address that matters under
 # dozens that do not. Anything else that matches the email rule is still a hit.
-NOREPLY_RX = re.compile(r"noreply", re.IGNORECASE)
+# A noreply address means the mailbox is literally "noreply", or the DOMAIN is a noreply one
+# such as users.noreply.github.com. A plain substring test would also exempt an ordinary
+# personal mailbox that merely has the word in its local part, which is somebody's real mail.
+NOREPLY_RX = re.compile(r"(^noreply@)|(@[^@\s]*\bnoreply\b[^@\s]*$)|(@[^@\s]*\.noreply\.)",
+                        re.IGNORECASE)
 RULE_IGNORES = {"email": NOREPLY_RX}
 
 # For MASKING, not detection: the detection rule stops at a space so it does not swallow the
@@ -119,6 +123,17 @@ BINARY_EXTENSIONS = {
     ".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".wma", ".ttf", ".otf", ".woff", ".woff2",
 }
 
+_TAG_SENTINEL = "__leakcheck_tag__ "
+
+# Third-party licence texts are full of their authors' addresses, and the licences require
+# them to be reproduced verbatim. Flagging those buries the owner's own address under dozens
+# that must stay. Only the email rule is relaxed, and only for these; everything else, private
+# literals included, still applies, so a personal path hidden in a licence file is still found.
+LICENCE_PATH_RX = re.compile(
+    r"(^|[\\/])(licenses?|licences?|third[_-]?party)([\\/]|$)|"
+    r"(^|[\\/])(LICEN[SC]E|COPYING|COPYRIGHT|NOTICE|AUTHORS|THIRD[_-]?PARTY)"
+    r"[^\\/]*$", re.IGNORECASE)
+
 MAX_BLOB_BYTES = 8 * 1024 * 1024   # history: anything larger is reported as uninspected
 LFS_POINTER_PREFIX = b"version https://git-lfs.github.com/spec/v1"
 
@@ -143,11 +158,24 @@ def safe_path(text: str) -> str:
     if SHOW_VALUES:
         return text
     out = HOME_MASK_RX.sub("<home>", text)
+    out = LEAK_REGEXES[0][1].sub("<email>", out)   # a path can BE an address
     for lit in _LOWER_LITERALS:
-        idx = out.lower().find(lit)
-        while idx >= 0:
-            out = out[:idx] + "<private>" + out[idx + len(lit):]
-            idx = out.lower().find(lit)
+        # one left-to-right pass per literal, never rescanning what was just inserted: a
+        # literal that is a substring of its own placeholder (say, "private") otherwise
+        # replaces itself forever and the tool hangs instead of printing anything.
+        low = out.lower()
+        if lit not in low:
+            continue
+        pieces, i = [], 0
+        while True:
+            j = low.find(lit, i)
+            if j < 0:
+                pieces.append(out[i:])
+                break
+            pieces.append(out[i:j])
+            pieces.append("<private>")
+            i = j + len(lit)
+        out = "".join(pieces)
     return out
 
 
@@ -252,17 +280,21 @@ def looks_like_text(path: Path, chunk_size: int = 4096) -> bool:
 # the one matcher, used by BOTH the tree scan and the history scan
 # ---------------------------------------------------------------------------------------------
 
-def match_text(text: str, extra_literals: list[str]) -> list[tuple[int, str, str]]:
+def match_text(text: str, extra_literals: list[str],
+               path: str = "") -> list[tuple[int, str, str]]:
     """Return (line_number, rule_id, preview) for every hit in a blob of text.
     Line 0 means the whole file, used by the bulk-media rule which has no single line.
     `extra_literals` is the raw list from .leakpatterns; every spelling of each is tried."""
     variants = [(i, literal_variants(lit)) for i, lit in enumerate(extra_literals, start=1)]
+    is_licence = bool(path) and bool(LICENCE_PATH_RX.search(path))
     hits: list[tuple[int, str, str]] = []
     media_names: set[str] = set()
     for lineno, line in enumerate(text.splitlines(), start=1):
         low = line.lower()
         rules = []
         for rule_id, rx in LEAK_REGEXES:
+            if rule_id == "email" and is_licence:
+                continue
             ignore = RULE_IGNORES.get(rule_id)
             if any(ignore is None or not ignore.search(m.group(0)) for m in rx.finditer(line)):
                 rules.append(rule_id)
@@ -315,7 +347,7 @@ def scan_file_contents(path: Path, extra_literals: list[str]) -> tuple[list, boo
     text = decode_bytes(raw)
     if text is None:
         return [], False
-    return match_text(text, extra_literals), True
+    return match_text(text, extra_literals, path=str(path)), True
 
 
 def scan_tree(root: Path, extra_literals: list[str], only: set[Path] | None = None):
@@ -324,7 +356,13 @@ def scan_tree(root: Path, extra_literals: list[str], only: set[Path] | None = No
     uninspected: list[Path] = []
     in_repo = only is not None
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_NAMES]
+        if not in_repo:
+            # outside a repo there is no authority on what would be published, so the noisy
+            # directories are pruned. Inside one, git has already said what is in scope, and
+            # a force-added file under node_modules is published like any other.
+            dirnames[:] = [d for d in dirnames if d not in SKIP_DIR_NAMES]
+        else:
+            dirnames[:] = [d for d in dirnames if d != ".git"]
         dir_parts = {p.lower() for p in Path(dirpath).relative_to(root).parts}
         under_risky_dir = bool(dir_parts & {d.lower() for d in RISKY_DIR_NAMES})
         for filename in filenames:
@@ -345,7 +383,10 @@ def scan_tree(root: Path, extra_literals: list[str], only: set[Path] | None = No
             if matched:
                 name_hits.append((file_path, f"filename matches '{matched}'"))
                 continue
-            for lineno, rule_id, _ in match_text(filename, extra_literals):
+            # the whole relative path, not just the last component: a personal string is just
+            # as personal when it is the name of the folder the file sits in
+            rel_posix = file_path.relative_to(root).as_posix()
+            for lineno, rule_id, _ in match_text(rel_posix, extra_literals):
                 if rule_id != "bulk-media":
                     name_hits.append((file_path, f"the FILENAME itself matches [{rule_id}]"))
             hits, inspected = scan_file_contents(file_path, extra_literals)
@@ -375,12 +416,13 @@ def _reachable_blobs(root: Path) -> dict[str, set[str]] | None:
     return found
 
 
-def _batch_sizes(root: Path, shas: list[str]) -> dict[str, int] | None:
-    """{sha: size} for the blobs among these objects, without reading any content. Asking
-    first is what keeps a huge blob out of memory and lets a 134-byte LFS pointer be read even
-    when its filename says .onnx."""
+def _batch_sizes(root: Path, shas: list[str]) -> tuple[dict[str, int], set[str]] | None:
+    """({sha: size} for the blobs among these objects, {sha} git said it could not produce),
+    without reading any content. Asking first is what keeps a huge blob out of memory and lets
+    a 134-byte LFS pointer be read even when its filename says .onnx. Trees and commits are
+    neither: they are known, and simply not blobs."""
     if not shas:
-        return {}
+        return {}, set()
     try:
         proc = subprocess.run(["git", "-C", str(root), "cat-file", "--batch-check"],
                               input=("\n".join(shas) + "\n").encode("ascii"),
@@ -389,12 +431,15 @@ def _batch_sizes(root: Path, shas: list[str]) -> dict[str, int] | None:
         return None
     if proc.returncode != 0:
         return None
-    out = {}
+    out: dict[str, int] = {}
+    missing: set[str] = set()
     for line in proc.stdout.decode("utf-8", "replace").splitlines():
         parts = line.split()
         if len(parts) >= 3 and parts[1] == "blob":
             out[parts[0]] = int(parts[2])
-    return out
+        elif len(parts) >= 2 and parts[1] == "missing":
+            missing.add(parts[0])
+    return out, missing
 
 
 def _batch_read(root: Path, shas: list[str]) -> dict[str, bytes] | None:
@@ -461,7 +506,17 @@ def scan_history(root: Path, extra_literals: list[str]):
     candidates: list[str] = []
     wanted: list[str] = []
     skipped_ext = 0
+
+    # `rev-list --objects` names each object ONCE, so a file committed under a personal name
+    # and later renamed is only ever seen under its final name. Every path that has ever
+    # existed has to be collected separately, or the rename hides the name that mattered.
+    paths_seen: set[str] = set()
+    hist_paths = _git(root, ["log", "--all", "--format=", "--name-only", "-m", "--no-renames"])
+    if hist_paths is not None and hist_paths.returncode == 0:
+        paths_seen.update(p.strip() for p in hist_paths.stdout.splitlines() if p.strip())
+
     for sha, paths in objects.items():
+        paths_seen.update(paths)
         for p in sorted(paths):
             reason = _risky_path_reason(p)
             if reason is None:
@@ -474,9 +529,23 @@ def scan_history(root: Path, extra_literals: list[str]):
                 break
         candidates.append(sha)
 
-    sizes = _batch_sizes(root, candidates)
-    if sizes is None:
+    # every path that ever existed, whether or not its blob is still reachable under it
+    flagged_paths = {p for _sha, p, _r in name_hits}
+    for p in sorted(paths_seen - flagged_paths):
+        reason = _risky_path_reason(p)
+        if reason is None:
+            rules = [r for _, r, _ in match_text(p, extra_literals) if r != "bulk-media"]
+            reason = f"the PATH matches [{', '.join(rules)}]" if rules else None
+        if reason:
+            name_hits.append(("-", p, reason))
+
+    # git exits 0 and answers "<sha> missing" for an object it cannot produce. Dropping those
+    # silently is how a partial history scan comes back looking clean.
+    probe = _batch_sizes(root, candidates)
+    if probe is None:
         return None, None, None, None
+    sizes, missing_set = probe
+    missing = set(missing_set)
     too_big = 0
     for sha in candidates:
         size = sizes.get(sha)
@@ -495,6 +564,7 @@ def scan_history(root: Path, extra_literals: list[str]):
     blobs = _batch_read(root, wanted)
     if blobs is None:
         return None, None, None, None
+    missing |= {s for s in wanted if s not in blobs}
 
     content_hits: list[tuple[str, str, int, str, str]] = []
     lfs_pointers = 0
@@ -506,8 +576,8 @@ def scan_history(root: Path, extra_literals: list[str]):
         if text is None:
             not_text += 1
             continue
-        for lineno, rule_id, preview in match_text(text, extra_literals):
-            for path in sorted(objects.get(sha, {"(unknown path)"})):
+        for path in sorted(objects.get(sha, {"(unknown path)"})):
+            for lineno, rule_id, preview in match_text(text, extra_literals, path=path):
                 content_hits.append((sha, path, lineno, rule_id, preview))
 
     message_hits: list[tuple[str, str]] = []
@@ -523,20 +593,25 @@ def scan_history(root: Path, extra_literals: list[str]):
             for _, rule_id, _ in match_text(body, extra_literals):
                 message_hits.append((commit[:9], rule_id))
     # annotated tag messages are not commits and git log never prints them
-    tags = _git(root, ["for-each-ref", "refs/tags", "--format=%(refname:short)%x1f%(contents)%x1e"])
+    # for-each-ref does NOT understand git log's %x1f: it prints it literally, which glues a
+    # tag's whole message onto its name and then prints that message as if it were the name.
+    # It does understand %0a, so a sentinel line separates the records instead.
+    tags = _git(root, ["for-each-ref", "refs/tags",
+                       f"--format={_TAG_SENTINEL}%(refname:short)%0a%(contents)"])
     if tags is None or tags.returncode != 0:
         messages_read = False
     else:
-        for chunk in tags.stdout.split("\x1e"):
-            name, _, body = chunk.strip().partition("\x1f")
+        for chunk in tags.stdout.split(_TAG_SENTINEL):
+            name, _, body = chunk.strip().partition("\n")
             if not name:
                 continue
             for _, rule_id, _ in match_text(f"{name}\n{body}", extra_literals):
-                message_hits.append((f"tag {name}", rule_id))
+                message_hits.append((f"tag {safe_path(name)}", rule_id))
 
     stats = {"objects": len(objects), "read": len(blobs), "skipped_by_extension": skipped_ext,
              "skipped_too_big": too_big, "lfs_pointers": lfs_pointers, "not_text": not_text,
-             "messages_read": messages_read}
+             "messages_read": messages_read, "missing": len(missing),
+             "paths_checked": len(paths_seen)}
     return content_hits, name_hits, message_hits, stats
 
 
@@ -563,7 +638,7 @@ def scan_authors(root: Path):
             continue
         domain = addr.rsplit("@", 1)[1]
         counts[domain] = counts.get(domain, 0) + 1
-        if "noreply" not in addr:
+        if not NOREPLY_RX.search(addr):
             flagged[domain] = flagged.get(domain, 0) + 1
     n_names = len({n.strip() for n in names.stdout.splitlines() if n.strip()}) if names else 0
     return (sorted(counts.items(), key=lambda kv: -kv[1]),
@@ -641,8 +716,9 @@ def main(argv: list[str]) -> int:
         if name_hits:
             print(f"\n[RISKY FILENAMES] {len(name_hits)} hit(s):")
             for path, reason in name_hits:
-                rel = str(path.relative_to(target))
-                print(f"  - {safe_name(rel, 'FILENAME itself' in reason)}  ({reason})")
+                # every name-based finding withholds the name: `*.db` matched a file that may
+                # itself be called after a person, and safe_path cannot know that
+                print(f"  - {safe_name(str(path.relative_to(target)), True)}  ({reason})")
         if content_hits:
             print(f"\n[TREE CONTENTS] {len(content_hits)} hit(s):")
             for path, lineno, rule_id, preview in content_hits:
@@ -681,15 +757,20 @@ def main(argv: list[str]) -> int:
             if stats["lfs_pointers"]:
                 print(f"  NOTE {stats['lfs_pointers']} Git LFS pointer blob(s) were scanned as "
                       f"text. Their PAYLOADS live outside git and are not inspected here.")
+            print(f"  checked {stats['paths_checked']} path name(s) that have ever existed")
             if not stats["messages_read"]:
                 print("  ERROR - commit or tag messages could not be read; that part of the")
                 print("          history sweep did NOT run.")
                 incomplete = True
+            if stats["missing"]:
+                print(f"  ERROR - git could not produce {stats['missing']} object(s) it had "
+                      f"listed;\n          their contents were NOT scanned.")
+                incomplete = True
             if name_hits:
                 print(f"\n[HISTORY FILENAMES] {len(name_hits)} object(s):")
                 for sha, path, reason in sorted(name_hits, key=lambda r: r[1]):
-                    print(f"  - {safe_name(path, 'PATH matches' in reason)}  "
-                          f"(blob {sha[:9]}, {reason})")
+                    where = f"blob {sha[:9]}" if sha != "-" else "path only, blob unreachable"
+                    print(f"  - {safe_name(path, True)}  ({where}, {reason})")
             if content_hits:
                 by_path: dict[tuple[str, str], set[str]] = {}
                 for sha, path, _lineno, rule_id, _preview in content_hits:

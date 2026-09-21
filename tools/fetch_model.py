@@ -60,7 +60,10 @@ SLACK_BYTES = 4096        # allow a hair over the expected size before calling i
 def _runnable_path() -> str:
     """How to name this script in a fix-it sentence. Relative when the reader is standing in or
     under the repo, absolute otherwise, because a line of `..\\..\\..` helps nobody."""
-    rel = os.path.relpath(os.path.abspath(__file__), os.getcwd())
+    try:
+        rel = os.path.relpath(os.path.abspath(__file__), os.getcwd())
+    except ValueError:
+        return os.path.abspath(__file__)   # different Windows drives have no relative path
     return rel if not rel.startswith("..") else os.path.abspath(__file__)
 
 
@@ -155,6 +158,7 @@ def download(url: str, dest: str, want_sha: str, want_bytes: int) -> int:
     placed = False
     kept_tmp = None
     interrupted = False
+    stream_done = False
     h = hashlib.sha256()
     got = 0
     try:
@@ -170,17 +174,24 @@ def download(url: str, dest: str, want_sha: str, want_bytes: int) -> int:
                 chunk = resp.read(CHUNK)
                 if not chunk:
                     break
-                got += len(chunk)
-                if got > want_bytes + SLACK_BYTES:
+                if got + len(chunk) > want_bytes + SLACK_BYTES:
                     print(f"fetch_model: FAILED - the response is larger than the expected "
-                          f"{want_bytes:,} bytes. Stopped at {got:,}.")
+                          f"{want_bytes:,} bytes. Stopped at {got + len(chunk):,}.")
                     return 2
-                h.update(chunk)
+                # write FIRST, then count it. The other order means a failing write (disk
+                # full, quota) leaves the running hash and byte count describing bytes that
+                # never reached the file, and the cleanup below then promotes a short file
+                # over a good model because the two agree with each other.
                 out.write(chunk)
+                got += len(chunk)
+                h.update(chunk)
                 pct = got * 100 // max(want_bytes, 1)
                 if pct >= next_mark:
                     print(f"  {pct:3d}%  {got:,} bytes", flush=True)
                     next_mark = pct - (pct % 10) + 10
+        # only here, with the read loop finished AND the file object closed by the `with`,
+        # is the temp file known to hold exactly the bytes the hash describes
+        stream_done = True
     except urllib.error.HTTPError as e:
         print(f"fetch_model: FAILED - HTTP {e.code} from {source}")
         if e.code == 404:
@@ -201,7 +212,7 @@ def download(url: str, dest: str, want_sha: str, want_bytes: int) -> int:
     finally:
         if tmp_path and os.path.exists(tmp_path):
             got_sha = h.hexdigest()
-            if got == want_bytes and got_sha == want_sha:
+            if stream_done and got == want_bytes and got_sha == want_sha:
                 try:
                     os.replace(tmp_path, dest)
                     tmp_path, placed = None, True
