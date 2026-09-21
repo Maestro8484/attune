@@ -1,12 +1,24 @@
+# Working from SOURCE. Most people should not need this file: the supported way to get
+# Attune is the Windows installer or the portable zip, which carry everything.
+#
+#   pip install -r requirements.txt     the acoustic analysis core, below
+#   pip install -e .[app]               plus the desktop app and its web UI
+#   pip install -e .[dev]               plus pytest, to run tests/
+#
+# pyproject.toml is the authoritative dependency declaration; this file is the core set
+# spelled out with its licenses, kept because it is what a reader looks for first.
+
 # Core acoustic analysis stack (all permissively licensed)
 librosa>=0.11,<0.12     # ISC
 numpy>=1.26             # BSD-3
 scipy>=1.11             # BSD-3
 soundfile>=0.12         # BSD-2
 
-# External runtime dependency (NOT a Python package): ffmpeg / ffprobe must be on PATH.
-#   - librosa uses it to decode formats libsndfile can't (mp3/m4a/etc.)
-#   - scan.py import-folder shells out to `ffprobe` to read tags
-# Install: https://ffmpeg.org/download.html  (or: winget install ffmpeg / brew install ffmpeg /
-#          apt install ffmpeg). ffmpeg is LGPL/GPL but is used as a separate program,
-#          not linked into this codebase.
+# External runtime dependency (NOT a Python package): ffmpeg / ffprobe on PATH.
+#   - the library scan shells out to `ffprobe` to read tags
+#   - librosa falls back to ffmpeg for containers libsndfile cannot decode (m4a, wma)
+# Needed only when working from source. The shipped Windows app does not require ffmpeg
+# on PATH; without it those two container formats are skipped with a message.
+# Install: https://ffmpeg.org/download.html  (or: winget install ffmpeg / brew install
+#          ffmpeg / apt install ffmpeg). ffmpeg is LGPL/GPL but is used as a separate
+#          program, not linked into this codebase.

@@ -1,33 +1,92 @@
-"""Compile the Attune Windows installer with Inno Setup.
+"""Compile the Attune Windows installer with Inno Setup, and optionally the portable zip.
 
-    python attune/desktop/build_installer.py
-    python attune/desktop/build_installer.py --dist path\\to\\dist\\Attune --out path\\to\\output
+    python desktop/build_installer.py
+    python desktop/build_installer.py --dist path\\to\\dist\\Attune --out path\\to\\output --zip
 
 Thin driver: finds ISCC.exe, shells it at desktop\\installer\\attune.iss with the
-/DSourceDir and /DOutputDirOverride defines, prints the resulting installer's path
-and size. No new dependencies -- just subprocess + the compiler.
+/DSourceDir, /DOutputDirOverride, /DAppVersion and /DLongestRelPath defines, then prints
+the resulting installer's real path and size. With --zip it also produces the portable
+Attune-<version>-win64.zip from the same folder.
 
 Prior art, not invention: Inno Setup's own command-line compiler (ISCC.exe) already
 does everything a build script would otherwise reinvent (dependency-ordered file
-copy, compression, uninstaller generation) -- this script only locates it and
-passes through the two paths that vary between machines/checkouts.
+copy, compression, uninstaller generation) -- this script only locates it and passes
+through what varies between machines and checkouts. The zip likewise prefers 7-Zip
+when it is installed and falls back to the standard library's zipfile.
+
+The version comes from ONE place: the VERSION file at the repo root. Nothing here
+hardcodes a version number, and the .iss reads the same file when compiled by hand.
+
+SAFETY: this script refuses to package a folder that contains a library database.
+desktop\\package.py exists to fold the operator's personal mixer.db into a local test
+bundle; a release must never carry one, and running the two scripts in the obvious
+order must not be able to produce one.
 """
 import argparse
 import os
 import subprocess
 import sys
+import zipfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))          # .../desktop
-ATT = os.path.dirname(HERE)                                 # .../attune (this checkout)
+ATT = os.path.dirname(HERE)                                 # .../<repo root>
 ISS = os.path.join(HERE, "installer", "attune.iss")
+VERSION_FILE = os.path.join(ATT, "VERSION")
 
-# Same three locations winget/the Inno Setup 6 installer are known to use, in the
-# order the task that installed it suggested checking.
+# Same three locations winget and the Inno Setup 6 installer are known to use.
 ISCC_CANDIDATES = [
     r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
     r"C:\Program Files\Inno Setup 6\ISCC.exe",
     os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Inno Setup 6", "ISCC.exe"),
 ]
+
+SEVENZIP_CANDIDATES = [
+    r"C:\Program Files\7-Zip\7z.exe",
+    r"C:\Program Files (x86)\7-Zip\7z.exe",
+]
+
+# Anything matching these must never appear inside a folder we are about to ship.
+# The library database is a SQLite file, and SQLite leaves siblings beside it: -wal and
+# -shm while a connection is open, -journal in the older rollback mode. Those siblings
+# hold pages of the same database, so they carry the same library paths and track names
+# and are just as private as the file itself. The base name varies by convention (.db,
+# .sqlite, .sqlite3), so every base gets every sibling. Built rather than typed out, so
+# adding a base name cannot leave a sibling behind.
+# (The -journal and .sqlite-family siblings were missed on the first pass and found by
+# the Codex audit, 2026-09-20.)
+_DB_BASES = (".db", ".sqlite", ".sqlite3")
+_DB_SIDECARS = ("", "-wal", "-shm", "-journal")
+DB_SUFFIXES = tuple(base + side for base in _DB_BASES for side in _DB_SIDECARS)
+
+# A name check is not enough. A renamed copy of the library (mixer.bak, library.dat)
+# passes every suffix list there is, so every file in the tree also gets its first 16
+# bytes read: that is SQLite's own file header, which is the same whatever the file is
+# called. About 4,000 reads on a real build, under a second. Raised by the Fable audit,
+# 2026-09-20.
+SQLITE_MAGIC = b"SQLite format 3\x00"
+
+# What desktop\build.py produces at the top level of dist\Attune, and nothing else.
+# Anything extra is either the operator's own files (a Playlists folder holds .m3u8
+# playlists full of their real music paths) or leftovers from desktop\package.py (its
+# README.txt names their NAS share and their .env). Neither belongs in a release, and
+# neither has a database extension, so the checks above would wave both through.
+# Raised by the Fable audit, 2026-09-20, which proved it by running the old guard over a
+# folder holding exactly those two things and watching it pass.
+EXPECTED_TOP_LEVEL = {"Attune.exe", "_internal", "analyzer"}
+
+
+def read_version(version_file=VERSION_FILE):
+    """The single source of truth for the release version."""
+    try:
+        with open(version_file, "r", encoding="utf-8") as f:
+            v = f.read().strip()
+    except OSError as e:
+        raise SystemExit(f"[build_installer] cannot read {version_file}: {e}")
+    if not v:
+        raise SystemExit(f"[build_installer] {version_file} is empty")
+    if any(c in v for c in ' \t\r\n"\''):
+        raise SystemExit(f"[build_installer] {version_file} must hold one bare version, got {v!r}")
+    return v
 
 
 def find_iscc():
@@ -42,53 +101,263 @@ def find_iscc():
     )
 
 
-def main():
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dist", default=None,
-                     help="PyInstaller one-dir build to package "
-                          "(default: attune.iss's own default, the main checkout's "
-                          "dist\\Attune -- see the comment at the top of attune.iss)")
-    ap.add_argument("--out", default=None,
-                     help="Directory to write the compiled installer into "
-                          "(default: desktop\\installer\\Output)")
-    ap.add_argument("--iscc", default=None, help="Explicit path to ISCC.exe")
-    ap.add_argument("--quiet", action="store_true", help="Pass /Q to ISCC (errors only)")
-    args = ap.parse_args()
+def find_7zip():
+    for c in SEVENZIP_CANDIDATES:
+        if os.path.isfile(c):
+            return c
+    return None
 
+
+def assert_out_is_outside_dist(dist, out_dir):
+    """The staging folder must not sit inside the folder being packaged.
+
+    If it did, the zip writer would walk over its own growing archive and the compiled
+    installer would become part of the next build's payload. Raised by the Codex audit,
+    2026-09-20.
+    """
+    dist_real = os.path.realpath(dist)
+    out_real = os.path.realpath(out_dir)
+    if out_real == dist_real or out_real.startswith(dist_real + os.sep):
+        raise SystemExit(
+            f"[build_installer] the output folder is inside the folder being packaged:\n"
+            f"  packaging: {dist_real}\n"
+            f"  output:    {out_real}\n"
+            f"Point --out somewhere outside the build, ideally outside the repository."
+        )
+
+
+def _looks_like_sqlite(path):
+    try:
+        with open(path, "rb") as f:
+            return f.read(16) == SQLITE_MAGIC
+    except OSError:
+        return False
+
+
+def assert_no_database(dist):
+    """Refuse to package a folder holding a library database. See the module docstring.
+
+    Two passes: by name, and by SQLite's own file header so a renamed copy cannot slip
+    through.
+    """
+    found = []
+    for dp, _dn, fns in os.walk(dist):
+        for fn in fns:
+            full = os.path.join(dp, fn)
+            if fn.lower().endswith(DB_SUFFIXES):
+                found.append((full, "database file name"))
+            elif _looks_like_sqlite(full):
+                found.append((full, "SQLite database, whatever it is named"))
+    if found:
+        listing = "\n  ".join(f"{p}   ({why})" for p, why in found[:10])
+        more = f"\n  ... and {len(found) - 10} more" if len(found) > 10 else ""
+        raise SystemExit(
+            "[build_installer] REFUSING to package: this folder contains a library "
+            "database.\n  " + listing + more +
+            "\n\nA released Attune must ship with no database at all; the person who "
+            "installs it\nanalyzes their own music and their database is created in "
+            "their own user folder.\nA database here is almost certainly the packager's "
+            "personal library: it carries every\nfile path, album and track name in it. "
+            "desktop\\package.py makes that bundle on\npurpose, for local testing only."
+            "\n\nDo not just delete the file and carry on: the same folder may hold "
+            "other traces of\nthat run. Rebuild with desktop\\build.py, or point --dist "
+            "at a build that has never\nbeen through package.py."
+        )
+
+
+def assert_expected_layout(dist, allow_extra=False):
+    """Refuse a build folder with anything unexpected sitting at its top level.
+
+    The top level of a freshly built dist\\Attune holds three entries and nothing else.
+    Anything extra arrived some other way: desktop\\package.py's README.txt, a Playlists
+    folder the app created next to the exe, a stray log. None of those carry a database
+    extension, so the checks above pass them, and a Playlists folder is full of the
+    packager's real music paths. Refuse by name and say what to do about it.
+    """
+    if allow_extra:
+        return
+    try:
+        present = set(os.listdir(dist))
+    except OSError as e:
+        raise SystemExit(f"[build_installer] cannot list {dist}: {e}")
+    extra = sorted(present - EXPECTED_TOP_LEVEL)
+    if extra:
+        raise SystemExit(
+            "[build_installer] REFUSING to package: this build folder holds files that "
+            "desktop\\build.py\ndid not put there.\n  " + "\n  ".join(extra) +
+            "\n\nExpected exactly: " + ", ".join(sorted(EXPECTED_TOP_LEVEL)) +
+            "\n\nExtra files here are usually the packager's own: a Playlists folder is "
+            "full of real\nmusic file paths, and desktop\\package.py leaves a README.txt "
+            "naming their machine.\nRebuild with desktop\\build.py, or point --dist at a "
+            "clean build. If the extra file is\ngenuinely meant to ship, pass "
+            "--allow-extra and say so in the release notes."
+        )
+
+
+def longest_relative_path(dist):
+    """Length of the deepest path inside the build, relative to its root.
+
+    Windows still refuses most file operations past 259 characters, and this app is a
+    PyInstaller tree whose deepest entry is about 120 characters on its own. Add a long
+    install directory and the install aborts partway with "MoveFile failed; code 3"
+    (observed 2026-09-20 installing into a 173-character folder). Measured here, at the
+    folder actually being packaged, and handed to the installer so it can refuse a
+    too-long destination up front instead of failing halfway. Measuring beats hardcoding:
+    the number moves whenever a dependency adds a deeper module.
+    """
+    longest = 0
+    for dp, _dn, fns in os.walk(dist):
+        rel = os.path.relpath(dp, dist)
+        prefix = 0 if rel == "." else len(rel) + 1
+        for fn in fns:
+            longest = max(longest, prefix + len(fn))
+    return longest
+
+
+def compile_installer(dist, out_dir, version, iscc=None, quiet=False):
+    """Run ISCC over attune.iss and return the path to the installer it produced.
+
+    Shared by this script's own main() and by tools/make_release.py, so there is one
+    invocation of the compiler in the codebase and not two that can drift apart.
+    """
     if not os.path.isfile(ISS):
         raise SystemExit(f"[build_installer] script not found: {ISS}")
-
-    iscc = args.iscc or find_iscc()
-    print(f"[build_installer] ISCC: {iscc}")
+    # Guard here as well as in the callers. The caller's check runs minutes earlier, and
+    # anything that imports this function directly would otherwise bypass it entirely.
+    # A walk of the tree costs under a second against a 200-second compile.
+    assert_no_database(dist)
+    iscc = iscc or find_iscc()
+    os.makedirs(out_dir, exist_ok=True)
 
     cmd = [iscc]
-    if args.quiet:
+    if quiet:
         cmd.append("/Q")
-    if args.dist:
-        dist = os.path.abspath(args.dist)
-        if not os.path.isdir(dist):
-            raise SystemExit(f"[build_installer] --dist not found: {dist}")
-        cmd.append(f"/DSourceDir={dist}")
-    if args.out:
-        out = os.path.abspath(args.out)
-        os.makedirs(out, exist_ok=True)
-        cmd.append(f"/DOutputDirOverride={out}")
-    cmd.append(ISS)
-
+    deepest = longest_relative_path(dist)
+    print(f"[build_installer] deepest path inside the build: {deepest} chars")
+    cmd += [
+        f"/DSourceDir={dist}",
+        f"/DOutputDirOverride={out_dir}",
+        f"/DAppVersion={version}",
+        f"/DLongestRelPath={deepest}",
+        ISS,
+    ]
+    print(f"[build_installer] ISCC: {iscc}")
     print("[build_installer] " + " ".join(cmd))
     rc = subprocess.call(cmd)
     if rc != 0:
         raise SystemExit(f"[build_installer] ISCC FAILED (rc={rc})")
 
-    out_dir = os.path.abspath(args.out) if args.out else os.path.join(HERE, "installer", "Output")
-    exe = os.path.join(out_dir, "AttuneSetup-0.1.0.exe")
-    if os.path.exists(exe):
-        size_mb = os.path.getsize(exe) / 1e6
-        print(f"[build_installer] output: {exe}  ({size_mb:.1f} MB)")
+    exe = os.path.join(out_dir, f"AttuneSetup-{version}.exe")
+    if not os.path.exists(exe):
+        raise SystemExit(
+            f"[build_installer] ISCC reported success but {exe} is not there. "
+            f"Check {out_dir} for what it actually wrote."
+        )
+    return exe
+
+
+ZIP_ROOT = "Attune"
+
+
+def make_zip(dist, out_dir, version, use_7zip=True):
+    """Portable Attune-<version>-win64.zip, one top-level folder named Attune.
+
+    Unpacking must give the reader a single folder, never 4,000 loose files in their
+    Downloads folder, so the layout is checked after the fact rather than assumed.
+    """
+    assert_no_database(dist)   # same reason as in compile_installer
+    os.makedirs(out_dir, exist_ok=True)
+    zip_path = os.path.join(out_dir, f"Attune-{version}-win64.zip")
+    if os.path.exists(zip_path):
+        os.remove(zip_path)
+
+    dist = os.path.normpath(dist)
+    parent, leaf = os.path.split(dist)
+    sevenzip = find_7zip() if use_7zip else None
+
+    # 7-Zip stores the named directory as the archive's own top level, but only the
+    # folder's real name -- it cannot rename it. So it is used only when the build
+    # folder is already called Attune, which is what desktop\build.py produces.
+    if sevenzip and leaf == ZIP_ROOT:
+        print(f"[build_installer] zipping with 7-Zip: {sevenzip}")
+        rc = subprocess.call([sevenzip, "a", "-tzip", "-mx=9", "-bso0", "-bsp0",
+                              zip_path, leaf], cwd=parent)
+        if rc != 0:
+            raise SystemExit(f"[build_installer] 7z FAILED (rc={rc})")
     else:
-        print(f"[build_installer] NOTE: expected output not found at {exe} "
-              f"-- check {out_dir} for the actual filename")
+        if sevenzip:
+            print(f"[build_installer] build folder is '{leaf}', not '{ZIP_ROOT}': "
+                  f"using Python's zipfile so the archive root can be renamed")
+        else:
+            print("[build_installer] 7-Zip not found, using Python's zipfile (slower)")
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+            for dp, _dn, fns in os.walk(dist):
+                for fn in fns:
+                    full = os.path.join(dp, fn)
+                    rel = os.path.relpath(full, dist)
+                    zf.write(full, (ZIP_ROOT + "/" + rel.replace("\\", "/")))
+
+    _ensure_zip_root(zip_path, ZIP_ROOT)
+    size = os.path.getsize(zip_path) / (1 << 20)
+    print(f"[build_installer] zip: {zip_path}  ({size:.1f} MiB)")
+    return zip_path
+
+
+def _ensure_zip_root(zip_path, root_name):
+    """Verify the archive has exactly one top-level entry, named `root_name`."""
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        tops = {n.replace("\\", "/").split("/")[0] for n in names}
+    if tops != {root_name}:
+        raise SystemExit(
+            f"[build_installer] zip layout wrong: expected one top-level folder "
+            f"'{root_name}', got {sorted(tops)[:5]} across {len(names)} entries. "
+            f"Delete {zip_path} and rerun with --no-7zip."
+        )
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Compile the Attune installer (and optionally the portable zip).")
+    ap.add_argument("--dist", default=None,
+                    help="PyInstaller one-dir build to package "
+                         "(default: attune.iss's own default, this repo's dist\\Attune)")
+    ap.add_argument("--out", default=None,
+                    help="Directory to write the installer into "
+                         "(default: ..\\attune-release\\v<version>, beside the repo)")
+    ap.add_argument("--iscc", default=None, help="Explicit path to ISCC.exe")
+    ap.add_argument("--zip", action="store_true",
+                    help="Also produce the portable Attune-<version>-win64.zip")
+    ap.add_argument("--no-7zip", action="store_true",
+                    help="Use Python's zipfile even when 7-Zip is installed")
+    ap.add_argument("--allow-extra", action="store_true",
+                    help="Permit files at the top of the build folder that build.py "
+                         "did not put there. Read the refusal before reaching for this.")
+    ap.add_argument("--quiet", action="store_true", help="Pass /Q to ISCC (errors only)")
+    args = ap.parse_args()
+
+    version = read_version()
+    print(f"[build_installer] version {version} (from {VERSION_FILE})")
+
+    dist = os.path.abspath(args.dist) if args.dist else os.path.join(ATT, "dist", "Attune")
+    if not os.path.isdir(dist):
+        raise SystemExit(f"[build_installer] build folder not found: {dist}")
+    assert_expected_layout(dist, allow_extra=args.allow_extra)
+    assert_no_database(dist)
+
+    # Default staging sits BESIDE the repository, never inside it. The old default,
+    # desktop\installer\Output, is inside the tree and is not gitignored, so a bare run
+    # dropped a 470 MB untracked file into the source. (Fable audit, 2026-09-20.)
+    out_dir = (os.path.abspath(args.out) if args.out
+               else os.path.join(os.path.dirname(ATT), "attune-release", f"v{version}"))
+    assert_out_is_outside_dist(dist, out_dir)
+    exe = compile_installer(dist, out_dir, version, iscc=args.iscc, quiet=args.quiet)
+    print(f"[build_installer] installer: {exe}  ({os.path.getsize(exe) / (1 << 20):.1f} MiB)")
+
+    if args.zip:
+        make_zip(dist, out_dir, version, use_7zip=not args.no_7zip)
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
