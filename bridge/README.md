@@ -44,7 +44,10 @@ Guards that limit the blast radius:
 
 - Export and copy **sources** are restricted to tracks in your loaded library, so the server
   won't read arbitrary files on the host even if asked.
-- Copy **destinations** are rejected if they target Windows, Program Files or ProgramData.
+- Copy **destinations** are an allowlist, not a blocklist. Network paths, device paths and
+  relative paths are refused outright, and what is left has to be either a removable drive or
+  a folder you named in `config.json`. A fixed drive you did not configure is refused, which
+  is the point: this thing has no password.
 
 If your network isn't trusted, bind it to localhost instead (edit `app.run(host=...)`) or put
 it behind a reverse proxy with authentication. Don't expose port 8765 to the internet.

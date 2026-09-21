@@ -178,9 +178,14 @@ def _readonly_uri(path):
     `f"file:{path}?mode=ro"` is wrong for any path holding a '#' or a '?': SQLite reads
     the '#' as the start of a fragment and silently opens a brand-new empty database
     somewhere else, so a real library reads as having no tracks in it. hybrid.py's
-    _connect_readonly already does this properly with as_uri(); this is the same thing,
-    in the three other modules that were still building the URI by hand.
-    (Raised by the cold Fable audit of this change, 2026-09-20.)"""
+    _connect_readonly already does this properly with as_uri(); this is the same thing.
+    The other nine web/ and src/ modules that built the URI by hand each carry their
+    own local copy of this same fix (same name, same fix, pointing back at this
+    docstring) rather than importing this one: nothing under web/ imports another
+    web/ module or src/db.py, and the frozen build loads every web/ and src/ module
+    by explicit path, not via sys.path, so sharing this one would need build.py/
+    Attune.spec updated to ship a new module -- out of scope for that fix.
+    (Raised by the cold Fable audit of this change, 2026-09-20; propagated 2026-09-21.)"""
     from pathlib import Path
     return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
 

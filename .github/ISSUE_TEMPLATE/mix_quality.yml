@@ -32,18 +32,28 @@ body:
     validations:
       required: true
   - type: input
-    id: settings
-    attributes:
-      label: Similarity and Variety
-      placeholder: Similarity 40, Variety 5
-  - type: input
     id: engine
     attributes:
       label: Engine
       description: Preferences, then Mixing, then Engine.
       placeholder: Attune V2
   - type: input
+    id: weights
+    attributes:
+      label: The five sliders, if you moved them
+      description: >
+        Leave this as "default" if you did not touch them. On the MusicIP engine, give its
+        Similarity and Variety instead.
+      placeholder: default, or CLAP 1.0 / Timbre 0.4 / Genre 0.3 / Tempo 0.3 / Era 0.1
+  - type: checkboxes
+    id: toggles
+    attributes:
+      label: Tick boxes
+      options:
+        - label: MMR variety was on
+        - label: Flow ordering was on
+  - type: input
     id: recipe
     attributes:
-      label: Recipe or weights, if you changed them
-      placeholder: default, or CLAP 1.0 / Timbre 0.4 / Genre 0.3 / Tempo 0.3 / Era 0.1
+      label: Recipe, if you used one
+      placeholder: default

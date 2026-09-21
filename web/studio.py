@@ -43,6 +43,20 @@ _ART_NAMES = ("cover", "folder", "front", "album", "albumart", "thumb")
 _ART_EXT = (".jpg", ".jpeg", ".png", ".webp")
 
 
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Same fix as web/app.py's _readonly_uri (web/app.py:175); duplicated here, not
+    imported, because this module is self-contained by design (no intra-web imports,
+    nothing under web/ imports src/db.py) and the frozen build loads every web/ and
+    src/ module by explicit path, not via sys.path, so a new shared module would need
+    build.py/Attune.spec updated to ship it -- out of scope for this fix."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+
+
 def _relkey(path):
     """Mirror-invariant key for a track: the tail of the path below the library root,
     lowercased with separators normalised, so the same file reached through a UNC share,
@@ -123,7 +137,7 @@ class LibraryIndex:
             self.genre[i] = m.get("genre") or ""
             self.year[i] = int(m.get("year") or 0)
 
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
         idx = {p: i for i, p in enumerate(paths)}
         # bytes/mtime were already in `tracks` and were only ever SUMmed for the
         # footer total; they cost one wider SELECT to become File size / File date
@@ -203,7 +217,7 @@ class LibraryIndex:
         self._trackno_lock = threading.Lock()
         self.total_seconds = sum(self.seconds)
         self.total_bytes = 0
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
         row = con.execute("SELECT SUM(bytes) FROM tracks").fetchone()
         con.close()
         self.total_bytes = int(row[0] or 0)

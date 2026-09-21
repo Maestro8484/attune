@@ -86,9 +86,23 @@ def _analyzer_exe():
                         ANALYZER_SUBDIR, ANALYZER_EXE)
 
 
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Same fix as web/app.py's _readonly_uri (web/app.py:175); duplicated here, not
+    imported, because this module is self-contained by design (no intra-web imports,
+    nothing under web/ imports src/db.py) and the frozen build loads every web/ and
+    src/ module by explicit path, not via sys.path, so a new shared module would need
+    build.py/Attune.spec updated to ship it -- out of scope for this fix."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+
+
 def _db_counts(db_path):
     try:
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
         t = con.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
         a = con.execute("SELECT COUNT(*) FROM features WHERE vec IS NOT NULL").fetchone()[0]
         # The embed stage is the THIRD thing a scan does and the only one that makes a

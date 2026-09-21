@@ -73,9 +73,9 @@ pip install -e .[app]
 `source .venv/bin/activate` on macOS and Linux.
 
 **Install the `[app]` extra, not the bare package.** The bare `pip install -e .` gives you
-the librosa engine and nothing to read tags with, so every track imports without an artist
-or a title. `[app]` adds the tag reader, the web UI and the ONNX runtime the good engine
-needs. The other extras:
+the librosa engine and no tag reader, so tags fall back to `ffprobe` if you happen to have
+ffmpeg on your PATH, and are simply missing if you do not. `[app]` adds the tag reader, the
+web UI and the ONNX runtime the good engine needs. The other extras:
 
 ```
 pip install -e .[bridge]   # the LAN web UI over a live MusicIP Mixer

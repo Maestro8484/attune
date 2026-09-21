@@ -69,8 +69,8 @@ MusicIP itself is closed third-party software and is neither bundled nor launche
 
 In this order:
 
-1. The database path saved in your settings, which is what Preferences writes under Advanced.
-2. The `ATTUNE_DB` environment variable.
+1. The `ATTUNE_DB` environment variable, if it is set.
+2. The database path saved in your settings, which is what Preferences writes under Advanced.
 3. `mixer.db` or `data/mixer.db` sitting next to the program.
 4. A last-resort walk up the folder tree, so a build run from inside a development checkout
    finds the checkout's own library without being told anything.

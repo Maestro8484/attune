@@ -19,6 +19,7 @@ Endpoints:
 from __future__ import annotations
 
 import json
+import os
 import random
 import sqlite3
 import time
@@ -35,6 +36,20 @@ _WEIGHT_KEYS = ("clap", "lib", "genre", "bpm", "era")
 # Legal dedup field values -- MUST match app.py's DEDUP_FIELDS (web/app.py:180). Verified
 # by reading app.py directly: it is ("song", "title", "file"), NOT "artist"/"album".
 DEDUP_FIELDS = ("song", "title", "file")
+
+
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Same fix as web/app.py's _readonly_uri (web/app.py:175); duplicated here, not
+    imported, because this module is self-contained by design (no intra-web imports,
+    nothing under web/ imports src/db.py) and the frozen build loads every web/ and
+    src/ module by explicit path, not via sys.path, so a new shared module would need
+    build.py/Attune.spec updated to ship it -- out of scope for this fix."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
 
 
 def _ensure_schema(db_path):
@@ -165,7 +180,7 @@ def register(app, ctx):
 
     @bp.get("/api/recipe/list")
     def r_list():
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
         try:
             out = [{"id": r[0], "name": r[1], "params": json.loads(r[2] or "{}"),
                     "builtin": bool(r[3])}

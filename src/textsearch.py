@@ -17,6 +17,20 @@ import numpy as np
 MODEL = "laion/larger_clap_music"   # must match embed.py so text/audio share one embedding space
 
 
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Same fix as web/app.py's _readonly_uri (web/app.py:175); duplicated here, not
+    imported, because this is a standalone CLI script and nothing else in src/
+    imports it, and hybrid.py's own _connect_readonly does something slightly
+    different (returns a connection, with a non-URI fallback) rather than just
+    the URI string this call site needs."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+
+
 def _import_stack():
     try:
         import torch
@@ -65,7 +79,7 @@ def embed_text(query, torch, model, proc, dev):
 
 def load_clap(db_path):
     """path -> stored (already L2-normalized) CLAP vector, read-only."""
-    uri = f"file:{os.path.abspath(db_path)}?mode=ro"
+    uri = _readonly_uri(db_path)
     conn = sqlite3.connect(uri, uri=True, timeout=30)
     clap = {}
     for p, dim, blob in conn.execute("SELECT path,dim,vec FROM clap WHERE vec IS NOT NULL"):
@@ -78,7 +92,7 @@ def load_clap(db_path):
 
 def load_track_meta(db_path, paths):
     """path -> (artist, title, genre), read-only, only for the given paths."""
-    uri = f"file:{os.path.abspath(db_path)}?mode=ro"
+    uri = _readonly_uri(db_path)
     conn = sqlite3.connect(uri, uri=True, timeout=30)
     meta = {}
     placeholders = ",".join("?" * len(paths))

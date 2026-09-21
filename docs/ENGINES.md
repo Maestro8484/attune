@@ -11,21 +11,34 @@ Pick one in Preferences, under Mixing, with the **Engine** field, or on the comm
 
 `src/engine.py`, class `V2Engine`, built on `src/hybrid.py`.
 
-Blends a music-trained **CLAP embedding**, the ears, with **music-theory constraints**, the
-rules:
+Blends a music-trained **CLAP embedding**, the ears, with the librosa descriptor and a few
+plain musical facts:
 
 ```
 score = w_clap  * cosine(CLAP)
+      + w_lib   * librosa timbre similarity
       + w_genre * genre overlap
-      + w_key   * key compatibility     (circle of fifths, plus relative major/minor)
-      - w_bpm   * folded tempo distance (87 and 174 BPM count as the same)
-      - w_era   * year gap
+      - w_bpm   * |tempo gap| / 40          (LINEAR, not octave-folded)
+      - w_era   * |year gap| / 25
+      + w_key   * key compatibility         (OFF by default)
 ```
 
-Those weights are the five sliders in the mix panel: CLAP, Timbre, Genre, Tempo, Era. The
-**Similarity** and **Variety** knobs sit on top: Similarity decides how tight the match has
-to be, Variety widens the candidate pool and samples from it with a rank-decaying
-probability, so the same seed gives a different mix each time.
+The shipped weights, `DEFAULT_WEIGHTS` in `src/hybrid.py`, are
+`clap 1.0, lib 0.4, genre 0.3, bpm 0.3, era 0.1, key 0.0`. Those are the five sliders in the
+mix panel: **CLAP**, **Timbre**, **Genre**, **Tempo**, **Era**, with **Presets** to set them
+together. Two tick boxes sit with them: **MMR variety**, which stops the result filling up
+with near-duplicates of each other, and **Flow ordering**, which arranges the mix rather than
+just ranking it.
+
+**Two things that are in the code and switched off.** `hybrid.py`'s own notes say why, and
+they are worth reading before anyone turns them on again:
+
+- **Key compatibility** is a weight of zero. The idea was sound, it lost by ear, and its
+  implementation was reversed until that was fixed. It is available now that the formula is
+  correct, but it does not ship on.
+- **Tempo is a linear gap, not octave-folded.** Folding 87 and 174 BPM together is an
+  appealing idea that nobody has ever sat down and listened to, so it is deliberately kept
+  out of the shipped default. The folded form exists in an offline metric.
 
 Needs no PyTorch. The embedding is computed once per track by `embed_onnx.py` and read out
 of the database afterwards.

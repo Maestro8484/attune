@@ -1,7 +1,9 @@
 # Attune walkthrough
 
 Keep this open beside the app the first time. Three journeys, click by click. Every button
-and field is named by the words printed on it.
+and field is named by the words printed on it. Some buttons carry a small icon before the
+words, so "Browse..." on screen is a folder glyph then the word; the words are what to look
+for.
 
 1. [First run to your first mix](#1-first-run-to-your-first-mix)
 2. [A mix onto a USB stick for the car](#2-a-mix-onto-a-usb-stick-for-the-car)
@@ -30,8 +32,9 @@ You don't have to sit there. The scan carries on in the background and survives 
 interrupted, and the main window has a progress bar along the top with a **Details** button
 if you want to watch it.
 
-4. As soon as there are enough analysed tracks to mix with, a **Start mixing** button
-   appears. Press it. The wizard closes onto your library.
+4. **Start mixing** appears when the scan has finished, not part way through. Press it. The
+   wizard closes onto your library. On a big collection that is the end of the wait, so shut
+   the lid and come back; on a small one it is a minute.
 5. Click any track in the list to select it.
 6. Press **Create Mix** (or Ctrl+M).
 
@@ -42,26 +45,43 @@ you. Rescan later from Preferences, under Library, with **Rescan library**.
 
 ### Steering the mix
 
-Above the mix are the two knobs that matter:
+Five sliders sit above the mix. Each one says how much that thing is allowed to matter:
 
-- **Similarity** decides how strictly it matches the sound of your seed. Low sticks close to
-  the seed's own character. High lets more in.
-- **Variety** decides how far it's willing to wander down the ranked list. Zero gives you the
-  nearest neighbours every time. Higher numbers give a different mix from the same seed.
+- **CLAP** is the sound itself, the neural judgement of what the track is like. It starts at
+  1.0 and it is the biggest term by design.
+- **Timbre** is the classic acoustic description: the texture and the colour of the sound.
+- **Genre** rewards overlapping genre tags.
+- **Tempo** penalises a big gap in BPM.
+- **Era** penalises a big gap in years.
 
-Underneath, five weights say what "similar" is allowed to mean: **CLAP** (the sound itself),
-**Timbre**, **Genre**, **Tempo** and **Era**. There are saved **Presets** if you don't want
-to fiddle. Change one, press Create Mix again, listen. That's the whole loop.
+**Presets** sets them all at once. **V2 (shipped)** is the combination that won the blind
+listening test and is what you get by default.
+
+Two tick boxes underneath:
+
+- **MMR variety** stops the mix filling up with tracks that are near-identical to each other
+  as well as to the seed.
+- **Flow ordering** arranges the result so it plays as a set, instead of just listing it
+  best-match-first.
+
+Change one, press Create Mix again, listen. That's the whole loop. Nothing here is a number
+to get right; it is a dial to turn until it sounds like what you wanted.
+
+**If you still run MusicIP** and have picked it as the engine, this panel is replaced by
+MusicIP's own two knobs, **Similarity** and **Variety**, because those are the ones the old
+engine actually takes.
 
 ### The other ways to start a mix
 
-- **Radio** keeps going forever instead of stopping at a fixed length, and **Energy arc**
-  shapes it: flat, rising, falling, or a wave.
-- **Blend** takes two or more seeds and aims between them.
-- **Adventure** takes a start and an end and builds the path from one to the other.
-- **Genius** picks the seed for you, from tracks you have loved and haven't played lately.
-- **Smart playlists** skip the seed entirely and select on rules: artist, genre, year,
-  rating, tempo.
+- **Radio (keep the queue playing forever)** keeps going instead of stopping at a fixed
+  length, with **Radio variety** and an **Energy arc**: flat, rising, falling, or a wave.
+- **Blend Selected (2+)** takes two or more seeds and aims between them.
+- **Adventure** takes a first and a last track and builds the path from one to the other.
+- **Genius** picks the seed for you: something you loved and haven't played lately if it can,
+  then something you rated highly, then anything analysed.
+- **Auto-Playlists**, in the sidebar, skip the seed entirely and select on rules: artist,
+  genre, year, rating, tempo. Not to be confused with **Smart Views** just above them, which
+  are a fixed set like Loved and Top Rated.
 
 ---
 
@@ -93,9 +113,13 @@ are written, and the button saves an `.m3u8` into your playlist folder. MusicBee
 foobar2000, Plex and most things else will read it.
 
 **Path style** matters if the playlist is going to be read by something other than this PC.
-"This PC" writes drive letters. "Network share" writes `\\server\share` paths. "Plex server
-path" writes the path as your Plex server sees it. Each one has its own field underneath,
-and only the one you picked is enabled.
+The three choices are **Local drive**, for this PC; **UNC share**, for other players on your
+network; and **Plex server path**, for the path as your Plex server sees the same files.
+
+The prefix each one writes is set once in **Preferences**, under **Playlists and export**,
+where the same three choices appear as **How paths are written** with a field indented under
+each: **This PC path**, **Network share path** and **Plex server path**. Only the field for
+the choice you made is enabled.
 
 ---
 
@@ -116,7 +140,7 @@ that takes you to Plex's own instructions.
    **View XML**. The key is at the end of the address bar, after `X-Plex-Token=`. The
    **Show me where, on Plex's site** button opens Plex's own page on this in your browser.
 4. Press **Test connection**. You want to see something like
-   **"Connected to MyPlex, 1 music library found."** If the address is wrong you get a
+   **"Connected to <your server's name>, 1 music library found."** If the address is wrong you get a
    sentence saying the server couldn't be reached; if the key is wrong you get a different
    sentence saying so. They are deliberately different, so you know which to fix.
 5. **Library** now fills with the real names of the music libraries on that server. Pick

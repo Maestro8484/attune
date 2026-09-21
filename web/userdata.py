@@ -44,6 +44,20 @@ _EASY_TAGS = ("title", "artist", "album", "albumartist", "genre", "date",
 _RG_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 
 
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Same fix as web/app.py's _readonly_uri (web/app.py:175); duplicated here, not
+    imported, because this module is self-contained by design (no intra-web imports,
+    nothing under web/ imports src/db.py) and the frozen build loads every web/ and
+    src/ module by explicit path, not via sys.path, so a new shared module would need
+    build.py/Attune.spec updated to ship it -- out of scope for this fix."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+
+
 def _ensure_schema(db_path):
     con = sqlite3.connect(db_path, timeout=30)
     try:
@@ -90,7 +104,7 @@ class UserData:
         lib.last_played = [0] * n
         lib.date_added = [0] * n
         idx = {p: i for i, p in enumerate(paths)}
-        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
         try:
             for p, r, lv, pc, lp, da in con.execute(
                     "SELECT path, rating, loved, play_count, last_played, date_added FROM usermeta"):

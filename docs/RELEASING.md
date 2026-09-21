@@ -62,8 +62,8 @@ purpose, for local testing; it is not a release tool and it refuses to run witho
 `--i-know-this-contains-my-library`. If you hit this refusal, build again into a clean
 folder rather than deleting the database and carrying on.
 
-The installer script refuses a second time, at the compiler, and its file list excludes
-databases a third time. Three guards, because shipping someone's library once is
+The installer script refuses a second time, at the compiler, if the build folder holds a
+file named `mixer.db`, and its file list excludes every database extension a third time. Three guards, because shipping someone's library once is
 unrecoverable.
 
 ## 4. Check it before you publish it

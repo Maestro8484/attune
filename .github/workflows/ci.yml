@@ -35,11 +35,12 @@ jobs:
       - name: Check out the repository
         uses: actions/checkout@v4
         with:
-          # DELIBERATELY NOT lfs: true. src/models/clap_music.onnx is a 276 MB
-          # Git LFS object. Fetching it on every push and pull request would spend
-          # the repository owner's LFS bandwidth allowance for nothing: no test in
-          # tests/ loads the model. Without this, checkout leaves a small text
-          # pointer file in its place, which is exactly what we want here.
+          # Nothing here uses Git LFS any more. src/models/clap_music.onnx used to be
+          # a 276 MB LFS object; it is now gitignored entirely and published as a
+          # release asset, fetched with `python tools/fetch_model.py`. CI deliberately
+          # does not fetch it: no test in tests/ loads the model, so downloading a
+          # quarter of a gigabyte on every push and pull request would buy nothing.
+          # lfs: false is kept as an explicit statement rather than a default.
           lfs: false
 
       - name: Set up Python
@@ -52,8 +53,8 @@ jobs:
       # is executed by pwsh, which the runner wraps so that only the LAST line's exit code
       # becomes the step's result. Native programs like pip do not trip
       # $ErrorActionPreference, so a failed install followed by a successful one would
-      # have read as a green step. Found by the Fable audit, 2026-09-20. One command per
-      # step, one exit code per step.
+      # have read as a green step. Caught in review. One command per step, one exit code
+      # per step.
       - name: Upgrade pip
         run: python -m pip install --upgrade pip
 
@@ -96,8 +97,8 @@ jobs:
         # The junit report from the step above is read rather than the human output,
         # because it carries a machine-readable skip count.
         # The other 40 skips in this suite are tests/test_key_compat.py cross-checking
-        # against mixer-ng/src/coherence.py, which lives outside this repository and is
-        # expected to be absent here; they are not covered by this check.
+        # against a research module that lives outside this repository and is expected to
+        # be absent here; they are not covered by this check.
         run: >
           python -c "import sys, xml.etree.ElementTree as ET;
           cases = [c for c in ET.parse(r'${{ runner.temp }}/junit-all.xml').getroot().iter('testcase') if 'test_bridge_dest_ok' in (c.get('file') or c.get('classname') or '')];

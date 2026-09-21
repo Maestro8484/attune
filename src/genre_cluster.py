@@ -12,11 +12,26 @@ Reads the `clap` table (see embed.py) and `tracks.genre` from the mixer DB, read
 """
 from __future__ import annotations
 import argparse
+import os
 import sqlite3
 from collections import Counter
 
 import numpy as np
 from sklearn.cluster import KMeans
+
+
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Same fix as web/app.py's _readonly_uri (web/app.py:175); duplicated here, not
+    imported, because this is a standalone CLI script and nothing else in src/
+    imports it, and hybrid.py's own _connect_readonly does something slightly
+    different (returns a connection, with a non-URI fallback) rather than just
+    the URI string this call site needs."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
 
 
 def _tags(g):
@@ -31,7 +46,7 @@ def _tags(g):
 def load_clap_and_genre(db_path: str):
     """Read (paths, CLAP matrix [N,dim], raw genre strings) read-only from db_path.
     Only rows with a non-null CLAP vector are included."""
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = sqlite3.connect(_readonly_uri(db_path), uri=True)
     try:
         rows = conn.execute(
             """SELECT t.path, t.genre, c.vec, c.dim

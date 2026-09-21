@@ -37,6 +37,18 @@ def _load(name, path):
 
 
 @dataclass(frozen=True)
+def _readonly_uri(path):
+    """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
+    f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
+    reads the '#' as the start of a fragment and silently opens a brand-new empty
+    database somewhere else, so a real library reads as having no tracks in it.
+    Replacing backslashes with forward slashes, which this file used to do, does not
+    help with either character. Same fix as web/app.py's _readonly_uri
+    (web/app.py:175); duplicated rather than imported for the reason given there."""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+
+
 class Ref:
     """One search/similar hit, resolved to OUR pool. `pool_i` is what playback/export
     should use; `label` is display-only ("Artist - Title", falling back to basename)."""
@@ -286,7 +298,7 @@ class LearnedEngine(Engine):
         # raw features straight from the db (read-only): HybridEngine keeps only ITS
         # z-scored librosa matrix, and this head needs the raw vectors normalized with
         # the TRAINING stats above -- so read them again here, verifying dims.
-        con = sqlite3.connect("file:" + db_path.replace("\\", "/") + "?mode=ro", uri=True)
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
         clap, lib79 = {}, {}
         # No 'clap' table means nothing has been embedded yet, which is normal on a fresh
         # install. Asked about rather than caught, so a clap table of the WRONG SHAPE

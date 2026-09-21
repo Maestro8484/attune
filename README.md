@@ -37,7 +37,7 @@
 
 Attune listens to every track in your music folder once, then lets you point at any song
 and say "more like this". It's a desktop app. You install it, point it at a folder, and
-leave it running the first time. After that a mix takes about a second.
+leave it running the first time. After that, mixing is instant.
 
 It matches on the actual **sound** of a track, not on genre tags and not on what other
 people listened to. Two songs tagged "rock" can sound nothing alike, and Attune knows the
@@ -81,8 +81,9 @@ The scan reads your files and listens to each one. This is the slow part and it 
 once per track. A big collection takes hours. It runs in the background and picks up where
 it left off.
 
-Once there are enough analysed tracks to mix with, a **Start mixing** button appears. Press
-it, click any track in the list, and press **Create Mix**.
+**Start mixing** appears when the scan has finished, not part way through, so on a big
+library that is the end of the wait rather than the middle of it. Press it, click any track
+in the list, and press **Create Mix**.
 
 The click-by-click guide, including getting a mix onto a USB stick and into Plex, is in
 **[docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)**.
@@ -90,17 +91,18 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 ## What you can do with it
 
 - **Mix from a seed.** Click a track, press Create Mix, get a playlist that sounds like it.
-  Two knobs: **Similarity**, how strictly it matches the sound, and **Variety**, how far it
-  wanders. Underneath, if you want them, five weights for what "similar" means: CLAP,
-  Timbre, Genre, Tempo and Era, with saved presets.
+  Five sliders say what "similar" is allowed to mean: **CLAP** for the sound itself,
+  **Timbre**, **Genre**, **Tempo** and **Era**, with **Presets** if you would rather not
+  fiddle. Two tick boxes, **MMR variety** to stop it picking near-identical tracks and
+  **Flow ordering** to arrange the result rather than just rank it.
 - **Radio.** An endless queue that keeps going, with an energy shape you pick: flat, rising,
   falling, or a wave.
 - **Blend.** Give it two or more seeds and it mixes toward the middle of them.
 - **Adventure.** Give it a start and an end, and it builds the path between them.
-- **Genius.** One button. It picks a seed for you from tracks you have loved and haven't
-  heard in a while.
+- **Genius.** One button. It picks a seed for you: something you loved and haven't played
+  lately if it can, then something you rated highly, then anything analysed.
 - **Recipes.** Save a set of mix settings under a name and use it again.
-- **Smart playlists.** Rules instead of a seed: artist, genre, year, rating, tempo and more.
+- **Auto-Playlists.** Rules instead of a seed: artist, genre, year, rating, tempo and more.
 - **Browse and play.** Search, album and folder views, album art, ratings, loved tracks, tags.
 - **Copy a mix to a USB stick.** Numbered filenames so a car stereo plays them in order, tags
   intact, either flat or as Artist / Album folders.
@@ -141,7 +143,9 @@ is here to outlive it.
 
 ## Where Attune sits
 
-There are other ways to do this and they suit different setups. Checked 2026-09-21:
+There are other ways to do this and they suit different setups. Each licence below was read
+off that project's own repository page on 2026-09-21; check it again before relying on it,
+because licences change and this paragraph will not:
 
 - **[AudioMuse-AI](https://github.com/NeptuneHub/AudioMuse-AI)** (AGPL-3.0) is the closest in
   spirit. It's a self-hosted service you run in Docker or on a server, and it plugs into
@@ -185,15 +189,16 @@ Every track gets listened to once and turned into two things:
 - A **79-number acoustic descriptor** from classic signal processing: timbre (MFCC), harmony
   (chroma), spectral contrast, texture, and tempo.
 
-The default engine ranks candidates on the CLAP embedding and then applies a few hard musical
-rules on top: key compatibility around the circle of fifths, tempo distance with octaves
-folded together so 87 and 174 BPM count as the same, genre overlap, and era. The rules are
-what stop an ears-only neural match from jumping across tempo and decade in a way that sounds
-wrong.
+The default engine ranks candidates mostly on the CLAP embedding, then adjusts with the
+descriptor and a few plain musical facts: timbre, genre overlap, how far apart the tempos are,
+and how far apart the years are. Those adjustments are what stop an ears-only neural match
+from jumping across tempo and decade in a way that sounds wrong.
 
-That combination is what won a blind listening test against genuine MusicIP. Raw CLAP on its
-own was the weakest of everything tested. The lesson was that learned perceptual similarity
-plus a few cheap explicit rules beats any amount of extra spectral feature engineering.
+That combination won a blind listening test against genuine MusicIP, and the exact weights it
+ships with are the ones that won. Two ideas that sound clever and lost by ear are deliberately
+switched off in the default: matching keys around the circle of fifths, and folding tempo
+octaves so that 87 and 174 BPM count as the same. Both are in the code and both are off. The
+reasoning is written into `src/hybrid.py` beside the weights themselves.
 
 The whole library lives in one SQLite file. No database server, no vector database, no
 containers. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and

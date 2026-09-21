@@ -45,7 +45,8 @@ current with the build.
 
 ## The store: `src/db.py`
 
-One SQLite file, WAL mode, four tables.
+One SQLite file, WAL mode. The engine makes four tables; the app adds five more to the
+same file as you use it.
 
 | Table | Holds |
 |---|---|
@@ -57,6 +58,12 @@ One SQLite file, WAL mode, four tables.
 Errors are recorded, not just successes, so a file that fails to decode is not retried on
 every run. Some failures are marked as worth retrying, for instance when the reason was a
 missing decoder that might turn up later.
+
+The five the app adds are `audioinfo` (`web/audioinfo.py`), `filestate` (`web/libverify.py`),
+`recipes` (`web/recipes.py`), `smartlists` (`web/smartlists.py`) and `usermeta`
+(`web/userdata.py`): what the analyzer found in each file, what the last verify pass saw on
+disk, your saved mix recipes, your Auto-Playlists, and your ratings, loved flags and tags.
+Nine in all, and the whole lot is still one file you can copy.
 
 `SCHEMA_VERSION` is 1. Change the descriptor and you must bump it, which makes every stored
 vector stale and forces a re-analysis.

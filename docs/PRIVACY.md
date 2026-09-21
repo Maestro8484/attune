@@ -18,6 +18,9 @@ below. You can confirm the list yourself:
 grep -rn "urlopen\|urllib.request\|socket.create_connection" src/ web/ desktop/
 ```
 
+That returns five files, not four. `web/plexsyncjob.py` matches on the word "urlopen" inside
+an error message it is testing for, not on a call.
+
 ## The four outbound calls in the app
 
 **1. Your own Plex server.** `src/export.py:301-331` and `src/export.py:757-790`. The
@@ -39,16 +42,19 @@ That's the whole list. `requests` appears once as an import in `desktop/app_desk
 and is marked `noqa: F401`, because it's there to make the packaging tool include the library,
 not to make a call.
 
-## One thing that opens your browser
+## Two things that open your browser
 
-The **Show me where, on Plex's site** button, beside the Key field, opens Plex's own page
-explaining how to find your key. `web/app.py:1300-1320`. Attune doesn't fetch that page; it
-hands the address to your normal browser and your browser goes. The address is fixed in the
-source and cannot be supplied by anything else, and the route refuses any caller that isn't
-this machine.
+Attune doesn't fetch either page. It hands the address to your normal browser and your
+browser goes. Both routes refuse any caller that isn't this machine.
 
-Once your browser is on plex.tv, Plex's own privacy policy applies to that visit, the same as
-if you had typed the address yourself.
+**Show me where, on Plex's site**, beside the Key field, opens Plex's own page explaining how
+to find your key. `web/app.py:1300-1320`. The address is fixed in the source and cannot be
+supplied by anything else. Once your browser is on plex.tv, Plex's own privacy policy applies
+to that visit, the same as if you had typed the address yourself.
+
+**See it in Plex**, after a folder mirror, opens the playlist on your own Plex server.
+`web/plexsyncjob.py:449-477`. The address is built from the server you configured, and the
+route refuses anything that is not a link to it.
 
 ## Your Plex key
 

@@ -46,6 +46,15 @@ CREATE INDEX IF NOT EXISTS idx_tracks_genre  ON tracks(genre);
 
 
 def connect(db_path: str) -> sqlite3.Connection:
+    # The default database lives in data/, which is gitignored and therefore absent from
+    # every fresh clone. sqlite3 will not create a missing PARENT, so the first command
+    # INSTALL.md tells a new contributor to run died on "unable to open database file"
+    # with nothing saying which folder was missing. Creating the parent is safe here:
+    # this function's whole job is to open-or-create, and every read-only path in the
+    # codebase goes through a file: URI with mode=ro instead, which never creates.
+    parent = os.path.dirname(os.path.abspath(db_path))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(db_path, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")

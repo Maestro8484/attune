@@ -20,14 +20,17 @@ already in each file: artist, album, title, genre, year, length. Minutes, not ho
 sounds. This is the slow part. It happens once per track and never again unless the file
 changes.
 
-It listens to a 90-second window from the middle of each track rather than the whole thing.
-That skips intros and fade-outs, which describe a song badly, and it bounds the cost.
+It doesn't listen to the whole track. The acoustic description takes a 90-second window from
+the middle, and the neural one takes three ten-second windows at roughly a sixth, a half and
+five sixths of the way through. Both skip intros and fade-outs, which describe a song badly,
+and both bound the cost.
 
 You don't have to wait. The scan runs in the background, survives you closing the wizard, and
 resumes if it's interrupted. A progress bar sits along the top of the main window with a
 **Details** button beside it.
 
-As soon as there are enough analysed tracks to mix with, a **Start mixing** button appears.
+**Start mixing** appears when the scan has finished, not part way through, so on a big
+library that button is the end of the wait rather than the middle of it.
 
 **If you'd rather not scan yet,** press **Skip for now**. Attune opens empty and won't ask
 again. Start a scan later from Preferences, under Library, with **Rescan library**.

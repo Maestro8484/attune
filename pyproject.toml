@@ -67,11 +67,15 @@ attune-hybrid = "hybrid:main"    # hybrid V2 engine (needs [neural] + a clap tab
 Homepage = "https://github.com/Maestro8484/attune"
 Issues = "https://github.com/Maestro8484/attune/issues"
 
-# External program, not a Python dependency: ffmpeg/ffprobe.
-#   - the library scan shells out to `ffprobe` to read tags
-#   - librosa falls back to ffmpeg for formats libsndfile cannot decode (m4a, wma)
-# Only needed when installing FROM SOURCE. The shipped Windows app does not need it on
-# PATH; if it is absent, those two container formats are simply skipped with a message.
+# External program, not a Python dependency: ffmpeg.
+#   - tags are read with mutagen (src/scan.py), which is why ffprobe is no longer needed
+#     and is no longer shipped; scan.py falls back to ffprobe only if mutagen cannot open
+#     a file at all, so a machine without it loses nothing it had.
+#   - the analyzer falls back to ffmpeg for what libsndfile cannot decode: m4a, aac and
+#     wma always, and a damaged file of any format (measured 2026-09-20, 22 of a random
+#     300 mp3 files from a real library).
+# Only needed when installing FROM SOURCE. The shipped Windows app BUNDLES ffmpeg.exe
+# inside its analyzer (desktop/build.py FFBIN), so a user installs nothing.
 # Install: https://ffmpeg.org/download.html (or winget install ffmpeg / brew install
 # ffmpeg / apt install ffmpeg). ffmpeg is LGPL/GPL and is used as a separate program,
 # never linked into this codebase.
