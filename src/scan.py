@@ -387,9 +387,9 @@ def _analyze_one(path, read_path=None):
     dt = time.time() - t0
     if r and "vec" in r:
         return (path, r["vec"], r["tempo"], None, dt, bool(r.get("redecoded")),
-                r.get("short_read"))
+                r.get("short_read"), r.get("seconds"))
     err = (r or {}).get("error", "unknown")
-    return (path, None, None, err, dt, False, None)
+    return (path, None, None, err, dt, False, None, None)
 
 
 def appdata_bin():
@@ -551,7 +551,7 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_analyze_one, p, _read_path(p, read_map)): p for p in todo}
         for i, fut in enumerate(cf.as_completed(futs), 1):
-            path, vec, tempo, err, dt, redecoded, short_read = fut.result()
+            path, vec, tempo, err, dt, redecoded, short_read, an_seconds = fut.result()
             if short_read:
                 short_reads.append((path, short_read))
             # A row being retried that fails because the drive is offline or the file is
@@ -563,7 +563,8 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
                 n_held += 1
             else:
                 dbm.save_features(conn, path, vec, tempo, int(time.time()), err,
-                                  src_mtime=mtimes.get(path))
+                                  src_mtime=mtimes.get(path),
+                                  analyzed_seconds=an_seconds)
             if err:
                 n_err += 1
             else:

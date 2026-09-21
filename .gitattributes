@@ -1,1 +1,7 @@
 * text=auto eol=lf
+
+# Licence texts are legal documents, quoted verbatim. Exempt them from the line-ending
+# normalization above so git never rewrites a byte of one. This stops a FUTURE rewrite;
+# it does not undo one. Checked 2026-09-21: all 120 files under licenses/ are already LF
+# in both the index and the working tree, so this changes nothing on disk today.
+licenses/** -text

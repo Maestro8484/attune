@@ -8,17 +8,23 @@
 # pyproject.toml is the authoritative dependency declaration; this file is the core set
 # spelled out with its licenses, kept because it is what a reader looks for first.
 
-# Core acoustic analysis stack (all permissively licensed)
+# Core acoustic analysis stack. Permissively licensed apart from mutagen, which is GPL
+# and is the reason the built application is conveyed under GPL-3.0-or-later; see
+# NOTICE.md section 3 for the whole picture rather than just this line.
 librosa>=0.11,<0.12     # ISC
 numpy>=1.26             # BSD-3
 scipy>=1.11             # BSD-3
 soundfile>=0.12         # BSD-2
+mutagen>=1.47           # GPL-2.0-or-later
 
-# External runtime dependency (NOT a Python package): ffmpeg / ffprobe on PATH.
-#   - the library scan shells out to `ffprobe` to read tags
-#   - librosa falls back to ffmpeg for containers libsndfile cannot decode (m4a, wma)
+# External runtime dependency (NOT a Python package): ffmpeg on PATH.
+#   - tags are read with mutagen, above. The scan shells out to `ffprobe` only when
+#     mutagen cannot open a file at all, and only when an ffprobe happens to be there,
+#     so on most machines that path never runs.
+#   - librosa falls back to ffmpeg for containers libsndfile cannot decode (m4a, aac,
+#     wma) and for a damaged file of any format.
 # Needed only when working from source. The shipped Windows app does not require ffmpeg
-# on PATH; without it those two container formats are skipped with a message.
+# on PATH: its analyzer bundles ffmpeg.exe. ffprobe is neither needed nor shipped.
 # Install: https://ffmpeg.org/download.html  (or: winget install ffmpeg / brew install
 #          ffmpeg / apt install ffmpeg). ffmpeg is LGPL/GPL but is used as a separate
 #          program, not linked into this codebase.

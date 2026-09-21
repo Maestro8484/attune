@@ -20,6 +20,7 @@ try:
     import numpy as np
 except ImportError:                                    # a bare Python, before pip install
     sys.exit("this needs numpy.\n  pip install -r requirements.txt")
+import features                 # sibling module, for its second decoder — see _decode()
 
 MODEL = "laion/larger_clap_music"   # provenance; the weights live in the .onnx
 SR = 48000
@@ -183,7 +184,10 @@ def _decode(librosa, path, path_map):
                 local = cand
             break
     try:
-        y, _ = librosa.load(local, sr=SR, mono=True)
+        # Not librosa.load directly: on the files librosa reads a fragment of, this asks
+        # ffmpeg for the rest, so the vector describes the song and not its first three
+        # seconds padded out with silence. Same decoder src/features.py already uses.
+        y, _redecoded = features.load_audio(local, SR)
     except Exception as e:
         return None, f"load: {e.__class__.__name__}"
     if y is None or len(y) < SR * 2:

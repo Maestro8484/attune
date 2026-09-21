@@ -83,7 +83,6 @@ No Python metadata describes these. Each one names the file it was observed as, 
 - License: **GPL-3.0-or-later**
 - Upstream: https://ffmpeg.org/
 - Observed as: `analyzer/_internal/attune/bin/ffmpeg.exe  (148,103,168 bytes, sha256 36a59b638b49f8e6)`
-- Observed as: `analyzer/_internal/attune/bin/ffprobe.exe  (147,965,440 bytes, sha256 5de9d7a6e30b24d8)`
 - Observed as: `read from the binary: version 7.1-full_build-www.gyan.dev, built with --enable-gpl --enable-version3`
 - Observed as: `statically linked inside it (64): libaom, libaribb24, libaribcaption, libass, libbluray, libbs2b, libcaca, libcdio, libcodec2, libdav1d, libdavs2, libflite, libfreetype, libfribidi, libgme, libgsm, libharfbuzz, libilbc, libjxl, liblc3, liblensfun, libmodplug, libmp3lame, libmysofa, libopencore-amrnb, libopencore-amrwb, libopenjpeg, libopenmpt, libopus, libplacebo, libqrencode, libquirc, librav1e, librist, librubberband, libshaderc, libshine, libsnappy, libsoxr, libspeex, libsrt, libssh, libsvtav1, libtheora, libtwolame, libuavs3d, libvidstab, libvmaf, libvo-amrwbenc, libvorbis, libvpl, libvpx, libvvenc, libwebp, libx264, libx265, libxavs2, libxevd, libxeve, libxml2, libxvid, libzimg, libzmq, libzvbi`
 - Attune runs it as a separate program and never links it. It is bundled so that Attune can decode files libsndfile cannot: m4a, aac and wma, and the mp3 files whose last fraction of a second carries stray bytes libsndfile refuses to step over. The version and the configure flags below are read out of the binary on every run, not written here by hand. Because this is a static build, the libraries listed under it are compiled inside the executable and are conveyed under FFmpeg's own GPL version 3; FFmpeg's LICENSE.md at the upstream link records each one's own terms.
@@ -123,19 +122,11 @@ No Python metadata describes these. Each one names the file it was observed as, 
 - Inside llvmlite.dll, which is how numba compiles the feature extractor to machine code at run time.
 - License text: [LICENSE.thirdparty](licenses/llvm/LICENSE.thirdparty)
 
-### Intel oneTBB
-
-- License: **Apache-2.0**
-- Upstream: https://github.com/uxlfoundation/oneTBB
-- Observed as: `analyzer/_internal/tbb12.dll  (331,264 bytes, sha256 c8d2473d5b9b9b5c)`
-- Threading runtime numba can use.
-- License text: [LICENSE.txt](licenses/intel-onetbb/LICENSE.txt)
-
 ### Microsoft OpenMP runtime
 
 - License: **Microsoft Visual C++ redistributable terms**
 - Upstream: https://learn.microsoft.com/cpp/parallel/openmp/
-- Observed as: `analyzer/_internal/VCOMP140.DLL  (192,112 bytes, sha256 e36a5c5e329bc7af)`
+- Observed as: `analyzer/_internal/VCOMP140.DLL  (193,152 bytes, sha256 55aba23cdcd6484f)`
 - Parallel loops inside scikit-learn and numba. Redistributed with the scikit-learn and numba wheels under the Visual C++ redistributable terms. Microsoft ships no license file alongside the DLL.
 - License text: not shipped by the component. Follow the upstream link.
 
@@ -184,12 +175,12 @@ No Python metadata describes these. Each one names the file it was observed as, 
 - Upstream: https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist
 - Observed as: `_internal/vcruntime140.dll  (120,400 bytes, sha256 052ad6a20d375957)`
 - Observed as: `_internal/vcruntime140_1.dll  (49,776 bytes, sha256 6a99bc0128e0c7d6)`
-- Observed as: `_internal/msvcp140.dll  (575,568 bytes, sha256 b99eb28a47131111)`
-- Observed as: `_internal/MSVCP140_1.dll  (35,920 bytes, sha256 576d2ab235e32acc)`
+- Observed as: `_internal/msvcp140.dll  (557,728 bytes, sha256 0f885b509a685d2b)`
+- Observed as: `_internal/MSVCP140_1.dll  (35,952 bytes, sha256 bfad5aef4c63a669)`
 - Observed as: `analyzer/_internal/vcruntime140.dll  (120,400 bytes, sha256 052ad6a20d375957)`
 - Observed as: `analyzer/_internal/vcruntime140_1.dll  (49,776 bytes, sha256 6a99bc0128e0c7d6)`
-- Observed as: `analyzer/_internal/msvcp140.dll  (575,568 bytes, sha256 b99eb28a47131111)`
-- Observed as: `analyzer/_internal/MSVCP140_1.dll  (35,920 bytes, sha256 576d2ab235e32acc)`
+- Observed as: `analyzer/_internal/msvcp140.dll  (557,728 bytes, sha256 0f885b509a685d2b)`
+- Observed as: `analyzer/_internal/MSVCP140_1.dll  (35,952 bytes, sha256 bfad5aef4c63a669)`
 - Required by everything on this list that was compiled with MSVC. Microsoft's redistributable runtime carries no license file with the DLLs; the terms are at the upstream link.
 - License text: not shipped by the component. Follow the upstream link.
 
@@ -232,7 +223,7 @@ Attune's own code is MIT, but a few files carry a port of somebody else's work. 
 
 - License: **Apache-2.0**
 - Upstream: https://github.com/huggingface/transformers
-- analyzer/_internal/attune/src/embed_onnx.py  (12,079 bytes, sha256 b734c7162c06b974)
+- analyzer/_internal/attune/src/embed_onnx.py  (14,697 bytes, sha256 689155fbbbdb79dd)
 - attribution still in the shipped file: 'audio_utils.py (Apache-2.0)' in analyzer/_internal/attune/src/embed_onnx.py
 - The log-mel front-end in embed_onnx.py is a numpy port of the exact numeric path in transformers 5.13.0 (feature_extraction_clap.py and audio_utils.py), written so the analyzer can produce the same features as the CLAP model expects without importing torch. The port is bit-exact by design and the attribution is in the file's own comments. Attune's code around it is MIT.
 - License text: [LICENSE](licenses/hugging-face-transformers-log-mel-front-end/LICENSE)

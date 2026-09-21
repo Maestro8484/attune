@@ -25,6 +25,11 @@ CREATE TABLE IF NOT EXISTS features (
     analyzed_at INTEGER,
     error       TEXT,          -- non-null if analysis failed (so we don't retry forever)
     src_mtime   INTEGER,       -- source file mtime when analyzed; change => re-analyze
+    analyzed_seconds REAL,     -- how much audio the decoder actually handed us, before
+                               -- the central window was cut. NULL means "we do not
+                               -- know", which is every row written before this existed.
+                               -- Compare it against tracks.seconds to find a song that
+                               -- was judged on a fragment of itself.
     FOREIGN KEY(path) REFERENCES tracks(path)
 );
 CREATE TABLE IF NOT EXISTS clap (
@@ -69,6 +74,13 @@ def connect(db_path: str) -> sqlite3.Connection:
     cols = {r[1] for r in conn.execute("PRAGMA table_info(features)")}
     if "src_mtime" not in cols:
         conn.execute("ALTER TABLE features ADD COLUMN src_mtime INTEGER")
+        conn.commit()
+    # Same additive shape for analyzed_seconds, and deliberately NOT a SCHEMA_VERSION
+    # bump: the validate branch below is fail-closed and would tell every existing
+    # library to delete itself, which is the opposite of what this column is for. A
+    # NULL here honestly says "written before anyone recorded this"; a rescan fills it.
+    if "analyzed_seconds" not in cols:
+        conn.execute("ALTER TABLE features ADD COLUMN analyzed_seconds REAL")
         conn.commit()
     # One-time backfill (idempotent via meta flag; self-heals a DB whose column was added
     # in an earlier run before this backfill existed). Baselines already-analyzed rows to
@@ -128,17 +140,20 @@ def upsert_track(conn, rec: dict):
     )
 
 
-def save_features(conn, path: str, vec, tempo, analyzed_at, error=None, src_mtime=None):
+def save_features(conn, path: str, vec, tempo, analyzed_at, error=None, src_mtime=None,
+                  analyzed_seconds=None):
     blob = None if vec is None else np.asarray(vec, dtype=np.float32).tobytes()
     dim = None if vec is None else int(np.asarray(vec).shape[0])
     conn.execute(
-        """INSERT INTO features(path,dim,vec,tempo,analyzed_at,error,src_mtime)
-           VALUES(?,?,?,?,?,?,?)
+        """INSERT INTO features(path,dim,vec,tempo,analyzed_at,error,src_mtime,
+                                analyzed_seconds)
+           VALUES(?,?,?,?,?,?,?,?)
            ON CONFLICT(path) DO UPDATE SET
              dim=excluded.dim, vec=excluded.vec, tempo=excluded.tempo,
              analyzed_at=excluded.analyzed_at, error=excluded.error,
-             src_mtime=excluded.src_mtime""",
-        (path, dim, blob, tempo, analyzed_at, error, src_mtime),
+             src_mtime=excluded.src_mtime,
+             analyzed_seconds=excluded.analyzed_seconds""",
+        (path, dim, blob, tempo, analyzed_at, error, src_mtime, analyzed_seconds),
     )
 
 

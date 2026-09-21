@@ -7,7 +7,6 @@ The generator itself never touches the network. It checks these files exist and 
 | Component folder | File | Taken from | When | Why by hand |
 |---|---|---|---|---|
 | `ffmpeg` | `COPYING.GPLv3` | https://www.gnu.org/licenses/gpl-3.0.txt | 2026-09-20 | The GPL version 3 text, for the bundled FFmpeg build. |
-| `intel-onetbb` | `LICENSE.txt` | https://www.apache.org/licenses/LICENSE-2.0.txt | 2026-09-20 | oneTBB is Apache-2.0 and the DLL ships no text. |
 | `openssl` | `LICENSE.txt` | https://raw.githubusercontent.com/openssl/openssl/master/LICENSE.txt | 2026-09-20 | OpenSSL 3 is Apache-2.0; CPython's LICENSE.txt does not include it. |
 | `flatbuffers` | `LICENSE` | https://raw.githubusercontent.com/google/flatbuffers/master/LICENSE | 2026-09-20 | The flatbuffers wheel declares Apache-2.0 but ships no text. |
 | `proxy-tools` | `LICENSE.txt` | https://raw.githubusercontent.com/jtushman/proxy_tools/master/LICENSE.txt | 2026-09-20 | The proxy_tools wheel ships no text. Its metadata declares MIT while the file the project publishes is a 3-clause BSD text; both are permissive and what upstream publishes is what is shipped here. |

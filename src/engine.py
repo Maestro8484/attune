@@ -36,7 +36,6 @@ def _load(name, path):
     return mod
 
 
-@dataclass(frozen=True)
 def _readonly_uri(path):
     """file: URI for a read-only sqlite3 connect (mode=ro), with the path ESCAPED.
     f"file:{path}?mode=ro" is wrong for any path holding a '#' or a '?': sqlite3
@@ -49,9 +48,15 @@ def _readonly_uri(path):
     return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
 
 
+@dataclass(frozen=True)
 class Ref:
     """One search/similar hit, resolved to OUR pool. `pool_i` is what playback/export
-    should use; `label` is display-only ("Artist - Title", falling back to basename)."""
+    should use; `label` is display-only ("Artist - Title", falling back to basename).
+
+    Keep this decorator attached to this class. It was separated from it once, by a
+    function inserted between the two, and the effect was not a warning: `Ref` quietly
+    stopped being a dataclass and `@dataclass` was applied to the function instead,
+    which raises at import and takes the whole web app down with it."""
     pool_i: int
     label: str
 

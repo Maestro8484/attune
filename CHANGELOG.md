@@ -5,6 +5,236 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [0.1.0] — unreleased (initial public cut)
 
+### Added (release campaign, 2026-09-20 to 2026-09-21)
+
+- **A Plex section in Preferences.** Type the server address, paste the key, press Test
+  connection, pick the music library from a list Attune fills in by asking the server, and
+  press Save. No section number and no machine id is ever typed. Before this the Plex
+  connection was readable only from a hidden `.env` file in the developer's own workspace,
+  which an installed copy can never find, so every Plex feature including the folder mirror
+  was unreachable by anyone else. Preferences went from four tabs and twelve fields to eight
+  sections and thirty-one rows: folders to skip, the playlist name pattern with a live
+  preview, how paths are written, the USB copy layout, the default recipe and the theme.
+- `THIRD_PARTY_NOTICES.md` and a `licenses/` folder naming every third-party component
+  inside the built Windows application, with each one's licence text. Generated from the
+  built app rather than hand-kept, by the new `tools/gen_third_party_notices.py`, which
+  reads the frozen archives in both programs and the build environment's metadata.
+  48 Python packages and 15 native libraries and programs; no import name and no binary
+  file in the bundle is left unaccounted for.
+- `VERSION` at the repository root is now the single source of the version number.
+  `pyproject.toml`, the Inno Setup script and both release scripts read it; nothing
+  hardcodes a version any more.
+- `tools/make_release.py`: one command turns a built app folder into
+  `AttuneSetup-<version>.exe`, `Attune-<version>-win64.zip` and `SHA256SUMS.txt` in a
+  staging folder outside the repository. No network, no git, no publishing.
+- `desktop/build_installer.py --zip` produces the portable archive, with 7-Zip when it is
+  installed and Python's `zipfile` when it is not. The archive layout is verified after
+  packing, so it always unpacks to a single `Attune` folder.
+- `desktop/requirements-build.txt`: the pinned package list of the environment that freezes
+  the app (Python 3.12.10, 50 packages), so the build machine can be rebuilt.
+- A GitHub Actions workflow on `windows-latest`: the test suite and the personal-data scan
+  on every push and pull request. The CLAP model is a release asset fetched by
+  `tools/fetch_model.py`, and the workflow deliberately does not fetch it, nor build the
+  installer.
+- The installer refuses an install folder long enough to break Windows' 259-character path
+  limit, before copying anything, instead of failing partway through.
+- `docs/WALKTHROUGH.md`: the guide a stranger keeps open beside the app. Three journeys
+  click by click, first run to first mix, a mix onto a USB stick, and a mix into Plex
+  including the folder mirror. Every control is named by the words printed on it.
+- `docs/FIRST_RUN.md`: both passes of the first scan, where settings, the database and the
+  logs live, what uninstall leaves behind on purpose, how upgrading works, and what to do
+  when the first run goes wrong.
+- `docs/PRIVACY.md`: what leaves the machine, which is nothing unless you configure Plex,
+  with the file and line behind every claim.
+- `docs/RELEASING.md`: how a release is cut, ending at the step only the maintainer can
+  perform. It was referenced twice from `tools/make_release.py` and did not exist.
+- `SECURITY.md`: how to report privately, what is in scope, and what is deliberately out of
+  scope with the reason.
+- `.github/ISSUE_TEMPLATE/`: bug report, feature request, a template for a mix that sounded
+  wrong, and a config file pointing security reports at private disclosure.
+- `tools/check_links.py`: every relative link and image in the repository's Markdown, plus
+  same-file and cross-file anchors, checked by a script. Stdlib only. Exits non-zero so it
+  can gate a release.
+- `docs/img/README.md`: the screenshot capture checklist, including the rule that no capture
+  may show a real library.
+- **The database now records how much audio each analysis actually read**
+  (`features.analyzed_seconds`). This is the missing fact that let a song judged on a
+  fragment of itself look identical to one judged on all of itself. Rows written before this
+  existed read as empty, which honestly says nobody recorded it; a rescan fills them in. Not
+  a schema break: an existing library gains the column in place and keeps every vector.
+
+### Changed (release campaign)
+
+- **The install is smaller: ffprobe.exe (141 MB) is gone.** Track tags now come from
+  mutagen, which was already inside both halves of the app. On 238 real library files
+  mutagen matched ffprobe on 225 and was right on all 13 that differed, including two albums
+  ffprobe dated to the year 197.
+- Tag reading during import is no longer one ffprobe process per file: 245 files in one
+  second.
+- Windows Media (.wma) and .wav files now import with their metadata. A wav carries its tags
+  in a RIFF INFO chunk that the old reader never looked at, and .ogg and .opus tags were
+  being missed entirely.
+- **ffmpeg.exe still ships**, after measuring. 7.33% of a random 300-file mp3 sample cannot
+  be decoded without it, so dropping it would have moved roughly one mp3 in fourteen into
+  Not Mixable. Building the app without it is now refused rather than allowed quietly,
+  because the resulting install looks perfectly healthy until you scan a library.
+- **mutagen is a core dependency**, not an optional extra. Importing a library has not
+  worked without it since tag reading moved off ffprobe. It is GPL-2.0-or-later, which is
+  what makes the built application GPL-3.0-or-later; see `NOTICE.md` section 3.
+- `NOTICE.md` rewritten. It now states that the source stays MIT while the installed
+  application is offered under GPL-3.0-or-later, because the build bundles mutagen
+  (GPL-2.0-or-later) and a GPLv3 ffmpeg, and says what that does and does not mean. Adds a
+  section on the two model files, including the origin of the optional learned engine.
+  Corrects the old claim that all dependencies were permissive and that users install ffmpeg
+  themselves.
+- **The 263 MiB CLAP model is no longer in the repository.** `git clone` now takes seconds
+  and needs no git-lfs; `python tools/fetch_model.py` downloads the model from a pinned
+  release asset and verifies its SHA256 before putting it in place. The installer is
+  unaffected: it carries the model inside. Running the analyzer without the model now prints
+  one sentence naming the fix instead of an ONNX stack trace.
+- **Personal data removed from the published tree.** Four evaluation result files holding
+  about 2,100 real track filenames are gone, the two small result files behind
+  `eval/SIGNAL_REPORT.md` keep their numbers with paths and playlist names replaced by
+  placeholders, and the report's prose no longer names a private drive, machine or share.
+  `eval/abtest.py` no longer falls back to writing into a personal playlist folder.
+- `tools/leak_check.py` rewritten. It matches private strings case-insensitively and in the
+  spellings JSON and URLs produce, reads UTF-16 files, skips binary files by extension rather
+  than guessing, covers files that are not committed yet, and withholds the matching value
+  from its own report unless asked for it. New `--history` reads every reachable blob, path,
+  commit message and tag message; new `--authors` reports commit email domains. A git failure
+  now reports an incomplete scan instead of a clean one, and `--require-patterns` refuses to
+  run at all when no private strings were loaded.
+- Attune creates a library only at its own default path in the user's data folder. Any other
+  library path must already exist; a missing one is refused with a plain message instead of
+  being silently replaced by an empty library.
+- Messages a first-time user sees no longer name files, flags or environment variables. The
+  first-run wizard, the empty library list, the Create Mix button, the Not Mixable reasons
+  and the scan failures all name something to press.
+- The installer's default source path now resolves inside any clone of the repository. It
+  previously walked up three directories into a sibling folder that had to be named
+  `attune`, which worked only on one machine.
+- Upgrading now removes the old `_internal` and `analyzer` folders before writing the new
+  ones, so a stale module from an older version can no longer be left behind and silently
+  imported. A cancelled upgrade therefore has to be run again; the trade is deliberate and is
+  written into the installer script and the release notes.
+- `pyproject.toml` lists all twenty modules under `src/` instead of nine, so
+  `pip install -e .` installs the whole product. New `app` and `dev` extras. The version is
+  read from `VERSION`. It states that this release is not published to PyPI.
+- `desktop/package.py` is named for what it is, a private test bundle that folds a personal
+  library database into the app folder, and refuses to run without
+  `--i-know-this-contains-my-library`.
+- `README.md` rebuilt around the application. It described a Python library needing ffmpeg on
+  PATH and listed a local web UI as a roadmap item; the product is a Windows app that needs
+  neither, and all of that roadmap except Jellyfin shipped.
+- `INSTALL.md` rebuilt as three paths: the installer, from source, and development. It now
+  names the model fetch step, the right extra to install, and the one thing a fresh clone
+  does not have.
+- `CONTRIBUTING.md`: the "good first issues" were four-sixths already built. Replaced with
+  work that is genuinely open, plus how to run the tests without the model and how to test a
+  ranking change against synthesised audio instead of real music.
+- `docs/ARCHITECTURE.md`: the two-program layout, the four database tables and both
+  descriptors, rather than a single-program diagram that stopped being true.
+- `docs/ENGINES.md`: three engines rather than two, with the librosa engine named as the
+  from-source baseline instead of one of the three.
+- `docs/MUSICIP_HERITAGE.md`: the comparison table called the local API, the web UI, `.m3u`
+  export and Plex roadmap items. All four shipped.
+- `desktop/README.md`, `bridge/README.md`, `examples/README.md` brought up to date.
+- Licence texts under `licenses/` are exempt from line-ending normalisation, so git never
+  rewrites a byte of a legal document.
+
+### Fixed (release campaign)
+
+- **Songs that were never too short.** A damaged MP3 can make the audio reader hand back two
+  seconds of a five-minute song and report success, so Attune analyzed the fragment, decided
+  the file was too short, and left the song out of every playlist with a reason that was
+  simply untrue. Attune now asks ffmpeg directly whenever a decode comes back with too little
+  to work with, and keeps whichever reader got more of the song. On the library this was
+  found in, 14 of 18 silently lost tracks come back.
+- **The part of that fix that reaches the mix.** The neural embedder decoded the same files
+  through the same call and had the same hole, so a rescued song could still be listened to
+  as three seconds of audio padded with silence. It now uses the same second decoder, and a
+  recovered song reaches the mix pool described by the whole of itself.
+- **Failure reasons that say what happened.** A file that cannot be read now says so and says
+  how much was readable, instead of claiming to be short. When there is no ffmpeg on the
+  machine, that reason is marked as one worth trying again, so installing ffmpeg retries it
+  by itself.
+- Rows recorded as "too short" by an older version get one more attempt on the next scan,
+  once, when a decoder is available.
+- An ffmpeg that is present but cannot actually run is no longer reported as installed. It
+  passed a name check before, which made every message about it wrong and left those tracks
+  stranded for good.
+- A stale embedding built from a fragment is discarded when the track's audio has to be
+  decoded a second time, so the new embedding describes the song rather than its first two
+  seconds.
+- A track whose tags contained a character outside the Windows console codepage imported with
+  no artist, album, genre, year or length at all, just a file name. 3.8% of a 238-file sample.
+- A track that could not be analyzed was never tried again, however the reason was fixed.
+  Tracks that failed only because no audio decoder was available now retry by themselves as
+  soon as one is present.
+- "Not Mixable" now says what is actually wrong in plain words instead of showing a Python
+  exception name. The worst case used to read "load: NoBackendError:" with nothing after it.
+- Rebuilding only the GUI (`build.py --gui-only`) deleted the analyzer and never rebuilt it,
+  leaving an install that could not analyze anything. It is now preserved across the rebuild,
+  and the build refuses rather than risk it.
+- **A machine on the network could redirect where the Plex key was sent.** Saving settings
+  had no loopback guard and accepted every stored key, and the app can be started on
+  `0.0.0.0`. Two requests and no action by the owner: rewrite the Plex address to your own
+  host, ask for a Plex export, and the key arrives in your server's logs. Saving settings and
+  exporting to Plex are now refused from anywhere but this machine, matching what the folder
+  mirror and the copy export already did. Reading settings stays open, because it never
+  returns the key.
+- **A settings file merely locked at launch was replaced by defaults.** A backup agent or an
+  antivirus scanner holding the file for two seconds was enough to lose the library path,
+  export roots and Plex key with nothing said. Attune now tells missing, unreadable and
+  corrupt apart, refuses to write over a file it could not read, and keeps a corrupt file by
+  renaming it rather than overwriting it.
+- The playlist name pattern governed the Download button alone, while the window claimed it
+  governed every playlist. Save-to-folder now uses it too. The contents stay exactly the rows
+  on screen, and the USB copy keeps its own folder name.
+- "How paths are written" was a field nothing ever read. Both export routes now fall back to
+  the stored choice when none is passed.
+- An ordinary Save could clear the default recipe, because its list arrives after the window
+  opens. It is now sent only once the list has arrived, and a saved recipe that no longer
+  exists is carried rather than silently vanishing.
+- The address, the library key, the two path choices and the name pattern are now checked and
+  normalised on the server, not only hinted at in the browser. A name and password embedded
+  in a server address is refused outright rather than stored.
+- First run on a machine with no library no longer dead-ends. Attune used to open a message
+  window saying to set a library in Preferences, inside an app that had not started. It now
+  creates an empty library in the user's data folder, opens Studio with the Welcome wizard,
+  and scans the folder the user picks.
+- An empty library is a normal state throughout. The web app, the hybrid engine, the learned
+  engine and the library index all load over zero tracks instead of exiting.
+- A scan started from the wizard loads itself when it finishes. No restart, and no hunting
+  for the "Load now" button.
+- A scan resumed after a cancel is no longer mistaken for one that did nothing: the scan
+  status reports newly analyzed and newly embedded tracks as well as newly imported ones.
+- A release can no longer carry a personal library database. Three independent guards: the
+  Python release scripts refuse a build folder containing one, the installer script refuses
+  to compile from a folder holding `mixer.db`, and the installer's file list excludes every
+  SQLite database and sidecar however it is invoked.
+- The Windows installer now places `licenses/`, `THIRD_PARTY_NOTICES.md`, `NOTICE.md` and
+  `LICENSE` beside `Attune.exe`, so the licences travel with the installed application
+  instead of only with the source.
+- `INSTALL.md` claimed "136 passing" tests. Run on a clean clone it is 97 passed and 40
+  skipped, and the skips are correct rather than a problem.
+- Several documents said m4a, aac and wma need an ffmpeg the user supplies. The app bundles
+  one, so that limit does not exist for anyone installing it.
+- `docs/VALIDATION.md` still called the project a clean-room implementation, which
+  `NOTICE.md` had already retired as inaccurate.
+- `docs/MUSICIP_HERITAGE.md` and `docs/VALIDATION.md` had no link into them from anywhere
+  public. The first is where the MusicIP community and the `lms-mipmixer` authors are
+  credited, so an unreachable page was a dropped credit.
+- `desktop/README.md` promised the app "always starts" and "never crashes".
+- `desktop/package.py` and `desktop/worker_entry.py` carried sentences that other streams'
+  work had made false: Plex needing a `.env` file, and the release build shipping no ffmpeg.
+- `pyproject.toml`'s ffmpeg comment said the scan shells out to `ffprobe` to read tags, which
+  it stopped doing when tag reading moved to mutagen. The same sentence in `requirements.txt`
+  is corrected too.
+- A database opened by its file path worked while the same database opened by URI did not, at
+  fourteen places in the code.
+
+
 ### Added
 - **Audit of the Plex folder-mirror (2026-09-01), one real defect fixed.** "Only add,
   never remove anything" was removing tracks. The job always orders the playlist, and
@@ -1104,7 +1334,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   (MFCC / chroma / spectral contrast / texture / tempo) via librosa.
 - SQLite store (`db.py`): single-file catalog + feature vectors, WAL mode,
   schema-versioned.
-- Scanner (`scan.py`): standalone `import-folder` (ffprobe tag reading) and MusicIP
+- Scanner (`scan.py`): standalone `import-folder` (tag reading; ffprobe originally,
+  mutagen since 2026-09-20, see above) and MusicIP
   `import-catalog`; incremental, parallel, resumable `analyze`.
 - Mixing engine (`mixer.py`): seed → ranked playlist with **style** (0–100),
   **variety** (0–9), and artist-spacing knobs mirroring MusicIP; tolerant seed-path
