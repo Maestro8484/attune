@@ -1163,6 +1163,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         out = dict(s)
         out["plex_token_set"] = bool(out.pop("plex_token", ""))
         out["ffmpeg_found"] = _find_ffmpeg()
+        # A settings file written by an earlier build can hold engine "learned", which
+        # Preferences no longer offers (ISSUES.md row 16). Reported as-is, the window's
+        # <select> would find no matching option, fall back to an EMPTY value, and send
+        # that empty string on the next save -- which the check below refuses, so every
+        # save in Preferences would fail, on any tab, with nothing on screen saying why.
+        # Reporting "auto" instead means the window shows a real choice and heals the
+        # stored value the first time anything is saved. Caught by the cold audit of
+        # 2026-09-21, which is exactly the kind of defect removing a menu option causes.
+        if out.get("engine") == "learned":
+            out["engine"] = "auto"
         return out
 
     @app.get("/api/settings")
@@ -2073,6 +2083,17 @@ def main():
     settings = cfgmod.load()
     db = cfgmod.effective(args.db, "ATTUNE_DB", "db_path", settings)
     engine = cfgmod.effective(args.engine, "ATTUNE_ENGINE", "engine", settings) or "auto"
+    # A STORED "learned" is the broken choice, not a deliberate one: it produced
+    # ordinary V2 mixes anyway and switched off Radio, Blend, Adventure, thumbs-up
+    # steering and Explain (ISSUES.md row 16). Anyone left holding it from an earlier
+    # build starts on auto instead, and is told why rather than finding five features
+    # missing. An EXPLICIT --engine learned still wins, because that is somebody
+    # choosing it knowingly, which release ruling 10 keeps.
+    if engine == "learned" and args.engine != "learned":
+        print("Your saved engine was 'Learned metric', which never actually changed "
+              "your mixes and switched off Radio, Blend, Adventure, thumbs up/down and "
+              "Explain. Starting on Auto instead. Preferences no longer offers it.")
+        engine = "auto"
     musicip_url = cfgmod.effective(args.musicip_url, "ATTUNE_MUSICIP_URL",
                                    "musicip_url", settings)
     playlists = cfgmod.effective(args.playlists, "ATTUNE_PLAYLIST_DIR",

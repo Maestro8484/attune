@@ -31,7 +31,8 @@ a claim, blank is the truth.
 
 NOT LOOPBACK-GUARDED, and this docstring used to say they were. Until 2026-09-21 the
 three lines below claimed both POST endpoints refused a caller from another machine.
-They never did: `grep -c remote_addr web/audioinfo.py` returns 0. The `@locked`
+They never did, and they still do not: no route in this file reads `request.remote_addr`
+at all -- the only mentions of it anywhere in this file are in this paragraph. The `@locked`
 decorator on them is the library-swap lock, which serialises against a pool reload and
 says nothing at all about who is calling. A reader auditing this file found a written
 guarantee and no code behind it, which is worse than a missing guard, so the claim is

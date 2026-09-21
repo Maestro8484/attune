@@ -242,11 +242,19 @@ class LibraryIndex:
         # One pass over `features` now gives all three states instead of a bool. The
         # older query asked only "error IS NULL AND vec IS NOT NULL", which answered
         # "analyzed or not" and threw away the difference between not-yet and cannot.
-        # `self.analyzed` keeps its exact old meaning: several sorts, the stats footer
-        # and userdata.py read it, and none of them wants a third value.
+        # `self.analyzed` keeps its exact old meaning, because real callers read it and
+        # none of them wants a third value: recipes.py's three seed tiers (:153, :158,
+        # :162), smartlists.py's "analyzed" rule (:45) and the stats footer (:683).
+        # (An earlier version of this comment also named userdata.py and "several
+        # sorts"; neither reads it. Cold audit, 2026-09-21.)
+        #
+        # A pool track with NO row in `features` at all falls through the loop below, so
+        # its defaults have to be the honest answer for that case rather than a blank:
+        # nothing has reached it yet, and the reason must be the same sentence the Not
+        # Mixable view would give, or the two views disagree about one situation.
         self.analyzed = [False] * self.n
         self.state = [PENDING] * self.n
-        self.why = [""] * self.n
+        self.why = [_why_sentences("", False, None, False)] * self.n
         clap_paths = set()
         if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clap'"
                        ).fetchone():
@@ -361,6 +369,15 @@ class LibraryIndex:
             # describing the same track two different ways.
             why = _why_sentences(err, hasvec, dim, p in clap)
             state = _status_of(err, hasvec, dim, p in clap)
+            # MEMBERSHIP IS THE FACT, as this function's docstring says. Every row here
+            # is one the engine left out of the pool, so a row the DB columns cannot
+            # explain is still not usable -- hybrid.py also drops verified-missing files
+            # (ruling C6) and non-finite vectors, and neither leaves a trace in `error`.
+            # Calling such a row "Analyzed" would print that word inside a view named
+            # Not Mixable, and the route's count would file it under "cannot use"
+            # anyway. It needs attention, so it says so. (Cold audit, 2026-09-21.)
+            if state == ANALYZED:
+                state = UNANALYZABLE
             out.append({
                 "path": p,
                 "file": os.path.basename(p),

@@ -31,6 +31,15 @@ def cfgdir(tmp_path, monkeypatch):
     call, so redirecting it here is enough -- no module state to reset."""
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Pinned as well as APPDATA, and on purpose. Nothing in this file calls
+    # export.find_env today, but redirecting APPDATA alone does NOT stop that walk
+    # reaching the workspace .env and a real Plex key being copied into the scratch
+    # folder (ISSUES.md row 48, measured 2026-09-21). Every config-touching test
+    # file pins both, so a test added here later inherits the guarantee instead of
+    # discovering the hard way that it never had it.
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("ATTUNE_ENV", str(empty_env))
     # _SAID_CORRUPT is a module global that only silences a repeated print; reset it
     # so each test starts from the same place rather than depending on test order.
     monkeypatch.setattr(cfg, "_SAID_CORRUPT", False, raising=False)

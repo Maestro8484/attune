@@ -16,8 +16,13 @@ What is locked in here:
     Not Mixable view, because both now come from one helper. They used to be
     built in one place only, so the main list said nothing at all;
   * the sort order is analyzed, then pending, then unanalyzable;
-  * `self.analyzed` keeps its old two-state meaning, because several sorts, the
-    stats footer and userdata.py read it and none of them wants a third value.
+  * `self.analyzed` keeps its old two-state meaning, because recipes.py's three
+    seed tiers, smartlists.py's "analyzed" rule and the stats footer read it and
+    none of them wants a third value;
+  * a row the Not Mixable view holds is never labelled "Analyzed", because
+    membership in the pool is the fact and the DB columns are only a hint: the
+    engine also drops verified-missing files and non-finite vectors, and neither
+    leaves anything in `features.error`.
 
 The database is built from scratch in tmp_path. Nothing here reads the
 production library.
@@ -72,9 +77,10 @@ CASES = {
 
 @pytest.fixture
 def library(tmp_path):
-    """A five-track library covering every situation, plus the pool membership the
-    real engine would produce: a track reaches the pool only with a readable vector
-    AND a fingerprint."""
+    """A five-track library covering every situation the columns can express.
+
+    The pool this hands back is NOT what the real engine would build; the comment
+    at the bottom of this fixture says exactly how it differs and why."""
     dbp = str(tmp_path / "scratch.db")
     conn = dbm.connect(dbp)
     rng = np.random.default_rng(3)
@@ -96,10 +102,21 @@ def library(tmp_path):
                          (p, rng.normal(size=512).astype(np.float32).tobytes(), 512))
     conn.commit()
     conn.close()
-    # The pool is what hybrid.py would hand LibraryIndex. "old_width" is in it on
-    # purpose: it has both halves stored, so it reaches the pool and is the case that
-    # puts a third state in the MAIN list rather than only in Not Mixable.
-    pool = [paths["analyzed"], paths["old_width"]]
+    # The pool is what hybrid.py would hand LibraryIndex.
+    #
+    # "old_width" is in it DELIBERATELY AND SYNTHETICALLY. The real engine would not
+    # put it there: src/hybrid.py admits a features row to its librosa matrix only
+    # when dim == 79, so a 40-wide vector never reaches the pool, and in a settled
+    # library every row of the main song list therefore reads Analyzed. This fixture
+    # hands LibraryIndex a pool the engine would not build, on purpose, so the
+    # main-list branch of the three-state logic is exercised at all rather than being
+    # dead code nobody ever proves. An earlier version of this comment claimed the
+    # engine WOULD produce this pool, which was simply wrong.
+    #
+    # "not_reached" is in it for the sort: without a pending row in the pool there is
+    # nothing to order between analyzed and unanalyzable, and the sort test passed
+    # against the OLD two-state key by accident.
+    pool = [paths["analyzed"], paths["old_width"], paths["not_reached"]]
     return dbp, paths, pool
 
 
@@ -165,14 +182,15 @@ def test_the_missing_fingerprint_is_only_mentioned_when_it_is_the_whole_story(st
 
 def test_the_main_list_names_the_third_state_instead_of_not_analyzed(studio, library):
     lib, paths = _index(studio, library)
-    rows = {r["title"]: r for r in (lib.row(i, with_trackno=False)
-                                    for i in range(lib.n))}
     by_path = {lib.paths[i]: lib.row(i, with_trackno=False) for i in range(lib.n)}
 
     assert by_path[paths["analyzed"]]["status"] == studio.ANALYZED
     assert by_path[paths["old_width"]]["status"] == studio.UNANALYZABLE
+    assert by_path[paths["not_reached"]]["status"] == studio.PENDING
     assert "Not analyzed" not in {r["status"] for r in by_path.values()}
-    assert rows is not None
+    # All three words really do appear, so this is not three rows agreeing by accident.
+    assert {r["status"] for r in by_path.values()} == {
+        studio.ANALYZED, studio.PENDING, studio.UNANALYZABLE}
 
 
 def test_the_row_carries_the_reason_so_the_list_can_show_it(studio, library):
@@ -195,12 +213,22 @@ def test_the_old_two_state_flag_still_means_exactly_what_it_meant(studio, librar
     assert all(isinstance(v, bool) for v in lib.analyzed)
 
 
-def test_sorting_by_status_puts_analyzed_first(studio, library):
+def test_sorting_by_status_is_analyzed_then_pending_then_unanalyzable(studio, library):
+    """All THREE, in order. The earlier version of this test asserted only first and
+    last over a two-row pool whose rows tied on artist, so it passed unchanged against
+    the old two-state key -- it proved nothing. Caught by the cold audit, 2026-09-21."""
     lib, _paths = _index(studio, library)
     keyf = studio.LibraryIndex.SORTS["status"]
     order = sorted(range(lib.n), key=lambda i: keyf(lib, i))
-    assert lib.state[order[0]] == studio.ANALYZED
-    assert lib.state[order[-1]] == studio.UNANALYZABLE
+    assert [lib.state[i] for i in order] == [studio.ANALYZED, studio.PENDING,
+                                             studio.UNANALYZABLE]
+
+    # And the key the old code used cannot produce that order, which is what makes
+    # the assertion above worth having.
+    old_key = lambda s, i: (not s.analyzed[i], s.f_artist[i])
+    old_order = sorted(range(lib.n), key=lambda i: old_key(lib, i))
+    assert [lib.state[i] for i in old_order] != [studio.ANALYZED, studio.PENDING,
+                                                 studio.UNANALYZABLE]
 
 
 # -------------------------------------------------------------- the Not Mixable view
@@ -209,10 +237,46 @@ def test_not_mixable_separates_waiting_from_cannot_use(studio, library):
     lib, paths = _index(studio, library)
     by_path = {r["path"]: r for r in lib.failures}
 
-    assert by_path[paths["not_reached"]]["state"] == studio.PENDING
     assert by_path[paths["no_fingerprint"]]["state"] == studio.PENDING
     assert by_path[paths["failed"]]["state"] == studio.UNANALYZABLE
     assert paths["analyzed"] not in by_path, "a pool track is not a failure"
+
+
+def test_not_mixable_never_calls_a_row_analyzed(studio, library):
+    """Membership in the pool is the fact; the columns are only a hint. hybrid.py also
+    drops verified-missing files (ruling C6) and non-finite vectors, and neither leaves
+    a trace in features.error, so a row can reach this view with columns that look
+    perfect. Printing "Analyzed" inside a view called Not Mixable is the wrong answer,
+    and the route counted such a row under "cannot use" regardless, so the word and the
+    number disagreed. Caught by the cold audit, 2026-09-21."""
+    lib, _paths = _index(studio, library)
+    assert lib.failures, "the fixture stopped producing failure rows"
+    assert studio.ANALYZED not in {r["state"] for r in lib.failures}
+    assert all(r["state"] in (studio.PENDING, studio.UNANALYZABLE)
+               for r in lib.failures)
+    assert all(r["why"] for r in lib.failures), "every row here owes a reason"
+
+
+def test_a_pool_track_with_no_features_row_gets_a_reason_not_a_blank(studio, library):
+    """Such a track falls through the constructor loop entirely, so its defaults are the
+    only thing that answers for it. A blank would mean the main list and Not Mixable
+    disagree about one situation, which is the property the shared helper exists to
+    guarantee."""
+    lib, paths = _index(studio, library)
+    dbp, _paths2, pool = library
+    # Delete one pool track's features row and rebuild, so it has none at all.
+    import sqlite3
+    con = sqlite3.connect(dbp)
+    con.execute("DELETE FROM features WHERE path = ?", (paths["analyzed"],))
+    con.commit()
+    con.close()
+    meta = {p: {"artist": "Artist", "album": "Album", "title": "t"} for p in pool}
+    rebuilt = studio.LibraryIndex(dbp, pool, meta)
+    i = rebuilt.paths.index(paths["analyzed"])
+    assert rebuilt.state[i] == studio.PENDING
+    assert rebuilt.why[i].startswith("Not analyzed yet"), (
+        f"a pool track with no features row got {rebuilt.why[i]!r}")
+    assert rebuilt.row(i, with_trackno=False)["why"] == rebuilt.why[i]
 
 
 def test_not_mixable_still_carries_the_reason_sentence(studio, library):

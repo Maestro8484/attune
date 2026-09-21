@@ -220,7 +220,45 @@ def test_a_nonsense_engine_is_refused_too(client):
 
 def test_a_cold_start_did_not_copy_a_real_key_from_the_workspace_env(client):
     """ISSUES.md row 48. Redirecting APPDATA alone does not stop export.find_env
-    walking up to the workspace .env and the carryover writing a real Plex key into
-    the scratch folder. This asserts the ATTUNE_ENV pin above actually holds."""
+    walking up to the workspace .env and the one-time carryover writing a real Plex
+    key into the scratch folder -- measured 2026-09-21, the key landed in a temp file.
+
+    An earlier version of this test asserted only that ATTUNE_ENV was set and that the
+    file it named was empty, and never looked at the settings file at all: if the pin
+    stopped holding, it still passed. It now reads what the cold start actually wrote.
+    (Cold audit, 2026-09-21.)"""
     assert os.environ.get("ATTUNE_ENV"), "the test fixture stopped pinning ATTUNE_ENV"
     assert os.path.getsize(os.environ["ATTUNE_ENV"]) == 0
+
+    # create_app ran its one-time carryover when this module's fixture built the app.
+    # What it wrote is on disk, and nothing in it may have come from a real .env.
+    stored = _stored(client)
+    assert stored.get("plex_env_migrated") is True, (
+        "the carryover did not run, so this test is not exercising anything")
+    for key in ("plex_url", "plex_machine_id", "plex_server_name", "plex_section_key"):
+        assert not stored.get(key), (
+            f"{key} arrived from somewhere; the ATTUNE_ENV pin is not holding")
+
+
+def test_a_stored_learned_engine_does_not_jam_every_save(client):
+    """Removing "Learned metric" from the window strands anyone whose settings file
+    still holds it: the select finds no matching option, falls back to an empty value,
+    and sends that on the next save, which is refused -- so EVERY save fails, on any
+    tab, with nothing on screen saying why. The server reports "auto" instead, so the
+    window shows a real choice and the stored value heals on the first save. Caught by
+    the cold audit, 2026-09-21."""
+    import config as cfg
+    settings = cfg.load()
+    settings["engine"] = "learned"
+    cfg.save(settings)
+    assert cfg.load()["engine"] == "learned", "the fixture did not take"
+
+    reported = client.get("/api/settings", environ_base=LOCAL).get_json()
+    assert reported["settings"]["engine"] == "auto", (
+        "a stored 'learned' was handed to the window, which has no option for it")
+
+    r = client.post("/api/settings",
+                    json={"engine": "auto", "playlist_name_template": "like-{seed}"},
+                    environ_base=LOCAL)
+    assert r.status_code == 200, f"an ordinary save failed: {r.get_data(as_text=True)}"
+    assert _stored(client)["engine"] == "auto"

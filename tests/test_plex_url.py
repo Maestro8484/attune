@@ -78,8 +78,10 @@ def test_valid_plex_url_refuses(raw):
 
 
 def test_a_token_in_the_query_string_is_never_carried_through():
-    """Belt to the braces above: whatever else happens, nothing that looks like a
-    Plex token may survive into the cleaned address."""
-    cleaned = export.valid_plex_url("http://192.168.1.50:32400?X-Plex-Token=SECRET")
-    assert cleaned is None
-    assert cleaned is None or "SECRET" not in cleaned
+    """A pasted address can arrive with a token on it. Whatever the function decides to
+    do with such a URL, the token must not survive into anything it returns."""
+    for raw in ("http://192.168.1.50:32400?X-Plex-Token=SECRET",
+                "http://192.168.1.50:32400/?X-Plex-Token=SECRET",
+                "http://192.168.1.50:32400#X-Plex-Token=SECRET"):
+        cleaned = export.valid_plex_url(raw)
+        assert "SECRET" not in (cleaned or ""), f"{raw!r} leaked its token into {cleaned!r}"

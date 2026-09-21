@@ -59,6 +59,15 @@ def appmod():
 def cfgdir(tmp_path, monkeypatch):
     monkeypatch.setenv("APPDATA", str(tmp_path))
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    # Pinned as well as APPDATA, and on purpose. Nothing in this file calls
+    # export.find_env today, but redirecting APPDATA alone does NOT stop that walk
+    # reaching the workspace .env and a real Plex key being copied into the scratch
+    # folder (ISSUES.md row 48, measured 2026-09-21). Every config-touching test
+    # file pins both, so a test added here later inherits the guarantee instead of
+    # discovering the hard way that it never had it.
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("ATTUNE_ENV", str(empty_env))
     d = cfg.config_dir()
     os.makedirs(d, exist_ok=True)
     return d
@@ -69,7 +78,11 @@ ENV_WITH_PLEX = {
     "PLEX_ACCOUNT_TOKEN": "a-real-looking-key",
     "PLEX_SECTION_KEY": "3",
     "PLEX_MACHINE_ID": "abc123",
-    "PLEX_SERVER_NAME": "MyPlex",
+    # Invented. An earlier draft of this file used the real server's name, which is a
+    # private string in a public repository and exactly what the leak scan exists to
+    # stop -- it got past the scan only because that name was not one of the literals
+    # the scan loads. Nothing here may be copied from the workspace .env.
+    "PLEX_SERVER_NAME": "ExampleServer",
 }
 
 
