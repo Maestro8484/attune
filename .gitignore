@@ -79,5 +79,26 @@ eval/abtest_results.jsonl
 # mined behavioural pairs (eval/build_behavior_pairs.py --emit-pairs): ~6 MB, carries the
 # full personal library path list, and regenerates in seconds. The small result JSONs next
 # to it (behavior_probe_result / behavior_signal_probe) ARE committed -- they are the
-# evidence behind eval/SIGNAL_REPORT.md.
+# evidence behind eval/SIGNAL_REPORT.md, and they are published with folder paths and
+# playlist names replaced by placeholders (each says so in its own "_sanitized" field).
 eval/behavior_pairs.json
+
+# generated eval result dumps. eval/harness.py and friends write the analyzed library's real
+# file names into these, which is personal data however innocuous the filename looks. They
+# regenerate from the scripts in eval/ and are never worth committing. (The one tracked
+# recipe_sweep file predates this rule and was checked: it holds parameters and scores only.)
+eval/report_*.json
+eval/compare_clap_alone_*.json
+eval/recipe_sweep_*.json
+
+# the CLAP audio model is 263 MiB. Keeping it in the repo made every clone pay for it, needed
+# the git-lfs add-on to get anything but a 134-byte stub, and drew on a shared monthly
+# bandwidth allowance. It is published as a release asset instead:
+#     python tools/fetch_model.py
+src/models/clap_music.onnx
+
+# swap log written beside the built app by the desktop build road
+dist-swap.log
+
+# git worktrees the desktop app creates for parallel sessions
+.claude/worktrees/

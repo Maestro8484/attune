@@ -25,20 +25,20 @@ Same hash means nothing has landed since this was written. Different means stale
 that gap.
 
 State as recorded: branch `feature/behavioral-head`, worktree `attune-personal-wt`, DB
-`mixer-ng/data/mixer.db` opened read-only, playlists `D:\Playlists` read-only.
+`mixer-ng/data/mixer.db` opened read-only, the operator's playlist folder read-only.
 
 Reproduce everything:
 
 ```
 # Phase 1, counts (lean venv)
 mixer-ng\.venv\Scripts\python.exe eval\build_behavior_pairs.py ^
-    --db mixer-ng\data\mixer.db --playlists "D:\Playlists" ^
+    --db mixer-ng\data\mixer.db --playlists "<your playlist folder>" ^
     --out eval\behavior_pairs.json --emit-pairs
 
 # Phase 1b, is it taste? (ML venv, needs CUDA + onnxruntime)
 mixer-ng\.venv-ml\Scripts\python.exe eval\probe_behavior_signal.py ^
     --db mixer-ng\data\mixer.db --pairs eval\behavior_pairs.json ^
-    --playlists "D:\Playlists"
+    --playlists "<your playlist folder>"
 ```
 
 ---
@@ -67,14 +67,15 @@ number). All of them are convergence diagnostics. None of them may select what s
 | positive pairs | 85,866 |
 | distinct tracks covered | 1,629 (7.7% of pool) |
 
-The 47 dropped copies are the same lists saved four times over: root as `.m3u.bak`,
-`MiniPC\`, `MiniPC\m3u non edited\`, and `MiniPC\*_2.m3u`. Verified identical by content
-fingerprint on the resolved sequence, so the `m3u non edited` folder name notwithstanding,
-nobody edited anything. There is no operator-edit delta to mine.
+The 47 dropped copies are the same lists saved four times over: once at the playlist
+root with a `.bak` suffix, and three times under a per-machine subfolder, one of which
+is named as though it held hand-edited copies. Verified identical by content
+fingerprint on the resolved sequence, so that folder name notwithstanding, nobody
+edited anything. There is no operator-edit delta to mine.
 
 Path resolution uses `src/musicip_engine.relkey`, the mirror-invariant already used by
 `MusicIPAdapter` and `eval/bakeoff_musicip.py`. The 1,782 unresolved lines are mostly
-`\\NAS\...\Songs\...` singles that are not in the analyzed pool.
+singles under a network share that are not in the analyzed pool.
 
 ### Source B, usermeta
 
@@ -221,8 +222,9 @@ What would unblock it, in order of leverage:
    play counts and, through session adjacency, genuine co-listening pairs. This is the
    recommended path.
 3. **Hand-curate playlists deliberately, and label them.** If the operator builds lists
-   himself, keep them out of `_LAN-Playlists` or mark them, so provenance never has to be
-   reverse-engineered again. 25 machine lists is what the current folder amounts to.
+   himself, keep them out of the shared playlist folder or mark them, so provenance
+   never has to be reverse-engineered again. 25 machine lists is what the current
+   folder amounts to.
 
 Retry gate for the next attempt, replacing the pair-count gate that failed to bind:
 
