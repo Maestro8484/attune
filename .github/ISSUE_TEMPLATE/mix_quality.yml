@@ -1,0 +1,49 @@
+name: A mix sounded wrong
+description: Attune built a playlist and the choices did not make sense by ear.
+labels: ["mix quality"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This is the most useful kind of report there is, and the hardest to act on without
+        detail. Mix quality is judged by ear here, never by a score, so what you heard is
+        the evidence.
+  - type: textarea
+    id: what-you-heard
+    attributes:
+      label: What you heard
+      description: >
+        What was wrong with it. Wandered off the style? Right style, wrong tempo? Jumped
+        decades? Same three artists over and over?
+    validations:
+      required: true
+  - type: input
+    id: seed
+    attributes:
+      label: The seed track
+      description: Artist and title is enough. No file paths needed.
+    validations:
+      required: true
+  - type: textarea
+    id: offenders
+    attributes:
+      label: Two or three tracks it picked that it should not have
+      description: Artist and title each, and one line on why each one was wrong.
+    validations:
+      required: true
+  - type: input
+    id: settings
+    attributes:
+      label: Similarity and Variety
+      placeholder: Similarity 40, Variety 5
+  - type: input
+    id: engine
+    attributes:
+      label: Engine
+      description: Preferences, then Mixing, then Engine.
+      placeholder: Attune V2
+  - type: input
+    id: recipe
+    attributes:
+      label: Recipe or weights, if you changed them
+      placeholder: default, or CLAP 1.0 / Timbre 0.4 / Genre 0.3 / Tempo 0.3 / Era 0.1

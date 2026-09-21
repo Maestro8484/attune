@@ -1,0 +1,63 @@
+name: Bug report
+description: Something in Attune does not work the way it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time. Please do not paste your library database or a full
+        file listing into an issue: it names every track and folder on your machine.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        I pressed Create Mix on a track and ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open Attune
+        2. Click ...
+        3. Press ...
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Attune version
+      description: The version you downloaded, for instance 0.1.0. If you built it yourself, the commit.
+    validations:
+      required: true
+  - type: dropdown
+    id: install
+    attributes:
+      label: How you installed it
+      options:
+        - The installer (AttuneSetup-x.y.z.exe)
+        - The portable zip
+        - From source
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+  - type: input
+    id: library-size
+    attributes:
+      label: Roughly how many tracks
+      placeholder: about 20,000
+  - type: textarea
+    id: logs
+    attributes:
+      label: Anything from the logs
+      description: >
+        Preferences, then Advanced, then Logs. Paste only the lines around the problem, and
+        check them for file paths you would rather not publish.
+      render: text

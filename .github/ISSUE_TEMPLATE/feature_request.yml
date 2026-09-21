@@ -1,0 +1,31 @@
+name: Feature request
+description: Something Attune should be able to do and cannot.
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Attune is one person's side project. A clear "here is what I am trying to do and
+        why it is awkward today" is much more likely to get built than a design.
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The job, not the solution. What is awkward about it today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What you think would fix it
+      description: Optional. If you already have a shape in mind, describe it.
+  - type: checkboxes
+    id: local-first
+    attributes:
+      label: Local-first check
+      description: >
+        Anything that needs a cloud account or phones home will not be merged. Optional
+        integrations with things you host yourself are welcome.
+      options:
+        - label: This does not require a cloud account or send anything off the machine.
+          required: true

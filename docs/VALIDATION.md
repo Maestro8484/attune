@@ -1,8 +1,12 @@
 # Validating Attune against MusicIP
 
-Attune began as a clean-room modernization of MusicIP Mixer, and one of its goals is to
-*measurably* approximate MusicIP's acoustic similarity — not just "feel similar." This is
-optional developer tooling; you don't need it to use Attune.
+Attune set out to reproduce what MusicIP Mixer did, and one of its goals was to
+*measurably* approximate MusicIP's acoustic similarity rather than just feel similar. Where
+Attune's behaviour matches MusicIP's, that came from measuring the running program through
+its own local network interface, never from taking the program apart. See NOTICE.md.
+
+This is optional developer tooling. You do not need any of it to use Attune, and the
+harness is not part of the shipped app.
 
 ## The idea
 

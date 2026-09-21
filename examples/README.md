@@ -1,29 +1,38 @@
 # Examples
 
-## Try Attune with zero real music
+## Try Attune with no real music at all
 
-`make_demo_library.py` synthesizes a tiny library of short WAV files in three distinct
-sonic families (warm harmonic pads, bright bells, percussive noise) — no copyrighted audio
-needed. A working engine should mix within a family.
+`make_demo_library.py` synthesises a tiny library of short WAV files in three distinct sonic
+families: warm harmonic pads, bright bells, and percussive noise. No copyrighted audio is
+involved. A working engine should mix within a family.
 
-```bash
+This is the fastest way to check that a change to the ranking still does something sensible,
+and it's what a contributor should reach for before pointing anything at a real collection.
+
+```
 python examples/make_demo_library.py
-python src/scan.py import-folder examples/sample_library
-python src/scan.py analyze --workers 4
-python src/mixer.py --seed examples/sample_library/warm_pad_02.wav --size 5 --style 30
+attune-scan import-folder examples/sample_library
+attune-scan analyze --workers 4
+attune-mix --seed examples/sample_library/warm_pad_02.wav --size 5 --style 30
 ```
 
-You should see the other `warm_pad_*` tracks rank nearest, then `bright_bell_*`, with
-`perc_noise_*` furthest away.
+The `attune-*` commands come from `pip install -e .`. Without that, run the modules
+directly: `python src/scan.py import-folder ...` and `python src/mixer.py --seed ...`.
 
-The generated `sample_library/` is git-ignored; regenerate it any time.
+You should see the other `warm_pad_*` tracks rank nearest, then `bright_bell_*`, with
+`perc_noise_*` furthest away. If they don't, something in the ranking is wrong.
+
+The generated `sample_library/` is git-ignored. Regenerate it whenever.
 
 ## Use your own music
 
-Just point `import-folder` at a real directory:
+Point `import-folder` at a real directory instead:
 
-```bash
-python src/scan.py import-folder "/path/to/your/music"
-python src/scan.py analyze --workers 6
-python src/mixer.py --seed "/path/to/a/song.mp3" --size 25 --style 40 --variety 3
 ```
+attune-scan import-folder "D:\Music"
+attune-scan analyze --workers 6
+attune-mix --seed "D:\Music\Artist\Album\track.mp3" --size 25 --style 40 --variety 3
+```
+
+That gives you the librosa engine. For the engine the app actually uses, fetch the model and
+add the embeddings first. See [../INSTALL.md](../INSTALL.md).

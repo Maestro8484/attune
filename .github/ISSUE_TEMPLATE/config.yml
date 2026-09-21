@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security report
+    url: https://github.com/Maestro8484/attune/security/advisories/new
+    about: Please report vulnerabilities privately, not in a public issue. See SECURITY.md.
+  - name: Read the walkthrough first
+    url: https://github.com/Maestro8484/attune/blob/main/docs/WALKTHROUGH.md
+    about: Click-by-click for first run, copying a mix to a USB stick, and Plex.

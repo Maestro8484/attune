@@ -29,13 +29,13 @@ API must be re-enabled by hand on every launch).
 
 | MusicIP | Attune |
 |---|---|
-| Proprietary closed acoustic signature | Open librosa descriptor (MFCC/chroma/spectral/tempo) |
-| MusicDNS/GenPUID online identification | **Dropped** — identification ≠ similarity; not needed for mixing |
+| Proprietary closed acoustic signature | A music-trained CLAP embedding plus an open librosa descriptor, both stored where you can read them |
+| MusicDNS/GenPUID online identification | **Dropped.** Identification is not similarity and mixing never needed it |
 | `.m3lib` binary library | One SQLite file |
-| `style` / `variety` sliders, artist spacing | Same knobs, transparent implementation |
-| `localhost:10002` HTTP API | (Roadmap) clean local API + `.m3u` export + Plex/Jellyfin |
-| Heavy legacy desktop UI | (Roadmap) small local web UI; engine is UI-agnostic |
-| Windows/Mac only, unmaintained | Cross-platform Python, MIT-licensed, hackable |
+| `style` / `variety` sliders, artist spacing | The same knobs, called Similarity and Variety, with the implementation on show |
+| `localhost:10002` HTTP API, re-enabled by hand every launch | A local web app that just runs. `.m3u8` export and Plex shipped; Jellyfin has not |
+| Heavy legacy desktop UI | A small local web UI in a native window. The engine stays UI-agnostic |
+| Windows and Mac only, unmaintained | Windows for now, with a portable Python engine underneath. Source MIT, built app GPL-3.0-or-later because of what it bundles |
 
 ## The common misconception (worth stating loudly)
 
