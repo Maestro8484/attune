@@ -130,6 +130,10 @@ class HybridEngine:
     # feature.py stores chroma means at offsets 40:52 in the 79-dim vector
     CHROMA_SLICE = (40, 52)
     LIB_DIM = 79            # expected librosa descriptor length (see features.FEATURE_DIM)
+    CLAP_DIM = 512          # laion/larger_clap_music embedding length (LAW 2: never swapped).
+                            # Only used to shape an EMPTY pool's matrix -- a pool with any
+                            # track at all takes its width from the stored vectors, so this
+                            # constant can never silently reshape real data.
     # features.py's FEATURE_GROUPS['texture'] = (71, 78), ordered centroid/bandwidth/
     # rolloff/zcr/rms_mean/rms_std/flatness -> rms_mean (loudness) is offset 71+4 = 75.
     # This is radio_next()'s energy-arc axis: TEACHER_MECHANICS.md B.3 measured it as one
@@ -185,16 +189,26 @@ class HybridEngine:
                 tempo.setdefault(p, tp)
         except sqlite3.OperationalError:
             pass
-        # CLAP vectors (required)
+        # CLAP vectors. AN EMPTY POOL IS A NORMAL STATE, not an error: a brand-new
+        # install has a database with no `clap` table at all until the first scan
+        # reaches its embed stage. This used to SystemExit, which is what made the app
+        # unopenable on a machine that had never analyzed anything.
+        #
+        # THE MISSING TABLE IS ASKED ABOUT, NOT CAUGHT. A bare `except
+        # sqlite3.OperationalError` around the read would also swallow "no such column:
+        # vec" on a clap table of the wrong shape, and turn a real fault on a real
+        # library into a silent empty pool -- the loud-failure-to-quiet-wrong-answer
+        # trade this project refuses. Asking sqlite_master separates "nothing embedded
+        # yet", which is normal, from "this table is wrong", which is not and still
+        # raises. (Raised by the Codex audit of this change, 2026-09-20.)
         clap = {}
-        for p, dim, blob in conn.execute("SELECT path,dim,vec FROM clap WHERE vec IS NOT NULL"):
-            v = np.frombuffer(blob, np.float32)
-            if v.shape[0] == dim:
-                clap[p] = v
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clap'"
+                        ).fetchone():
+            for p, dim, blob in conn.execute("SELECT path,dim,vec FROM clap WHERE vec IS NOT NULL"):
+                v = np.frombuffer(blob, np.float32)
+                if v.shape[0] == dim:
+                    clap[p] = v
         conn.close()   # all reads done at load; don't leak the handle / WAL reader
-        if not clap:
-            raise SystemExit("no CLAP embeddings found — run embed.py first, "
-                             "or use the librosa engine (mixer.py)")
 
         # z-score + L2-normalize the librosa matrix over ALL analyzed tracks, exactly as the
         # V2 tuner did, so the 'lib' cosine is comparable across dimensions.
@@ -231,13 +245,35 @@ class HybridEngine:
             if n0 != len(paths):
                 print(f"pool: excluded {n0 - len(paths)} verified-missing file(s)")
         if not paths:
-            raise SystemExit("no tracks with both CLAP and librosa features — run "
-                             "scan.py analyze + embed.py, or set the 'lib' weight to 0")
+            # Empty pool: name WHICH empty state this is, once, and carry on. Nothing is
+            # mixable until a scan runs, every route answers emptily rather than failing,
+            # and the first-run wizard is the whole point of the window being open.
+            #
+            # Saying which one matters. "No music at all" and "music imported but never
+            # embedded" look identical from outside -- both are a window with nothing in
+            # it -- and they need completely different things done about them. This used
+            # to be a SystemExit that took the whole app down with one message covering
+            # all three.
+            if not meta:
+                print("pool: 0 tracks — the library is empty, nothing scanned yet")
+            elif not clap:
+                print(f"pool: 0 tracks — {len(meta)} in the library, none embedded yet. "
+                      f"Run the scan again to finish its last stage.")
+            else:
+                print(f"pool: 0 tracks — {len(meta)} in the library, but none has both an "
+                      f"embedding and an analysis. See Library, Not Mixable.")
 
         self.paths = paths
         self._all_clap = set(clap)                     # every CLAP-known path (superset of pool)
-        self.X = np.vstack([clap[p] for p in paths])   # L2-normalized already
-        self.L = np.vstack([libN[p] for p in paths]) if self.use_lib else None
+        # np.vstack refuses an empty list, so an empty pool gets explicitly-shaped
+        # zero-row matrices instead. Shape, not just emptiness, matters: code downstream
+        # reads .shape[1].
+        self.X = (np.vstack([clap[p] for p in paths]) if paths
+                  else np.zeros((0, self.CLAP_DIM), np.float32))   # L2-normalized already
+        self.L = None
+        if self.use_lib:
+            self.L = (np.vstack([libN[p] for p in paths]) if paths
+                      else np.zeros((0, self.LIB_DIM), np.float64))
         self.idx = {p: i for i, p in enumerate(paths)}
         self.artist = [meta.get(p, (None,)*5)[0] for p in paths]
         self.genre_tags = [_tags(meta.get(p, (None,)*5)[3]) for p in paths]
@@ -252,15 +288,21 @@ class HybridEngine:
         # the 'lib' weight/pool-restriction is active -- independent of self.use_lib by
         # design. NaN for a pool track with no librosa vector (e.g. lib=0 widened the pool
         # to CLAP-only tracks); radio_next() treats NaN as "unknown, don't bias".
-        if lib_vec:
+        if lib_vec and paths:
             raw_e = np.array([v[self.RMS_MEAN_INDEX] for v in lib_vec.values()])
             mu_e, sd_e = raw_e.mean(), raw_e.std()
             sd_e = sd_e if sd_e > 1e-9 else 1e-9
             self.energy = np.array(
                 [(lib_vec[p][self.RMS_MEAN_INDEX] - mu_e) / sd_e if p in lib_vec else np.nan
                  for p in paths])
-            lo, hi = np.nanpercentile(self.energy, [10, 90])
-            self._energy_lo, self._energy_hi = float(lo), float(hi)
+            # np.nanpercentile over an all-NaN slice warns and returns nan; that can
+            # only happen when the lib weight widened the pool to CLAP-only tracks.
+            # `paths` non-empty is guaranteed above, so the empty-array case is gone.
+            if np.isnan(self.energy).all():
+                self._energy_lo, self._energy_hi = -1.0, 1.0
+            else:
+                lo, hi = np.nanpercentile(self.energy, [10, 90])
+                self._energy_lo, self._energy_hi = float(lo), float(hi)
         else:
             self.energy = np.full(len(paths), np.nan)
             self._energy_lo, self._energy_hi = -1.0, 1.0   # unreachable: no energy data

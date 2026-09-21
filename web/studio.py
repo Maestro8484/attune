@@ -232,7 +232,15 @@ class LibraryIndex:
         for p, err, hasvec, dim in con.execute(
                 "SELECT path, error, vec IS NOT NULL, dim FROM features"):
             feat[p] = (err or "", bool(hasvec), dim)
-        clap = {p for (p,) in con.execute("SELECT path FROM clap WHERE vec IS NOT NULL")}
+        # No 'clap' table means the library has never been embedded -- a brand-new
+        # install, or one scanned by a build older than this one -- and every track then
+        # truthfully reads as having no sound fingerprint yet. Asked about rather than
+        # caught, so a clap table of the wrong shape still raises instead of quietly
+        # reporting every track as unembedded. (Codex audit, 2026-09-20.)
+        clap = set()
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clap'"
+                       ).fetchone():
+            clap = {p for (p,) in con.execute("SELECT path FROM clap WHERE vec IS NOT NULL")}
         out = []
         for p, artist, album, title, genre, year, secs in con.execute(
                 "SELECT path, artist, album, title, genre, year, seconds FROM tracks"):
@@ -240,14 +248,28 @@ class LibraryIndex:
                 continue
             err, hasvec, dim = feat.get(p, ("", False, 0))
             why = []
-            if p not in clap:
-                why.append("no CLAP embedding")
+            # PLAIN ENGLISH, and the stored reason VERBATIM when there is one. The
+            # analyzer writes its failures as sentences meant for a person now, so the old
+            # "librosa analysis failed: " prefix was jargon AND a second sentence opening
+            # in the middle of the first: a stranger read "librosa analysis failed: .m4a
+            # files need ffmpeg, which Attune does not carry." (Raised by the bundle-diet
+            # stream, 2026-09-20.) The name of the library that did the work is ours to
+            # know, not theirs to read.
+            analysis_ok = hasvec and not err and (not dim or dim == 79)
             if not hasvec:
-                why.append(f"librosa analysis failed: {err}" if err else "no librosa features")
+                why.append(err or "Not analyzed yet. Rescan the library to try again.")
             elif err:
-                why.append(f"librosa reported: {err}")
+                why.append(err)
             elif dim and dim != 79:
-                why.append(f"librosa vector is {dim}-dim, not the 79 the engine expects")
+                why.append(f"Analyzed by an older version of Attune ({dim} numbers wide, "
+                           f"this build reads 79). Rescan the library to redo it.")
+            # Only worth saying when the analysis half actually succeeded. On a track that
+            # failed to decode, both halves are missing and the decode error is the whole
+            # story -- repeating "and no fingerprint either" adds nothing but a second
+            # line to read.
+            if p not in clap and analysis_ok:
+                why.append("Analyzed, but Attune has not made its sound fingerprint yet. "
+                           "Rescan the library to finish that last step.")
             out.append({
                 "path": p,
                 "file": os.path.basename(p),
@@ -258,7 +280,8 @@ class LibraryIndex:
                 "year": int(year or 0) or None,
                 "seconds": int(secs or 0),
                 "length": _seconds_to_len(secs),
-                "why": "; ".join(why) or "cannot tell from the analysis tables",
+                "why": " ".join(why) or "Attune cannot tell from the library why this "
+                                       "one is not mixable.",
             })
         return out
 

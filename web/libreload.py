@@ -34,6 +34,8 @@ DESIGN -- why in-place reinitialization, not rebinding a new object:
 
 Endpoints:
   POST /api/lib/reload           loopback-guarded, starts a reload if none is running
+                                 and no scan is (409 otherwise -- a reload during a scan
+                                 reads a half-written library)
   GET  /api/lib/reload/status     {running, started, done, error, old_count, new_count}
 """
 from __future__ import annotations
@@ -179,6 +181,15 @@ def register(app, ctx):
     def reload_start():
         if not _guard():
             return jsonify(ok=False, error="only available on the Attune machine itself"), 403
+        # A reload while a scan is running would read the library halfway through being
+        # written and install a pool missing whatever had not been committed yet. The
+        # two jobs have independent locks, so nothing else stops them overlapping --
+        # autoscan.py in particular can start a scan from its own thread at any moment.
+        # Refuse rather than publish a wrong pool. (Raised by the Codex read, 2026-09-20.)
+        scan_job = ctx.get("scan_job")
+        if scan_job is not None and getattr(scan_job, "running", False):
+            return jsonify(ok=False,
+                           error="a scan is running — the library loads when it finishes"), 409
         try:
             job.start()
         except RuntimeError as e:

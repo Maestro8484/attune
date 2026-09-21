@@ -673,12 +673,17 @@
   </div>
 </div>
 
-<!-- First-run wizard: point Attune at your music (shows only when library_folders is empty) -->
+<!-- First-run wizard: point Attune at your music. Two panes in one modal, because the
+     first run is two steps and used to be one: pick folders, then WATCH IT HAPPEN. The
+     old wizard vanished the moment Scan was pressed, leaving a first-time user staring
+     at an empty window with a thin progress bar at the top and no idea whether the thing
+     had worked, how long it would take, or where to go next. The second pane stays until
+     the music is actually mixable and then hands over with one button. -->
 <div id="wizWrap" class="modalwrap" hidden>
   <div class="modal" style="width:460px">
-    <div class="modalHead">Welcome to Attune
+    <div class="modalHead" id="wizTitle">Welcome to Attune
       <button class="x" data-close="wizWrap">✕</button></div>
-    <div class="modalBody">
+    <div class="modalBody" id="wizSetup">
       <p class="hint" style="font-size:13px;line-height:1.5">
         Point Attune at your music and it'll build a library you can mix from.
         Add one or more folders below, then scan — you can add more later in
@@ -687,11 +692,24 @@
       <div class="btnrow"><button id="wizBrowse">📁 Browse…</button>
         <button id="wizAddFolder">+ Add another</button></div>
     </div>
+    <div class="modalBody" id="wizProgress" hidden>
+      <p class="hint" style="font-size:13px;line-height:1.5" id="wizStageLine">
+        Reading your music…</p>
+      <div class="progressbar"><div class="fill" id="wizFill" style="width:0%"></div></div>
+      <p class="hint" style="font-size:12px;line-height:1.5;margin-top:10px" id="wizNote">
+        Attune listens to each song once and remembers how it sounds. A big library takes
+        a while; you can leave this open or close it and watch the bar at the top. Nothing
+        is lost if you stop — the next scan picks up where this one left off.</p>
+      <p class="hint" style="font-size:12px;line-height:1.5">
+        To add more folders later, open <b>Preferences</b> (the ⚙ button at the top right)
+        and choose <b>Library</b>.</p>
+    </div>
     <div class="modalFoot">
       <span id="wizMsg" class="msg"></span>
       <span class="spacer"></span>
-      <button class="chip" data-close="wizWrap">Skip for now</button>
+      <button class="chip" data-close="wizWrap" id="wizSkip">Skip for now</button>
       <button class="chip on" id="wizStart">⟳ Scan my music</button>
+      <button class="chip on" id="wizFinish" hidden>Start mixing</button>
     </div>
   </div>
 </div>

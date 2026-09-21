@@ -288,10 +288,16 @@ class LearnedEngine(Engine):
         # the TRAINING stats above -- so read them again here, verifying dims.
         con = sqlite3.connect("file:" + db_path.replace("\\", "/") + "?mode=ro", uri=True)
         clap, lib79 = {}, {}
-        for p, dim, blob in con.execute("SELECT path,dim,vec FROM clap WHERE vec IS NOT NULL"):
-            v = np.frombuffer(blob, np.float32)
-            if v.shape[0] == dim == 512:
-                clap[p] = v
+        # No 'clap' table means nothing has been embedded yet, which is normal on a fresh
+        # install. Asked about rather than caught, so a clap table of the WRONG SHAPE
+        # still raises instead of reading as an empty one -- same reasoning as
+        # hybrid.py's copy of this read. (Codex audit, 2026-09-20.)
+        if con.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='clap'"
+                       ).fetchone():
+            for p, dim, blob in con.execute("SELECT path,dim,vec FROM clap WHERE vec IS NOT NULL"):
+                v = np.frombuffer(blob, np.float32)
+                if v.shape[0] == dim == 512:
+                    clap[p] = v
         for p, blob, dim in con.execute(
                 "SELECT path,vec,dim FROM features WHERE vec IS NOT NULL AND error IS NULL"):
             if dim != 79:
@@ -316,10 +322,18 @@ class LearnedEngine(Engine):
         if skipped:
             self._log(f"LearnedEngine: skipped {skipped}/{len(self.eng.paths)} pool tracks "
                       f"missing CLAP-512 or librosa-79")
-        if not rows:
+        # An EMPTY LIBRARY is a normal state -- a fresh install, before the first scan --
+        # and this engine must load over it rather than take the window down with it.
+        # A library that HAS tracks but none this engine can use is a different thing
+        # entirely and still refuses loudly: that means the CLAP or librosa vectors are
+        # missing or the wrong width, which is a real fault worth naming.
+        if not rows and self.eng.paths:
             raise SystemExit("LearnedEngine: no pool track has both CLAP-512 and librosa-79")
 
-        X = np.vstack(feats).astype(np.float32)
+        # np.vstack refuses an empty list, so shape the empty case explicitly. 591 is the
+        # head's own input width (CLAP-512 + librosa-79), asserted against the ONNX graph
+        # a few lines above. With no rows the projection loop below simply never runs.
+        X = np.vstack(feats).astype(np.float32) if rows else np.zeros((0, 591), np.float32)
         E = np.empty((X.shape[0], 512), np.float32)
         for b in range(0, X.shape[0], 2048):        # project the whole pool once at startup
             E[b:b + 2048] = sess.run(["embedding"], {"features": X[b:b + 2048]})[0]

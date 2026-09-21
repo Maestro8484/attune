@@ -27,8 +27,21 @@ The standalone path needs librosa + onnxruntime importable by the app's own
 interpreter; embed_onnx.py exits with an honest message if librosa is absent.
 
 Engine note (stated, not hidden): the running engine loads its pool ONCE at
-startup, so tracks this job adds only become mixable after an app restart. The
-status payload carries `new_tracks` so the UI can tell the user exactly that.
+startup, so tracks this job adds are not mixable the moment it finishes. Since S11
+that no longer means restarting the app -- web/libreload.py rebuilds the pool in
+place (POST /api/lib/reload) and the UI offers it as one button. The status payload
+carries BOTH deltas so the UI knows there is something to load:
+
+  new_tracks    rows added to the catalog by the import stage
+  new_analyzed  rows that GAINED a librosa feature vector
+  new_embedded  rows that GAINED a CLAP vector -- the stage that makes a track mixable
+
+All three are needed, and each covers a resume the others miss. A scan resumed after
+a cancel imports nothing the second time (every file is already in the catalog), so
+new_tracks is 0. Cancel one BETWEEN the analyze and embed stages and run it again and
+new_analyzed is 0 as well, while every track in the folder becomes usable. Offering
+the reload on new_tracks alone left exactly those runs unmixable until the next
+restart. (Raised by the Codex reads of this design and of the change, 2026-09-20.)
 
 Endpoints:
   GET  /api/scan/status
@@ -78,10 +91,22 @@ def _db_counts(db_path):
         con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
         t = con.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
         a = con.execute("SELECT COUNT(*) FROM features WHERE vec IS NOT NULL").fetchone()[0]
+        # The embed stage is the THIRD thing a scan does and the only one that makes a
+        # track mixable. Counting it separately is what lets the UI tell a run that did
+        # nothing apart from a run whose import and analyze stages were already done:
+        # cancel a first scan between analyze and embed, run it again, and both the other
+        # deltas come back zero while every track in the folder becomes usable.
+        # Its own guard: a library that has never been embedded has no `clap` table at
+        # all, and that must not zero the two counts above.
+        # (Raised by the Codex audit of this change, 2026-09-20.)
+        try:
+            e = con.execute("SELECT COUNT(*) FROM clap WHERE vec IS NOT NULL").fetchone()[0]
+        except sqlite3.OperationalError:
+            e = 0
         con.close()
-        return {"tracks": t, "analyzed": a}
+        return {"tracks": t, "analyzed": a, "embedded": e}
     except sqlite3.Error:
-        return {"tracks": 0, "analyzed": 0}
+        return {"tracks": 0, "analyzed": 0, "embedded": 0}
 
 
 class ScanJob:
@@ -178,9 +203,12 @@ class ScanJob:
             worker_mode = frozen and not ml_python
             analyzer = _analyzer_exe() if worker_mode else None
             if worker_mode and not os.path.isfile(analyzer):
-                self.error = ("the analyzer component is missing — expected "
-                              f"{analyzer}. Reinstall Attune, or set an ML venv in "
-                              "Preferences → Advanced to analyze with your own Python.")
+                # Said to the PERSON, who cannot act on a file path or on the words "ML
+                # venv"; the path they cannot use goes to the scan log, where it is
+                # exactly what a bug report needs. (Cold Fable audit, 2026-09-20.)
+                self.logger.error("analyzer exe missing at %s", analyzer)
+                self.error = ("Part of Attune is missing, so it cannot read new music. "
+                              "Reinstalling Attune puts it back.")
                 return
             if ml_python:
                 heavy_python = ml_python
@@ -246,12 +274,18 @@ class ScanJob:
             self.stage = ""
             new_tracks = max(0, (self.after.get("tracks", 0) or 0)
                              - (self.before.get("tracks", 0) or 0))
+            new_analyzed = max(0, (self.after.get("analyzed", 0) or 0)
+                               - (self.before.get("analyzed", 0) or 0))
+            new_embedded = max(0, (self.after.get("embedded", 0) or 0)
+                               - (self.before.get("embedded", 0) or 0))
             if self.cancelled:
-                self.logger.info("scan cancelled: new_tracks=%s", new_tracks)
+                self.logger.info("scan cancelled: new_tracks=%s new_analyzed=%s "
+                                 "new_embedded=%s", new_tracks, new_analyzed, new_embedded)
             elif self.error:
                 self.logger.error("scan failed: %s", self.error)
             else:
-                self.logger.info("scan completed: new_tracks=%s", new_tracks)
+                self.logger.info("scan completed: new_tracks=%s new_analyzed=%s "
+                                 "new_embedded=%s", new_tracks, new_analyzed, new_embedded)
 
     def cancel(self):
         self.logger.info("cancel requested (stage=%s)", self.stage or "(none running)")
@@ -276,6 +310,13 @@ class ScanJob:
             "counts": after,
             "new_tracks": max(0, (after.get("tracks", 0) or 0)
                               - (self.before.get("tracks", 0) or 0)),
+            # See the module docstring: a resumed scan adds no catalog rows and would
+            # otherwise look like it did nothing, leaving its newly analyzed tracks
+            # unmixable until the next restart.
+            "new_analyzed": max(0, (after.get("analyzed", 0) or 0)
+                                - (self.before.get("analyzed", 0) or 0)),
+            "new_embedded": max(0, (after.get("embedded", 0) or 0)
+                                - (self.before.get("embedded", 0) or 0)),
         }
 
 

@@ -91,31 +91,154 @@ def _label(eng, path):
     return f"{m.get('artist') or '?'} - {m.get('title') or os.path.basename(path)}"
 
 
-def _check_db(db_path):
-    """Fail fast with an actionable message if the DB can't drive the V2 engine.
+def _load_db_module():
+    """Import src/db.py by path -- the ONE place the library schema is written.
 
-    HybridEngine needs a populated `clap` table; without one it SystemExits with
-    a terse note. Catch the common cases here so a first-time run gets told what
-    to do instead of a raw stack trace.
+    db.py does a bare `from features import FEATURE_DIM`, so features.py is loaded by
+    path first and registered in sys.modules, the same trick _load_engine_iface() uses
+    below for `engine`. features.py imports librosa lazily (inside extract()), so at
+    module scope it needs only numpy and is safe to load in the lean GUI bundle. Both
+    files are already listed in desktop/build.py's GUI_DATA, so nothing new has to be
+    bundled for this to work in the frozen app.
     """
+    import sys
+    if "features" not in sys.modules:
+        fspec = importlib.util.spec_from_file_location("features",
+                                                       os.path.join(SRC, "features.py"))
+        fmod = importlib.util.module_from_spec(fspec)
+        fspec.loader.exec_module(fmod)
+        sys.modules["features"] = fmod
+    spec = importlib.util.spec_from_file_location("attune_db", os.path.join(SRC, "db.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def _ensure_db(db_path):
+    """Make db_path into a usable Attune library file, creating an empty one if absent.
+
+    A first run on a machine that has never seen Attune has no database at all, and a
+    database that exists but has not been scanned yet has no `clap` table. BOTH are
+    normal states, not errors -- the whole point of the first-run wizard is to fill an
+    empty library, and it lives inside the window this function used to prevent from
+    opening. This previously SystemExited whenever the clap table was empty or missing,
+    told the user to run `python attune/src/embed.py` (a file an installed copy does not
+    have and a stranger has no Python for), and left them with a dead-end message.
+
+    The schema comes from src/db.py's own DDL, never a second copy of it here, so a
+    database created on first run is the same shape the scanner later writes into.
+
+    CREATION IS NOT UNCONDITIONAL. Only ONE path is ever created on demand: the app's
+    own library in the user's data folder. Any other path was chosen deliberately -- by
+    --db, by ATTUNE_DB, or by picking a library in Preferences -- and conjuring an empty
+    one there would turn a typo, an external disk that is not plugged in, or a network
+    share that has not come back yet into "all your music is gone". Those refuse, loudly,
+    and say what to do. (Raised against this design by the Codex read, 2026-09-20.)
+    """
+    db_path = os.path.abspath(db_path)
+    cfgmod = _load_config()
+    default_path = os.path.abspath(os.path.join(cfgmod.config_dir(), "mixer.db"))
+
+    if os.path.normcase(db_path) == os.path.normcase(default_path):
+        # LOOK BEFORE WRITING, even at our own path. db.py's connect() runs the DDL, an
+        # ALTER and a one-time backfill BEFORE it checks the schema version, so calling
+        # it first would write to a library and only then refuse it. Read-only
+        # validation comes first and a real library returns here untouched; the DDL runs
+        # only for a file that is absent or has no track list yet.
+        # (Raised by the Codex audit of this change, 2026-09-20.)
+        if os.path.exists(db_path) and not _verify_library_readable(db_path,
+                                                                    allow_empty=True):
+            return
+        parent = os.path.dirname(db_path)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        existed = os.path.exists(db_path)
+        # Every statement in the DDL is CREATE ... IF NOT EXISTS, so running it on a
+        # file that exists but holds no tables heals one left half-written by an
+        # interrupted first run. That case is invisible otherwise: a zero-byte file is a
+        # perfectly VALID empty SQLite database, so no reader downstream would have
+        # caught it, they would just have failed on "no such table: tracks" much later.
+        _load_db_module().connect(db_path).close()
+        if not existed:
+            print(f"New library: created an empty database at {db_path}")
+        return
+
     if not os.path.exists(db_path):
         raise SystemExit(
-            f"No database at: {db_path}\n"
-            f"Pass --db pointing at your analyzed library, e.g.\n"
-            f"    python web/app.py --db ../mixer-ng/data/mixer.db")
-    con = sqlite3.connect(db_path)
+            f"No music library at: {db_path}\n"
+            f"If that drive or folder is not available right now, reconnect it and start "
+            f"Attune again. To use a different library, open Preferences and pick one "
+            f"under Library.")
+    _verify_library_readable(db_path)
+
+
+def _readonly_uri(path):
+    """file: URI for a read-only open, with the path ESCAPED.
+
+    `f"file:{path}?mode=ro"` is wrong for any path holding a '#' or a '?': SQLite reads
+    the '#' as the start of a fragment and silently opens a brand-new empty database
+    somewhere else, so a real library reads as having no tracks in it. hybrid.py's
+    _connect_readonly already does this properly with as_uri(); this is the same thing,
+    in the three other modules that were still building the URI by hand.
+    (Raised by the cold Fable audit of this change, 2026-09-20.)"""
+    from pathlib import Path
+    return Path(os.path.abspath(path)).as_uri() + "?mode=ro"
+
+
+def _verify_library_readable(db_path, allow_empty=False):
+    """Read-only sanity check on a library. Returns True if the file is a valid SQLite
+    database that holds no Attune tables yet, which only the app's own default path is
+    allowed to treat as "fill me in"; every other outcome either returns False (a real
+    library, validated) or raises SystemExit.
+
+    Read-only on purpose: this runs against the operator's production library on every
+    single launch, and nothing about opening a file to look at it should be able to
+    write to it. Three refusals, all fail-closed, all named in words a person can act on:
+    the file is not a SQLite database, it is a database but not an Attune library, or it
+    is an Attune library from a build whose schema this one cannot read.
+
+    Before the empty-library work this function's job was done accidentally: the engine
+    SystemExited on any library it could not mix from, which happened to cover a wrong
+    file too. Now that an empty library boots normally, a mismatched one would have
+    booted silently empty instead -- the exact "quiet wrong answer" this project refuses.
+    """
+    dbmod = _load_db_module()
     try:
-        clap = con.execute("SELECT COUNT(*) FROM clap WHERE vec IS NOT NULL").fetchone()[0]
-    except sqlite3.OperationalError:
-        clap = 0                       # no 'clap' table at all
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
+    except sqlite3.DatabaseError as e:
+        raise SystemExit(f"{db_path} is not a readable library file ({e}).")
+    try:
+        try:
+            names = {r[0] for r in con.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+        except sqlite3.DatabaseError as e:
+            raise SystemExit(
+                f"{db_path} is not a readable library file ({e}).\n"
+                f"Open Preferences and pick a different library under Library.")
+        if "tracks" not in names:
+            if allow_empty and not names:
+                return True          # nothing in it at all: our own file, half-written
+            raise SystemExit(
+                f"{db_path} is a file Attune can open but not an Attune music library "
+                f"(it has no track list).\n"
+                f"Open Preferences and pick a different library under Library.")
+        meta = {}
+        if "meta" in names:
+            meta = {k: v for k, v in con.execute("SELECT key, value FROM meta")}
     finally:
         con.close()
-    if not clap:
+    # A library written before these stamps existed carries neither, and db.py
+    # grandfathers it in rather than refusing; only a stamp that DISAGREES is a refusal.
+    sv, fd = meta.get("schema_version"), meta.get("feature_dim")
+    if (sv is not None and str(sv) != str(dbmod.SCHEMA_VERSION)) or \
+       (fd is not None and str(fd) != str(dbmod.FEATURE_DIM)):
         raise SystemExit(
-            f"{db_path} has no CLAP embeddings (empty or missing 'clap' table).\n"
-            f"The V2 web engine needs them. Embed first:\n"
-            f"    python attune/src/embed.py --db {db_path}\n"
-            f"or point --db at a library that already has CLAP vectors.")
+            f"{db_path} was built by a different version of Attune "
+            f"(library format {sv}/{fd}, this build reads "
+            f"{dbmod.SCHEMA_VERSION}/{dbmod.FEATURE_DIM}).\n"
+            f"Install the matching version of Attune, or open Preferences and pick a "
+            f"different library under Library.")
+    return False          # a real library, validated without writing a byte to it
 
 
 def _load_studio():
@@ -182,7 +305,7 @@ def _migrate_env_roots_once(cfgmod, settings, env_cfg):
 
 def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
                playlist_dir=None):
-    _check_db(db_path)
+    _ensure_db(db_path)
     hybrid = _load_hybrid()
     print(f"Loading library from {db_path} ...")
     # search + mix are routed through the common engine interface (src/engine.py) so the
@@ -1093,14 +1216,20 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # the DB in a background thread and installs them without restarting the app
     # (libreload.py). Registered last among the state-touching modules so its ctx can
     # hand back libverify's `filestate` (re-attached to `lib` after every reload).
-    libreload.register(app, {
+    reload_ctx = {
         "db_path": db_path, "engine_name": engine_name, "musicip_url": musicip_url,
         "hybrid_mod": hybrid, "eng_iface_mod": eng_iface, "studio_mod": studio_mod,
         "eng": eng, "active": active, "labels": labels, "labels_lc": labels_lc,
         "lib": lib, "ud": ud, "engine_lock": engine_lock,
         "filestate": verify_handles["filestate"],
         "audioinfo": ai_handles["info"],
-    })
+        # Filled in after scanjob registers further down -- libreload holds this dict by
+        # reference, so a later key is visible to it. A reload that runs while a scan is
+        # mid-flight would read a half-written library and publish a pool missing
+        # whatever the scan had not committed yet, so libreload refuses during one.
+        "scan_job": None,
+    }
+    libreload.register(app, reload_ctx)
 
     # ---- auto-playlists: user-defined smart-playlist rules (smartlists.py). Registered
     # AFTER userdata so lib already carries rating/plays/loved/date_added columns the
@@ -1139,6 +1268,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     sj_spec.loader.exec_module(scanjob)
     scan_job = scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load,
                                       "logger": scan_logger})
+    reload_ctx["scan_job"] = scan_job       # see the note where reload_ctx is built
 
     # ---- auto-scan: honors scan_on_launch (previously dead) and, if `watchdog` is
     # installed, live-watches library_folders so new/changed audio triggers the same
@@ -1633,8 +1763,13 @@ def main():
     playlists = cfgmod.effective(args.playlists, "ATTUNE_PLAYLIST_DIR",
                                  "playlist_dir", settings)
     if not db:
-        raise SystemExit("No database configured. Pass --db, set ATTUNE_DB, or set "
-                         f"db_path in {cfgmod.settings_path()}")
+        # Same first-run fallback the desktop shell takes: no library configured
+        # anywhere is a starting point, not an error, and the answer is the same file in
+        # the same place whichever way Attune was started. This used to name a flag, an
+        # environment variable and a settings file -- three things, none of them a
+        # button. (Raised by the cold Fable audit of this change, 2026-09-20.)
+        db = os.path.join(cfgmod.config_dir(), "mixer.db")
+        print(f"No library configured — starting a new one at {db}")
     if engine == "auto":
         # same probe the desktop launcher does: use MusicIP if it's live, else v2.
         # A short-timeout socket pre-check comes FIRST: measured 2026-07-22, with

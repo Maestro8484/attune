@@ -9,14 +9,21 @@ Self-contained by design. The bundled app needs NO external service to run:
   * Engine: it probes for a live MusicIP Mixer on localhost:10002 and uses it if present,
     otherwise it falls back to the built-in V2 engine (CLAP/librosa vectors already stored
     in mixer.db — no torch, no librosa, no network). So it always starts and always mixes.
-  * Library DB (mixer.db): found via ATTUNE_DB, then next to the program, then by walking up
-    the repo tree.
+  * Library DB (mixer.db): the path saved in settings.json, else ATTUNE_DB, else next to
+    the program, else by walking up the repo tree. If none of those finds one — the first
+    run on a machine that has never had Attune — an empty library is created in the user's
+    own data folder and the first-run wizard in the window fills it. A missing library is
+    a starting point, not an error.
   * Playlist folder: ATTUNE_PLAYLIST_DIR, or a "Playlists" folder next to the program.
+  * Analyzing new music: the packaged app carries its own analyzer program in an
+    analyzer\\ subfolder beside this exe (web/scanjob.py launches it), so scanning works
+    with no Python and no second environment to install.
 
 What it CANNOT do standalone (stated honestly, not hidden):
   * bundle or launch MusicIP Mixer itself — it is closed third-party software.
-  * analyze brand-new tracks — that needs the heavy torch/librosa/CLAP stack, which this
-    build deliberately omits. It plays and mixes an already-analyzed library.
+  * analyze anything in THIS process: the GUI bundle deliberately ships without
+    librosa/onnxruntime/the CLAP encoder, which is why the analyzer is a separate
+    program. A source run analyzes in-process instead (see _run_worker).
   * play audio whose files aren't present at their stored paths (the music itself is not
     bundled; the app streams it live from disk).
 """
@@ -311,19 +318,11 @@ class _BootGate:
         return self._text(start_response, _SPLASH_HTML, "text/html; charset=utf-8")
 
 
-def _message_html(msg):
-    return (
-        "<div style='font-family:Segoe UI,system-ui,sans-serif;padding:34px;"
-        "color:#e7e9ee;background:#0e1014;height:100%'>"
-        "<div style='font-size:24px;font-weight:600;color:#6d8cff'>◆ Attune</div>"
-        f"<p style='font-size:15px;line-height:1.6;margin-top:14px'>{msg}</p></div>"
-    )
-
-
-def _fail(msg, w=680, h=420):
-    webview.create_window("Attune", html=_message_html(msg.replace("\n", "<br>")),
-                          width=w, height=h)
-    webview.start()
+# _message_html() and _fail() used to live here to paint one dead end: "No music
+# database found". That dead end is gone (see main()), it was the only caller either
+# function ever had, and replacing the whole app with a paragraph is not something
+# Attune should be able to do any more. Removed rather than left sitting here waiting
+# to be reused for something they were never written for.
 
 
 def _run_worker():
@@ -356,10 +355,19 @@ def main():
     # walk-up discovery. Whatever we discover, write it back so the next launch is instant.
     db = cfg.effective(None, "ATTUNE_DB", "db_path", settings) or _find_db()
     if not db:
-        _fail("No music database found.<br><br>Open Preferences and set your library "
-              "database, put <code>mixer.db</code> next to this program, or set the "
-              "<code>ATTUNE_DB</code> environment variable to its full path.")
-        return
+        # FIRST RUN on a machine that has never seen Attune. Having no library yet is a
+        # normal state, not a failure: the window is the place a person sets one up. This
+        # used to open a dead message window telling them to "open Preferences" inside an
+        # app that had not started, which is where every stranger's first run ended.
+        # Now we name a library in their own user data folder and carry straight on to
+        # the ordinary boot. web/app.py's _ensure_db creates the file itself from
+        # src/db.py's schema, and the first-run wizard inside the window fills it.
+        #
+        # The user data folder, not next to the .exe: the program folder is replaced on
+        # upgrade and deleted on uninstall, while the installer already promises to leave
+        # the data folder alone (desktop/installer/attune.iss, closing comment).
+        db = os.path.join(cfg.config_dir(), "mixer.db")
+        print(f"Attune desktop — first run, new library will be created at {db}")
     if db and settings.get("db_path") != db:
         try:
             cfg.update({"db_path": db})
@@ -408,7 +416,15 @@ def main():
                     raise
             gate.real = app                     # publish last: readiness flips atomically
             gate.phase = "Ready"
-        except BaseException as e:              # SystemExit included — report, never hang
+        except SystemExit as e:
+            # A SystemExit out of create_app is a REFUSAL we wrote on purpose (see
+            # _ensure_db in web/app.py): the library is on a drive that is not plugged
+            # in, or the file is not a library at all. It already says what happened and
+            # what to do, so it is shown as written. Wrapping it in "Couldn't start the
+            # engine" made a plain sentence about a missing drive read like a crash.
+            # (Cold Fable audit, 2026-09-20.)
+            gate.error = str(e)
+        except BaseException as e:              # anything genuinely unexpected
             gate.error = f"Couldn't start the engine: {e}"
 
     win_x, win_y, win_w, win_h = _load_window_geometry(settings)

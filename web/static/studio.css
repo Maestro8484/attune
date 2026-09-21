@@ -640,6 +640,12 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
   font-size:16px; cursor:pointer; padding:2px 6px; border-radius:6px; }
 .modalHead .x:hover { color:var(--fg); background:var(--hover); }
 .modalBody { padding:14px 16px; overflow:auto; display:flex; flex-direction:column; gap:10px; }
+/* Same trap as .railBody / .azBar / .tabpage above: `display:flex` here is an AUTHOR rule
+   and beats the user agent's `[hidden]{display:none}` at equal specificity, so without
+   this line the hidden attribute is inert on a modal body. It bit the first-run wizard,
+   whose two panes both drew at once -- the folder picker sitting above "12 songs ready to
+   mix" -- while the DOM insisted one of them was hidden. Only looking at it caught that. */
+.modalBody[hidden] { display:none; }
 .modalFoot { display:flex; gap:8px; padding:10px 16px; border-top:1px solid var(--line);
   background:var(--panel2); align-items:center; }
 .tabs { display:flex; gap:4px; padding:8px 12px 0; background:var(--panel2);

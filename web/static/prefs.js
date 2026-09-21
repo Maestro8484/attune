@@ -200,18 +200,51 @@ const Prefs = (() => {
       log.scrollTop = log.scrollHeight;
     }
     $('btnRescan').textContent = running ? '⏹ Cancel scan' : '⟳ Rescan library';
+    if (wizLive) paintWizScan(st);
     if (!running && scanTimer && st.finished) {
       stopScanPoll();
-      if (st.error) toast('Scan: ' + st.error, true);
-      else if (st.cancelled) toast('Scan cancelled');
-      else if (st.new_tracks) {
-        toast(`Scan done — ${st.new_tracks.toLocaleString()} new track${st.new_tracks === 1 ? '' : 's'} found.`);
+      // WHAT IS WORTH LOADING is not the same as what was imported. A scan resumed after
+      // a cancel, or one whose first attempt died at the embed stage, adds no catalog
+      // rows the second time and does all its real work in the analyze/embed stages --
+      // so new_tracks is 0 while hundreds of tracks became mixable. Offering the reload
+      // on new_tracks alone left exactly that run stranded until the next restart.
+      // scanjob.py reports both deltas now.
+      const loadable = (st.new_tracks || 0) + (st.new_analyzed || 0) + (st.new_embedded || 0);
+      if (st.error) {
+        toast('Scan: ' + st.error, true);
+        // The raw error is a line for the scan log, not for someone meeting this app for
+        // the first time: it reads "embed failed (rc=1) — see log tail". Say what to
+        // press. (Cold Fable audit, 2026-09-20.)
+        if (wizLive) wizStop('Attune could not finish reading your music. Open ' +
+                             'Preferences, choose Library, and press Rescan library to ' +
+                             'try again — it picks up where this left off.', true);
+      } else if (st.cancelled) {
+        toast('Scan cancelled');
+        // Cancelled is not wasted: whatever finished is already in the library.
+        if (loadable && typeof offerReload === 'function') offerReload(loadable);
+        if (wizLive) wizStop('Stopped. Whatever finished is kept — press Rescan library ' +
+                             'in Preferences to carry on where this left off.');
+      } else if (loadable) {
+        toast(st.new_tracks
+          ? `Scan done — ${st.new_tracks.toLocaleString()} new track${st.new_tracks === 1 ? '' : 's'} found.`
+          : `Scan done — ${st.new_analyzed.toLocaleString()} track${st.new_analyzed === 1 ? '' : 's'} now analyzed.`);
         // studio.js owns the reload banner/button (it needs S/loadLibrary) -- this
         // module only reports the count, same cross-file global-function pattern
         // studio.js's own toast() already uses from here.
-        if (typeof offerReload === 'function') offerReload(st.new_tracks);
+        if (typeof offerReload === 'function') offerReload(loadable);
+        // FIRST RUN presses it for them. Someone who has never seen this app should not
+        // have to work out that a button called "Load now" is the only thing standing
+        // between them and the music they just waited for.
+        if (wizLive && typeof startReload === 'function') {
+          $('wizStageLine').textContent = 'Loading your library…';
+          $('wizFill').style.width = '100%';
+          startReload();
+        }
+      } else {
+        toast('Scan done — library is up to date.');
+        if (wizLive) wizStop('Nothing new to add — that folder holds no music Attune ' +
+                             'can read. Close this, open Preferences and try another one.');
       }
-      else toast('Scan done — library is up to date.');
     }
   }
   async function pollScan() {
@@ -239,26 +272,124 @@ const Prefs = (() => {
     } catch (e) { toast(e.message, true); }
   }
 
-  /* ---------------------------------------------------------------- first-run wizard */
+  /* ---------------------------------------------------------------- first-run wizard
+
+     Two panes in one modal: pick folders, then watch the scan through to music you can
+     actually mix. `wizLive` is true from pressing Scan until the handover (or an error),
+     and it is what lets paintScan() above drive the second pane and load the library
+     without making a first-time user find the "Load now" button themselves. */
+  let wizLive = false;
+
   async function checkFirstRun() {
     let j;
     try { j = await jget('/api/settings'); } catch { return; }  // unreachable — don't nag on a fluke
     serverSettings = j.settings;
-    if ((serverSettings.library_folders || []).length) return;  // already configured
 
-    // A configured SCAN FOLDER is not the same thing as HAVING A LIBRARY.
-    // library_folders only tells the scanner where to look for NEW music; it is routinely
-    // empty on a perfectly good install (e.g. cleared after a scan test). Gating the
-    // wizard on it alone put a full-screen modal over a working 21,236-track library and
-    // made the whole app unclickable. Only offer the wizard when we KNOW there is nothing
-    // to play. Unknown (stats missing) is NOT a reason to block the UI.
+    // NOTHING TO PLAY is the one condition that opens this, and it is a fact about the
+    // library, not about the settings. A configured scan folder is not the same thing as
+    // having a library: library_folders only tells the scanner where to look for NEW
+    // music and is routinely empty on a perfectly good install (cleared after a scan
+    // test, say). Gating on it alone once put a full-screen modal over a working
+    // 21,236-track library and made the whole app unclickable, so `analyzed > 0` is the
+    // gate. Unknown (stats missing) is NOT a reason to block the UI.
+    //
+    // It no longer returns early when library_folders is set, either: a first run
+    // interrupted mid-scan saves the folder and then has nothing analyzed, and bailing
+    // out there left exactly the person who most needed this staring at an empty window.
+    // Their folders come back prefilled instead.
     if (!S.stats || (S.stats.analyzed || 0) > 0) return;
     if (store.get('wizardSkipped', false)) return;   // don't re-nag every launch
 
-    paintFolders([''], 'wizFolders');
+    const known = (serverSettings.library_folders || []).filter(Boolean);
+    paintFolders(known.length ? known : [''], 'wizFolders');
+    wizLive = false;
+    $('wizSetup').hidden = false;
+    $('wizProgress').hidden = true;
+    $('wizStart').hidden = false;
+    $('wizFinish').hidden = true;
+    $('wizSkip').textContent = 'Skip for now';
+    $('wizMsg').className = 'msg';
     $('wizMsg').textContent = '';
     $('wizWrap').hidden = false;
   }
+
+  function wizShowProgress() {
+    wizLive = true;
+    $('wizSetup').hidden = true;
+    $('wizProgress').hidden = false;
+    $('wizStart').hidden = true;
+    $('wizFinish').hidden = true;
+    $('wizSkip').textContent = 'Close';
+    $('wizMsg').className = 'msg';
+    $('wizMsg').textContent = '';
+    $('wizStageLine').textContent = 'Reading your music…';
+    $('wizFill').style.width = '0%';
+  }
+
+  function paintWizScan(st) {
+    const have = !!(st.progress && st.progress[1]);
+    if (have) $('wizFill').style.width = Math.round(st.progress[0] / st.progress[1] * 100) + '%';
+    if (!st.running) return;
+    const eta = scanEta(st);
+    $('wizStageLine').textContent =
+      (st.stage ? st.stage[0].toUpperCase() + st.stage.slice(1) : 'Working') +
+      (have ? ` — ${st.progress[0].toLocaleString()} of ${st.progress[1].toLocaleString()}` : '') +
+      (eta ? `, about ${eta.text} left${eta.rough ? ' (rough)' : ''}` : '');
+  }
+
+  /* The scan ended and there is nothing to hand over: a failure, a cancel, or a folder
+     with no music in it. Say which, leave the way back on screen, and stop pretending
+     progress is still happening. */
+  function wizStop(msg, isErr) {
+    wizLive = false;
+    $('wizStageLine').textContent = msg;
+    $('wizFill').style.width = '0%';
+    $('wizMsg').className = isErr ? 'msg err' : 'msg';
+    $('wizSkip').textContent = 'Close';
+    $('wizFinish').hidden = true;
+  }
+
+  /* The music is loaded. Whether any of it is MIXABLE is a separate question and the
+     answer is the pool count, so this is the one place the wizard is allowed to claim
+     success -- and only when that number is above zero.
+
+     A POOL OF ZERO IS NOT A HAPPY ENDING. Point a first run at a folder of files Attune
+     cannot read (iTunes .m4a on a build with no ffmpeg is the easy one) and the import
+     stage happily adds them all, every analysis fails, the scan still exits clean, and
+     the reload comes back having loaded nothing. Saying "your library is loaded" there,
+     over a list reading "Nothing here", is the quiet wrong answer this whole stream
+     exists to remove. Both cold auditors found it independently, 2026-09-20. */
+  function wizReady(pool) {
+    wizLive = false;
+    $('wizFill').style.width = '100%';
+    $('wizFinish').hidden = false;
+    if (!pool) {
+      $('wizStageLine').textContent = 'Attune read your files, but none of them is ready to mix.';
+      $('wizNote').textContent =
+        'Usually that means Attune could not open the audio. Open the Library list and ' +
+        'choose Not Mixable: it gives a reason for each file.';
+      return;
+    }
+    $('wizStageLine').textContent =
+      `${pool.toLocaleString()} song${pool === 1 ? '' : 's'} ready to mix.`;
+    $('wizNote').textContent =
+      'Pick any song in the Library list and press Create Mix. Attune builds a playlist ' +
+      'of tracks that sound like it.';
+  }
+
+  // studio.js's pollReload() calls this when a hot reload finishes, whichever way it
+  // went -- the same cross-file global-function pattern offerReload() uses in the other
+  // direction. Only the wizard cares, and only while it is on screen.
+  window.onLibraryReloaded = function (st) {
+    if ($('wizWrap').hidden) return;
+    if (st && st.error) {
+      wizStop('Your music is scanned, but Attune could not load it just now (' +
+              st.error + '). Close and start Attune again and it will be there.', true);
+      return;
+    }
+    wizReady((st && st.new_count) || 0);
+  };
+
   async function wizStart() {
     const folders = collectFolders('wizFolders');
     if (!folders.length) {
@@ -270,8 +401,8 @@ const Prefs = (() => {
       const j = await jpost('/api/settings', { library_folders: folders });
       serverSettings = j.settings;
       await jpost('/api/scan/start', { folders });
+      wizShowProgress();
       startScanPoll();
-      $('wizWrap').hidden = true;
     } catch (e) {
       $('wizMsg').className = 'msg err'; $('wizMsg').textContent = e.message;
     }
@@ -566,6 +697,15 @@ const Prefs = (() => {
       paintFolders(cur, 'wizFolders');
     });
     $('wizStart').onclick = wizStart;
+    // "Start mixing" is a handover, not a skip: it only appears once the library is
+    // loaded, so it must NOT set wizardSkipped the way the generic [data-close] buttons
+    // do. Landing them on the Library list is the point -- that is where a seed is
+    // picked, and an empty-handed "go on then" is how a first run quietly fails.
+    $('wizFinish').onclick = () => {
+      $('wizWrap').hidden = true;
+      try { if (typeof loadLibrary === 'function') loadLibrary(true); }
+      catch (e) { console.error('[wizard] library refresh', e); }
+    };
     // folder picker (its own close buttons resolve the pickFolder() promise)
     $('fsList').addEventListener('click', e => {
       const ren = e.target.closest('.fsren');

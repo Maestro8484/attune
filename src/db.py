@@ -27,9 +27,22 @@ CREATE TABLE IF NOT EXISTS features (
     src_mtime   INTEGER,       -- source file mtime when analyzed; change => re-analyze
     FOREIGN KEY(path) REFERENCES tracks(path)
 );
+CREATE TABLE IF NOT EXISTS clap (
+    path      TEXT PRIMARY KEY,
+    dim       INT,
+    vec       BLOB,          -- float32 little-endian CLAP-512, length dim
+    err       TEXT           -- non-null if embedding failed
+);
 CREATE INDEX IF NOT EXISTS idx_tracks_artist ON tracks(artist);
 CREATE INDEX IF NOT EXISTS idx_tracks_genre  ON tracks(genre);
 """
+# The `clap` table is created here as well as by embed.py / embed_onnx.py, which both
+# open with the identical "CREATE TABLE IF NOT EXISTS clap(path TEXT PRIMARY KEY, dim
+# INT, vec BLOB, err TEXT)" and then INSERT positionally -- so the column ORDER above
+# is load-bearing and must stay (path, dim, vec, err). Declaring it here means a
+# database created on first run is complete before anything has been embedded, instead
+# of being a shape every reader has to special-case: "SELECT ... FROM clap" against a
+# brand-new library used to raise "no such table: clap" and take the app down with it.
 
 
 def connect(db_path: str) -> sqlite3.Connection:

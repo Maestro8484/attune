@@ -101,6 +101,7 @@ async function startReload() {
     // fallback: reload itself couldn't even start -- the old restart path still works
     $('reloadMsg').textContent = `Reload failed: ${e.message} — restart Attune to load them.`;
     btn.textContent = 'Retry'; btn.disabled = false;
+    if (typeof onLibraryReloaded === 'function') onLibraryReloaded({ error: e.message });
     return;
   }
   clearInterval(reloadTimer);
@@ -117,6 +118,7 @@ async function pollReload() {
     $('reloadMsg').textContent = `Reload failed: ${st.error} — restart Attune to load them.`;
     const btn = $('reloadNow');
     btn.textContent = 'Retry'; btn.disabled = false;
+    if (typeof onLibraryReloaded === 'function') onLibraryReloaded(st);
     return;
   }
   $('reloadFill').style.width = '100%';
@@ -132,6 +134,10 @@ async function pollReload() {
   try {
     if (S.view === 'library') await loadLibrary(false);
   } catch (e) { console.error('[reload] library refresh', e); }
+  // The first-run wizard, if it is still on screen, has been waiting for exactly this:
+  // the pool is live and the number is known. Same cross-file global-function pattern as
+  // offerReload() above, in the other direction. Nothing else listens.
+  if (typeof onLibraryReloaded === 'function') onLibraryReloaded(st);
   setTimeout(() => { $('reloadBanner').hidden = true; }, 2500);
 }
 
@@ -486,6 +492,23 @@ function renderRows(rows, opts = {}) {
   const tb = $('tbody');
   tb.innerHTML = rowsHtml(rows, opts);
   $('empty').hidden = rows.length > 0;
+  // "Nothing here." covers two states that look identical and are fixed by completely
+  // different things: a filter that matched nothing, and a library with no music in it
+  // at all. The second one is what a stranger meets, and it needs to name the buttons.
+  if (!rows.length) {
+    const dbT = (S.stats && S.stats.db_tracks) || 0;
+    const pool = (S.stats && S.stats.songs) || 0;
+    $('empty').textContent =
+      !dbT
+        ? 'No music yet. Open Preferences (the ⚙ at the top right), choose Library, add '
+          + 'the folder your music is in, then press Rescan library.'
+        // Files are in the library but none of them reached the mixable pool. Different
+        // problem, different fix, and it has its own view. (Cold Fable audit, 2026-09-20.)
+        : !pool
+          ? 'Attune has your files but none of them is ready to mix yet. Choose Not '
+            + 'Mixable in the sidebar to see the reason for each one.'
+          : 'Nothing here.';
+  }
   updateSelStatus();
 }
 
@@ -833,6 +856,13 @@ async function loadFacets() {
 }
 
 async function doMix(seedI, opts) {
+  // Nothing to mix FROM and nothing to mix WITH are different problems. "Select a track
+  // first" is true either way and useless on an empty library, where there is no track
+  // to select and the fix is somewhere else entirely.
+  if (S.stats && !(S.stats.songs || 0)) {
+    return toast('No music to mix yet — add your music folder in Preferences, then press '
+                 + 'Rescan library.', true);
+  }
   if (seedI == null) return toast('Select a track first', true);
   // A brand-new mix starts clean; a filter-driven re-mix keeps the filters.
   if (!(opts && opts.keepFilters)) {
