@@ -82,8 +82,9 @@ _FFMPEG_FORMATS = {".m4a", ".aac", ".wma", ".m4b", ".m4p", ".alac", ".ape", ".wv
 # healthy file, and since ffmpeg and libsndfile disagree by an encoder delay of a few hundred
 # samples, the longer answer would have won and replaced a good vector. The stated duration
 # is still read, but only to word the failure, where being wrong costs nothing.
-TRUNCATED_FRACTION = 0.5      # only for wording: far enough below the claim to say "damaged"
+TRUNCATED_FRACTION = 0.5      # decoded below this share of the claim is worth a second look
 MIN_CLAIMED_SECONDS = 20.0    # below this, "half of it" is not a meaningful gap
+CONFIRM_GAIN = 1.5            # a second decoder must beat the first by this to be believed
 # A safety valve on how much audio one rescued file may produce, because the whole decode
 # is held in memory: 1200 s is about 106 MB per worker at 22.05 kHz float32, against 317 MB
 # at an hour. Nothing that needs rescuing is a 20-minute song, and a longer one would be
@@ -242,6 +243,71 @@ def _ffmpeg_decode(path: str, sr: int = SR) -> np.ndarray | None:
     if not np.all(np.isfinite(y)):
         y = np.nan_to_num(y, nan=0.0, posinf=0.0, neginf=0.0)
     return y
+
+
+def _ffmpeg_seconds(path: str, sr: int = SR) -> float | None:
+    """How much audio ffmpeg can actually get out of this file, in seconds, without
+    keeping any of it. Same decode as _ffmpeg_decode, but the samples are counted and
+    thrown away as they arrive, so asking the question costs no memory."""
+    exe = shutil.which("ffmpeg")
+    if not exe:
+        return None
+    cmd = [exe, "-nostdin", "-v", "quiet", "-i", path,
+           "-t", str(FFMPEG_CAP_SECONDS),
+           "-af", "aresample=rematrix_maxval=1.0",
+           "-f", "f32le", "-ac", "1", "-ar", str(int(sr)), "-"]
+    try:
+        pr = subprocess.Popen(
+            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+    except Exception:
+        return None
+    n = 0
+    try:
+        while True:
+            chunk = pr.stdout.read(1 << 20)
+            if not chunk:
+                break
+            n += len(chunk)
+    except Exception:
+        return None
+    finally:
+        try:
+            pr.stdout.close()
+            pr.wait(timeout=FFMPEG_TIMEOUT_S)
+        except Exception:
+            pr.kill()
+    return (n // 4) / sr
+
+
+def short_read_check(path: str, got: float, sr: int = SR) -> dict | None:
+    """Was this track analyzed from only a fraction of the song?
+
+    This is the quiet cousin of the failure this module now catches. A decode that stops
+    early but still clears the analysis floor produces a perfectly ordinary looking vector
+    built from part of the song, and nothing downstream can tell. Measured 2026-09-20 on a
+    60-track sample of a 21,237-track library: one confirmed case, a 175-second track that
+    Attune read 80 seconds of.
+
+    Two steps, because one is not enough. The container's stated duration NOMINATES a
+    suspect and nothing more: mutagen estimates an mp3's length from its first frame when
+    there is no Xing or VBRI header, and on 238 real files it nominated two tracks whose
+    audio really was that short. ffmpeg then DECIDES, by having to return materially more
+    audio than the first reader did.
+
+    Returns None when there is nothing to report, else what was claimed, what was read and
+    what is actually there. It only reports. Acting on it would rewrite a vector that
+    already exists, which is a judgement about taste rather than a bug fix; the count is
+    here so that judgement can be made with a number in hand."""
+    claimed = container_seconds(path)
+    if (claimed is None or claimed < MIN_CLAIMED_SECONDS
+            or got >= claimed * TRUNCATED_FRACTION):
+        return None
+    available = _ffmpeg_seconds(path, sr)
+    if available is None or available <= max(got, 1e-9) * CONFIRM_GAIN:
+        return None
+    return {"claimed": claimed, "analyzed": got, "available": available}
 
 
 def _worth_another_decoder(got: float, exc: Exception | None) -> bool:
@@ -421,7 +487,14 @@ def extract(path: str) -> dict | None:
         return {"error": f"the analysis produced {vec.shape[0]} numbers, not the {FEATURE_DIM} the engine expects"}
     if not np.all(np.isfinite(vec)):
         vec = np.nan_to_num(vec, nan=0.0, posinf=0.0, neginf=0.0)
-    return {"vec": vec, "tempo": tempo, "seconds": dur, "redecoded": redecoded}
+    out = {"vec": vec, "tempo": tempo, "seconds": dur, "redecoded": redecoded}
+    if not redecoded:
+        # Skipped when the audio was redecoded, because that path already took the best
+        # of both readers and there is nothing left to warn about.
+        short = short_read_check(path, dur, sr)
+        if short:
+            out["short_read"] = short
+    return out
 
 
 if __name__ == "__main__":

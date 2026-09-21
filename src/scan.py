@@ -386,9 +386,10 @@ def _analyze_one(path, read_path=None):
     r = feat.extract(read_path or path)
     dt = time.time() - t0
     if r and "vec" in r:
-        return (path, r["vec"], r["tempo"], None, dt, bool(r.get("redecoded")))
+        return (path, r["vec"], r["tempo"], None, dt, bool(r.get("redecoded")),
+                r.get("short_read"))
     err = (r or {}).get("error", "unknown")
-    return (path, None, None, err, dt, False)
+    return (path, None, None, err, dt, False, None)
 
 
 def appdata_bin():
@@ -541,6 +542,7 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     t0 = time.time()
     n_ok = n_err = n_redecoded = n_held = 0
     rescued = []
+    short_reads = []
     # I/O + numba release the GIL enough that threads give real speedup and avoid
     # re-importing librosa per task (process pool would be far slower to spin up).
     local = sum(1 for p in todo if _read_path(p, read_map) != p)
@@ -549,7 +551,9 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
         futs = {ex.submit(_analyze_one, p, _read_path(p, read_map)): p for p in todo}
         for i, fut in enumerate(cf.as_completed(futs), 1):
-            path, vec, tempo, err, dt, redecoded = fut.result()
+            path, vec, tempo, err, dt, redecoded, short_read = fut.result()
+            if short_read:
+                short_reads.append((path, short_read))
             # A row being retried that fails because the drive is offline or the file is
             # locked has learned nothing about the file. Writing that answer would replace
             # the reason that made it eligible, and neither of these is ever retried
@@ -593,6 +597,18 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
         print(f"{n_redecoded} tracks came back short from the first decoder and were "
               f"decoded again with ffmpeg; any CLAP row they held was built from the "
               f"same short read and was cleared with them")
+    if short_reads:
+        # Not a failure and not fixed here: these tracks have a vector, it is just built
+        # from part of the song. Rewriting a vector that already exists is a judgement
+        # about taste rather than a bug fix, so this counts them and says which.
+        print(f"{len(short_reads)} tracks were analyzed from less than half the audio "
+              f"their file actually holds, confirmed by decoding each one a second time. "
+              f"They are in the mix, judged on part of the song:")
+        for path, s in sorted(short_reads)[:20]:
+            print(f"    {os.path.basename(path)[:56]:58s} "
+                  f"analyzed {s['analyzed']:.0f}s of {s['available']:.0f}s available")
+        if len(short_reads) > 20:
+            print(f"    ... and {len(short_reads) - 20} more")
     conn.commit()
     print(f"DONE ok={n_ok} err={n_err} in {(time.time()-t0)/60:.1f}m")
     print("stats:", dbm.stats(conn))
