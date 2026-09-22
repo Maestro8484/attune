@@ -16,6 +16,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   trust. Section 2's summary line used to stop at "nothing here reads any MusicIP file
   format", which was true but left the byte-level examination for somebody to find forty
   lines later; it now names it in the same breath and points at section 4.
+- **The preset button says "V2 (default)" instead of "V2 (shipped)".** Same preset, same
+  five slider values, only the word changed, because "shipped" is a word from software
+  work and not a word about music. The sliders already open on that combination.
 - **The pages a listener reads say what the app says.** The README, the walkthrough and
   the privacy page dropped "seed" and "shipped" for the words the buttons use, and
   "engine" is explained once where it first matters. The settings and command-line
