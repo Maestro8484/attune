@@ -40,14 +40,47 @@ def _fake_dist(tmp_path):
     return str(dist)
 
 
-def test_license_texts_list_mirrors_the_installer_script():
-    """The .iss and LICENSE_TEXTS must name the same four things, or the zip and the
-    installer drift apart, which is the defect this file exists to stop."""
+import re
+
+# The installer's licence lines all have this shape (desktop/installer/attune.iss):
+#   Source: "{#SourcePath}..\..\licenses\*";  DestDir: ...
+#   Source: "{#SourcePath}..\..\LICENSE";     DestDir: "{app}"; DestName: "LICENSE.txt"; ...
+# Only Source lines rooted at the repository count. Comments and [InstallDelete] lines
+# mention the same names and must not count as evidence; the first version of this test
+# matched bare substrings and still passed with all four Source lines deleted (cold
+# audit, 2026-09-21).
+_ISS_SOURCE = re.compile(r'^\s*Source:\s*"\{#SourcePath\}\.\.\\\.\.\\([^"]+)"', re.M)
+
+
+def _installer_license_sources():
     iss = open(os.path.join(DESKTOP, "installer", "attune.iss"), encoding="utf-8").read()
-    for src, _dest in build_installer.LICENSE_TEXTS:
-        assert src in iss, f"{src} is in LICENSE_TEXTS but not in attune.iss"
+    found = set()
+    for raw in _ISS_SOURCE.findall(iss):
+        name = raw.replace("\\", "/")
+        if name.endswith("/*"):
+            name = name[:-2]
+        found.add(name)
+    return found
+
+
+def test_license_texts_list_mirrors_the_installer_script_both_ways():
+    """The .iss Source lines and LICENSE_TEXTS must name the same set: a text the
+    installer carries and the zip does not is the defect this file exists to stop, and
+    the reverse would ship something the installer never agreed to."""
+    iss_sources = _installer_license_sources()
+    assert iss_sources, "no repository-rooted Source lines found in attune.iss"
+    zip_sources = {src for src, _dest in build_installer.LICENSE_TEXTS}
+    assert iss_sources == zip_sources, (
+        f"installer ships {sorted(iss_sources)} but the zip list is {sorted(zip_sources)}")
     assert ("LICENSE", "LICENSE.txt") in build_installer.LICENSE_TEXTS, (
         "the installer renames LICENSE to LICENSE.txt; the zip must too")
+
+
+def test_the_iss_parser_sees_exactly_the_four_source_lines():
+    """Guards the guard: if the .iss changes shape the parser must fail loudly here,
+    not silently return an empty set that the test above would then catch anyway."""
+    assert _installer_license_sources() == {
+        "licenses", "THIRD_PARTY_NOTICES.md", "NOTICE.md", "LICENSE"}
 
 
 def test_zip_carries_the_four_licence_texts(tmp_path):
@@ -80,10 +113,29 @@ def test_zip_refuses_when_a_licence_text_is_missing(tmp_path):
     (fake_repo / "THIRD_PARTY_NOTICES.md").write_text("notices")
     (fake_repo / "LICENSE").write_text("mit")
     # NOTICE.md deliberately absent
+    out2 = tmp_path / "out2"
     with pytest.raises(SystemExit) as e:
-        build_installer.make_zip(dist, str(tmp_path / "out2"), "9.9.9",
+        build_installer.make_zip(dist, str(out2), "9.9.9",
                                  use_7zip=False, repo=str(fake_repo))
     assert "NOTICE.md" in str(e.value)
+    # and no archive is left behind for somebody to pick up: the refusal fires before
+    # anything is written (the first version refused AFTER the zip was on disk)
+    assert not (out2 / "Attune-9.9.9-win64.zip").exists()
+    assert not out2.exists() or not any(out2.iterdir())
+
+
+def test_add_license_texts_removes_a_partial_archive_when_it_refuses(tmp_path):
+    """The belt to the braces above: called directly on an existing archive with a
+    source missing, it deletes the archive and says so."""
+    zip_path = tmp_path / "partial.zip"
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr("Attune/Attune.exe", b"MZ")
+    fake_repo = tmp_path / "repo"
+    fake_repo.mkdir()
+    with pytest.raises(SystemExit) as e:
+        build_installer.add_license_texts(str(zip_path), "Attune", repo=str(fake_repo))
+    assert "deleted" in str(e.value)
+    assert not zip_path.exists()
 
 
 def test_ensure_license_texts_catches_an_archive_without_them(tmp_path):

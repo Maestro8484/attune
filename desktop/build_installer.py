@@ -279,22 +279,38 @@ LICENSE_TEXTS = [
 ]
 
 
-def add_license_texts(zip_path, root_name=ZIP_ROOT, repo=ATT):
-    """Append the repository's licence texts to an existing archive, under root_name.
+def assert_license_sources(repo=ATT, zip_path=None):
+    """Refuse when any of the four licence sources is missing from the repository root.
 
-    Refuses, rather than producing a zip with a gap, when any of the four sources is
-    missing: the installed app is conveyed under GPL-3.0-or-later (NOTICE.md section 3)
-    and the GPL wants the texts beside the binary, not only in the source tree.
+    Called BEFORE the archive is written (make_zip) so a refusal leaves nothing behind,
+    and again from add_license_texts as the belt to that braces. If a partly built
+    archive exists when this fires, it is removed and the refusal says so: a zip that
+    holds the build folder and none of the texts is exactly the file this exists to
+    stop, and it must not be left where a person could pick it up. (Cold audit,
+    2026-09-21: the first version refused after the archive was already on disk.)
+    The installed app is conveyed under GPL-3.0-or-later (NOTICE.md section 3) and the
+    GPL wants the texts beside the binary, not only in the source tree.
     """
     missing = [src for src, _dest in LICENSE_TEXTS
                if not os.path.exists(os.path.join(repo, src))]
-    if missing:
-        raise SystemExit(
-            "[build_installer] REFUSING to finish the zip: licence text(s) missing from "
-            "the repository root:\n  " + "\n  ".join(missing) +
-            f"\n  looked in: {repo}\nThe installer ships these four beside Attune.exe and "
-            "the portable zip must carry the same. Run tools/gen_third_party_notices.py "
-            "against the build first if THIRD_PARTY_NOTICES.md or licenses/ is missing.")
+    if not missing:
+        return
+    removed = ""
+    if zip_path and os.path.exists(zip_path):
+        os.remove(zip_path)
+        removed = f"\nThe partly built archive was deleted: {zip_path}"
+    raise SystemExit(
+        "[build_installer] REFUSING to make the zip: licence text(s) missing from "
+        "the repository root:\n  " + "\n  ".join(missing) +
+        f"\n  looked in: {repo}\nThe installer ships these four beside Attune.exe and "
+        "the portable zip must carry the same. Run tools/gen_third_party_notices.py "
+        "against the build first if THIRD_PARTY_NOTICES.md or licenses/ is missing."
+        + removed)
+
+
+def add_license_texts(zip_path, root_name=ZIP_ROOT, repo=ATT):
+    """Append the repository's licence texts to an existing archive, under root_name."""
+    assert_license_sources(repo, zip_path)
     added = 0
     with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for src, dest in LICENSE_TEXTS:
@@ -338,6 +354,7 @@ def make_zip(dist, out_dir, version, use_7zip=True, repo=ATT):
     once the build folder is in, and their presence is checked the same way.
     """
     assert_no_database(dist)   # same reason as in compile_installer
+    assert_license_sources(repo)   # before anything is written, so a refusal leaves nothing
     os.makedirs(out_dir, exist_ok=True)
     zip_path = os.path.join(out_dir, f"Attune-{version}-win64.zip")
     if os.path.exists(zip_path):

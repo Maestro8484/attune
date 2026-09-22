@@ -788,6 +788,7 @@ def main() -> int:
     # The interpreter gate, before anything is read or written. Both programs are
     # checked: they are frozen by the same environment today, and if that ever stops
     # being true this is where it shows.
+    gated = 0
     for label, exe_rel, _internal_rel in PROGRAMS:
         exe = app / exe_rel
         if not exe.is_file():
@@ -803,6 +804,16 @@ def main() -> int:
             return 2
         print(f"[notices] {label}: frozen by Python {frozen[0]}.{frozen[1]}, "
               f"running under {sys.version_info[0]}.{sys.version_info[1]}: match")
+        gated += 1
+    if not gated:
+        # A folder with neither program in it is not a build. Without this, an --app
+        # pointed at an empty or half-built folder skipped the gate entirely and the
+        # tool went on to write a notices file under whatever interpreter ran it.
+        # (Cold audit, 2026-09-21.)
+        print(f"[notices] REFUSING: no frozen program found under {app} "
+              f"({', '.join(rel for _l, rel, _i in PROGRAMS)}). Build first, or point "
+              f"--app at the folder that holds Attune.exe.", file=sys.stderr)
+        return 2
 
     site = _site_packages(venv)
     by_top, info_dirs = load_build_env(site)

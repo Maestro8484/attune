@@ -98,3 +98,23 @@ def test_the_gate_is_wired_into_main_before_anything_is_written(tmp_path, monkey
     assert not out.exists()
     assert not lic.exists()
     assert "REFUSING" in capsys.readouterr().err
+
+
+def test_a_folder_with_no_frozen_program_is_refused_before_anything_is_written(
+        tmp_path, monkeypatch, capsys):
+    """An --app folder that exists but holds neither exe must not skip the gate: the
+    first version continued past both missing programs and wrote a notices file."""
+    tool = _load_tool()
+    app = tmp_path / "Attune"
+    (app / "_internal").mkdir(parents=True)
+    venv = tmp_path / "venv"
+    venv.mkdir()
+    out = tmp_path / "THIRD_PARTY_NOTICES.md"
+    lic = tmp_path / "licenses"
+    monkeypatch.setattr(sys, "argv", ["gen", "--app", str(app), "--venv", str(venv),
+                                      "--out", str(out), "--licenses-dir", str(lic)])
+    assert tool.main() == 2
+    assert not out.exists()
+    assert not lic.exists()
+    err = capsys.readouterr().err
+    assert "REFUSING" in err and "no frozen program" in err
