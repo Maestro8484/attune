@@ -120,6 +120,22 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 </p>
 
 <p align="center">
+  <img alt="Mix options: the five dials, the presets, Radio switched on with its variety setting and energy arc, and the recipe row" src="docs/img/mix-options-radio.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="Blend: two songs selected, and a mix built toward the middle of them" src="docs/img/blend.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="Adventure: a first song and a last song selected, and the path built between them" src="docs/img/adventure.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="Copying a mix to a USB stick: pick a folder or drive, flat or Artist and Album layout" src="docs/img/usb-copy.png" width="820">
+</p>
+
+<p align="center">
   <img alt="Preferences: library folders, folders to skip, scan on launch, live watch" src="docs/img/preferences.png" width="820">
 </p>
 
