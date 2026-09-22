@@ -42,6 +42,15 @@ cannot decode part of a real library. See INSTALL.md, under Development.
 
     python tools/make_release.py --dist dist/Attune --out ../attune-release/v0.2.0
 
+Before this step, regenerate the third-party notices against the build you just made,
+with the build environment's own Python (it refuses any other):
+
+    ..\mixer-ng\.venv-standalone\Scripts\python tools\gen_third_party_notices.py --app dist\Attune --venv ..\mixer-ng\.venv-standalone
+
+Both the installer and the zip pick up `licenses\`, `THIRD_PARTY_NOTICES.md`, `NOTICE.md`
+and `LICENSE` from the repository root at this point, so commit them first: what is in the
+tree when the script runs is what ships beside `Attune.exe`.
+
 The staging folder must be outside the repository; the script refuses an output folder
 inside the folder it is packaging. It produces three files and prints their sizes and
 checksums:

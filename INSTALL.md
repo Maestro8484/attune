@@ -13,6 +13,10 @@ Three ways in, depending on what you want.
 ## 1. The installer
 
 Windows 10 or 11. Nothing else needed. No Python, no ffmpeg, no administrator password.
+The one Windows component Attune relies on is Microsoft's WebView2 runtime, which draws
+the window; it is part of Windows 11 and of most up-to-date Windows 10 machines. If it is
+missing, Attune says so when it starts and points you at
+[Microsoft's download page](https://developer.microsoft.com/microsoft-edge/webview2/).
 
 1. Download **AttuneSetup-0.1.0.exe** from the
    [Releases page](https://github.com/Maestro8484/attune/releases).

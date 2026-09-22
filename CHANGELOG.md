@@ -21,6 +21,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (2026-09-21)
 
+- **A machine without Microsoft's WebView2 runtime is told so, instead of getting a dead
+  window.** Proved in Windows Sandbox on 2026-09-21: without that runtime the window
+  opened, said "Starting..." and never said anything else, while everything behind it
+  worked. Attune now checks for the runtime before it opens a window and, if it is
+  missing, shows one plain message naming it and Microsoft's download page, then exits.
 - **The portable zip now carries Attune's own licence paperwork.** The installer already
   laid `licenses/`, `THIRD_PARTY_NOTICES.md`, `NOTICE.md` and `LICENSE.txt` beside
   `Attune.exe`; the zip carried none of them, only the licence files belonging to the

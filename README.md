@@ -225,7 +225,9 @@ Attune is v0.1.0. It's the app its author uses every day on a library of over tw
 tracks, and this is the first release anybody else can install. Expect rough edges.
 
 - **Windows 10 or 11 only** for now. The engine is plain Python and portable, but the app,
-  the installer and the USB drive detection are not.
+  the installer and the USB drive detection are not. The window needs Microsoft's WebView2
+  runtime, which Windows 11 and most updated Windows 10 machines already have; if yours
+  does not, Attune says so at startup and names the download.
 - **The installer isn't code-signed,** so Windows shows a warning on first run and will keep
   showing it on every future version. See [Get it](#get-it).
 - **The first analysis is slow.** Every track has to be listened to. Hours for a large

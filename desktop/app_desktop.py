@@ -91,6 +91,60 @@ def _find_db():
     return None
 
 
+## ---- WebView2, the one Windows component the window cannot do without ---------------
+# pywebview draws the window with Microsoft's WebView2 runtime. When that runtime is
+# absent it falls back, silently, to the legacy Windows browser control, which renders
+# the boot page's static text and cannot run the script that polls readiness: the window
+# opens, says "Starting..." and never says anything else, on top of a server that is
+# completely healthy. Observed 2026-09-21 in Windows Sandbox (Windows 11 Enterprise
+# 26100 with no WebView2), ISSUES.md row 5. So the runtime is checked HERE, before any
+# window exists, and its absence is said in one plain sentence with the place to get it.
+# The registry locations are the ones Microsoft documents for detecting the Evergreen
+# runtime: the machine-wide client key (under WOW6432Node on 64-bit Windows) and the
+# per-user one. ATTUNE_IGNORE_WEBVIEW2=1 skips the check, for someone running a
+# fixed-version runtime that registers nowhere.
+_WEBVIEW2_CLIENT_ID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+_SEP = chr(92)                     # one backslash, spelled out so no reader has to count
+_WEBVIEW2_KEYS = (
+    ("HKEY_LOCAL_MACHINE", r"SOFTWARE\WOW6432Node\Microsoft\EdgeUpdate\Clients" + _SEP + _WEBVIEW2_CLIENT_ID),
+    ("HKEY_LOCAL_MACHINE", r"SOFTWARE\Microsoft\EdgeUpdate\Clients" + _SEP + _WEBVIEW2_CLIENT_ID),
+    ("HKEY_CURRENT_USER",  r"Software\Microsoft\EdgeUpdate\Clients" + _SEP + _WEBVIEW2_CLIENT_ID),
+)
+WEBVIEW2_DOWNLOAD = "https://developer.microsoft.com/microsoft-edge/webview2/"
+
+
+def _webview2_present():
+    if os.name != "nt" or os.environ.get("ATTUNE_IGNORE_WEBVIEW2") == "1":
+        return True
+    import winreg
+    for root_name, path in _WEBVIEW2_KEYS:
+        try:
+            with winreg.OpenKey(getattr(winreg, root_name), path) as k:
+                pv, _kind = winreg.QueryValueEx(k, "pv")
+        except OSError:
+            continue
+        if pv and str(pv).strip() not in ("", "0.0.0.0"):
+            return True
+    return False
+
+
+def _say_webview2_missing():
+    text = ("Attune needs a Windows component that is not installed on this computer: "
+            "Microsoft Edge WebView2 Runtime. It draws Attune's window.\n\n"
+            "It is free, it comes from Microsoft, and it is already part of Windows 11 "
+            "and most up-to-date Windows 10 machines.\n\n"
+            "Get the \"Evergreen\" runtime here, install it, then start Attune again:\n"
+            + WEBVIEW2_DOWNLOAD)
+    print("Attune desktop — WebView2 runtime not found; " + WEBVIEW2_DOWNLOAD)
+    try:
+        import ctypes
+        MB_OK, MB_ICONWARNING, MB_SETFOREGROUND = 0x0, 0x30, 0x10000
+        ctypes.windll.user32.MessageBoxW(
+            0, text, "Attune needs one Windows component", MB_OK | MB_ICONWARNING | MB_SETFOREGROUND)
+    except Exception:              # no user32 for some reason: the print above stands
+        pass
+
+
 def _find_playlists():
     home = _home_dir()
     for c in (os.environ.get("ATTUNE_PLAYLIST_DIR"),
@@ -381,6 +435,12 @@ def main():
         or "http://localhost:10002"
     print(f"Attune desktop — db={db}")
     print(f"  playlists={playlists or '(none configured)'}")
+
+    # Before a window exists: without WebView2 the window would open and say "Starting..."
+    # forever (see _webview2_present). One sentence and out beats a dead window.
+    if not _webview2_present():
+        _say_webview2_missing()
+        return
 
     # ---- window first, library second -------------------------------------------------
     # Serve a boot gate immediately on a free loopback port, open the window against it,
