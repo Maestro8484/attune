@@ -3,7 +3,12 @@
 All notable changes to Attune are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [0.1.0] — unreleased (initial public cut)
+## [0.1.0] - 2026-09-22 (initial public cut)
+
+Published at https://github.com/Maestro8484/attune/releases/tag/v0.1.0 from tag `v0.1.0`.
+Three fixes landed on this branch after that tag and are NOT in the 0.1.0 download:
+the truncated-song rescue, the library-reload lock, and `scan.py analyze --force`.
+They belong to the next release.
 
 ### Added (release campaign, 2026-09-20 to 2026-09-21)
 
