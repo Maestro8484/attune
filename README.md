@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <i>A spiritual successor to the long-abandoned MusicIP Mixer / MusicMagic.</i>
+  <i>A modernized, spiritual successor to the long-abandoned MusicIP Mixer / MusicMagic.</i>
 </p>
 
 <p align="center">

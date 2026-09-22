@@ -122,7 +122,7 @@ Same shape as the ChronoBloom launch kit: one block per destination, links fille
 
 Project name: Attune
 
-One-liner field: Pick a song, get a playlist that sounds like it. Offline, on your own files, on your own PC. A modern successor to MusicIP Mixer.
+One-liner field: Pick a song, get a playlist that sounds like it. Offline, on your own files, on your own PC. A modernized, spiritual successor to MusicIP Mixer.
 
 Description:
 
@@ -153,7 +153,7 @@ Links:
 
 Post after the repository and the installer are public. Fill the links.
 
-Title: Built an offline "sounds like this song" playlist maker for my own music files, with Plex push and USB export. Open source. Modern successor to MusicIP Mixer.
+Title: Built an offline "sounds like this song" playlist maker for my own music files, with Plex push and USB export. Open source. A modernized, spiritual successor to MusicIP Mixer.
 
 Body:
 

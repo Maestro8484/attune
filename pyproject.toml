@@ -4,7 +4,7 @@ name = "attune-mixer"
 # script, desktop/build_installer.py and tools/make_release.py all read that same file.
 # Never type a version number into this file or any other.
 dynamic = ["version"]
-description = "Local-first acoustic playlist generator - a modern successor to MusicIP Mixer."
+description = "Local-first acoustic playlist generator - a modernized, spiritual successor to MusicIP Mixer."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"

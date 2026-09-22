@@ -47,7 +47,7 @@ mutagen is linked into the program itself, so the program as distributed is a co
 
 ## 4. Relationship to MusicIP / MusicMagic
 
-Attune is inspired by, and aims to be a spiritual successor to, the discontinued **MusicIP Mixer** (formerly *MusicMagic Mixer*, by Predixis/MusicIP). To be unambiguous:
+Attune is inspired by, and aims to be a modernized, spiritual successor to, the discontinued **MusicIP Mixer** (formerly *MusicMagic Mixer*, by Predixis/MusicIP). To be unambiguous:
 
 - **Not affiliated, not endorsed.** "MusicIP", "MusicMagic" and "Predixis" are trademarks of their respective owners. They are used here only *nominatively*, to describe what Attune is compatible with and descended from. This is standard nominative fair use and does not imply any endorsement or partnership.
 - **No proprietary code or binaries are included or redistributed.** Do not commit `MusicMagicMixer.exe`, `mipcore.exe`, `genpuid`, `*.m3lib`, `register.key`, `client.pem`, or any other MusicIP asset to this repository. `.gitignore` blocks the common ones as a safety net, but the responsibility is yours.
