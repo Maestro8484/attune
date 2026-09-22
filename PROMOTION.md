@@ -157,7 +157,9 @@ Title: Built an offline "sounds like this song" playlist maker for my own music 
 
 Body:
 
-If you ever used MusicIP Mixer (or MusicMagic before it), you know the idea: pick one song, get a playlist of songs that actually sound like it, across genres, from the audio itself. The company died in 2008. I kept using the dead program for years because nothing else did the job. So I built a replacement.
+I built an offline playlist maker for the music files I already own. Pick one song, get a playlist of songs that actually sound like it, across genres, from the audio itself rather than from tags or from what other people happened to play next. It runs on my own machine and nothing leaves it.
+
+The idea is not mine. MusicIP Mixer did it, and MusicMagic before that. The company died in 2008, and I kept using the dead program for years because nothing else did the job. So I built a replacement.
 
 Attune is a Windows desktop app. It analyzes your library once (a music-trained listening model plus plain measurements of the sound, all stored in one local database file, SQLite), then builds a playlist from any starting song instantly. Similarity and Variety sliders, like the original.
 
