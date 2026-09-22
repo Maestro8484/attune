@@ -5,6 +5,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-22)
+
+- **Album view works.** Every album tile was drawn as a two-pixel line, so the view showed a
+  field of faint stripes. The tiles now show their cover and album name at full size.
+- **The Library view no longer shows the queue's buttons or an empty "Filtered out" bar.**
+  Both were meant to appear only in Now Playing and after More or Less Like This, and showed
+  everywhere.
+- **The duplicates dropdown in Mix options can be read.** It was a white box with pale text.
+- **The Radio variety hint no longer points at a dial you cannot see.** It referred to the
+  Similarity dial, which only the MusicIP engine shows. What Radio does is unchanged.
+
 ### Changed (2026-09-22)
 
 - **The learned head has a licence now.** `NOTICE.md` section 8 says `metric_head.onnx` and

@@ -120,8 +120,12 @@
     <label class="slider">
       <span class="k">Radio variety <em id="radioVarietyV">3</em></span>
       <input id="radioVariety" type="range" min="0" max="9" step="1" value="3">
-      <span class="hint">Same variety-walk idea as the Similarity dial above (MusicIP's own
-        mechanism): keeps each candidate with probability 1/(1+variety). 0 = strict top match.</span>
+      <!-- This used to point at "the Similarity dial above", which only exists under the
+           MusicIP engine and is hidden under V2, so the V2 user was sent to a dial they
+           could not see. The mechanism is unchanged: each candidate is kept with
+           probability 1/(1+variety). -->
+      <span class="hint">How far Radio wanders from what is playing. 0 always takes the
+        closest match; higher reaches further for more artists and genres.</span>
     </label>
     <label class="row"><span class="k">Energy arc</span>
       <select id="radioArc">

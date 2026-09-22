@@ -197,6 +197,11 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
    prior verification because synthetic dispatchEvent on a <tr> bypasses hit-testing;
    only a real click (or elementFromPoint) reveals the overlay. Observed 2026-07-22. */
 #albumGrid[hidden] { display:none !important; }
+/* The list above kept growing one id at a time and still missed two: #queueTools and
+   .filterBar both set display:flex, so in Library view the queue's four buttons and an
+   empty "Filtered out:" bar showed although the script had hidden them (measured
+   2026-09-22). The hidden attribute means hidden, everywhere, so say it once. */
+[hidden] { display:none !important; }
 #optionsPanel { left:300px; } #exportPanel { left:440px; }
 .poptitle { font-weight:600; display:flex; justify-content:space-between; align-items:center; }
 .pill { background:var(--panel2); border:1px solid var(--line); border-radius:99px;
@@ -220,6 +225,10 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .row .k { color:var(--muted); width:76px; flex:0 0 auto; font-size:12px; }
 .row input, .row select { flex:1; background:var(--panel2); border:1px solid var(--line);
   border-radius:7px; padding:6px 8px; min-width:0; }
+/* The duplicates dropdown sits bare in Mix options, outside any .row, so it got the
+   browser's white box under the theme's pale text and could not be read. */
+#dedupField { background:var(--panel2); border:1px solid var(--line); border-radius:7px;
+  padding:4px 8px; }
 .btnrow { display:flex; gap:6px; flex-wrap:wrap; }
 .btnrow button { background:var(--panel2); border:1px solid var(--line); border-radius:7px;
   padding:6px 10px; cursor:pointer; }
@@ -951,8 +960,11 @@ html[data-theme="attune"] #wave {
 .viewToggle button:first-child { border-radius:6px 0 0 6px; }
 .viewToggle button:last-child { border-radius:0 6px 6px 0; border-left:0; }
 .viewToggle button.on { background:var(--sel); color:var(--accent); border-color:var(--accent); }
+/* grid-auto-rows:max-content is load-bearing. .acard is overflow:hidden, which makes its
+   minimum row size 0, and this grid has a fixed height (inset:0), so auto rows only share
+   out the container's own height: 274 rows came out 2px each (ISSUES.md row 67). */
 .albumgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr));
-  gap:12px; padding:12px; align-content:start; overflow:auto; position:absolute; inset:0; }
+  grid-auto-rows:max-content; gap:12px; padding:12px; align-content:start; overflow:auto; position:absolute; inset:0; }
 .acard { cursor:pointer; border-radius:8px; overflow:hidden; background:var(--panel2);
   border:1px solid var(--line); transition:.12s; }
 .acard:hover { border-color:var(--accent); transform:translateY(-2px); }
