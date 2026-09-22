@@ -275,6 +275,11 @@ What MusicIP was, why it died, and what Attune keeps and drops from it:
 **[docs/MUSICIP_HERITAGE.md](docs/MUSICIP_HERITAGE.md)**. How Attune's output was measured
 against it: **[docs/VALIDATION.md](docs/VALIDATION.md)**.
 
+The code here was written with Claude Code, Anthropic's coding tool, working from my
+direction. What Attune should do, what it should refuse to do, and every call about
+whether a playlist actually sounded right are mine. The listening tests were run on my
+own ears and my own library, and no number was ever allowed to overrule them.
+
 ---
 
 <p align="center"><sub>Built for people who miss the days when your computer actually understood your music.</sub></p>
