@@ -509,8 +509,28 @@ def _clear_clap(conn, paths, only_failed=True):
 _SAID_NO_CLAP_TABLE = False
 
 
+def _select_todo(want, done, force=False, named=False):
+    """The tracks this run analyzes: `want` minus the up-to-date ones, unless `force`.
+
+    --force exists for one job: a track that already carries a vector, unchanged on disk,
+    which the database therefore counts as done, but whose vector was built from a
+    fragment of the song (about 74 of them on 2026-09-21, judged on as little as 5.8
+    seconds of 724). Neither --paths-file alone nor --retry-failed can reach such a row:
+    the first subtracts `done` and the second selects rows that failed, and these rows
+    did neither. --force subtracts exactly the tracks NAMED in --paths-file from `done`,
+    so naming a path means that path, and nothing not named is touched. It refuses
+    without --paths-file: forcing the whole library is a rebuild, not a repair.
+    Returns (todo, forced): the list to analyze and the subset that was forced."""
+    if force and not named:
+        raise SystemExit("--force needs --paths-file: it re-analyzes exactly the tracks "
+                         "named there, and nothing else")
+    forced = (set(want) & done) if force else set()
+    todo = [p for p in want if p not in done or p in forced]
+    return todo, forced
+
+
 def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
-            retry_failed=False):
+            retry_failed=False, force=False):
     conn = dbm.connect(db_path)
     # Ask once, on this thread, so the worker threads all find the answer cached rather
     # than each spawning its own `ffmpeg -version` on first use.
@@ -524,7 +544,10 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
         want = [l.strip() for l in open(paths_file, encoding="utf-8") if l.strip()]
     else:
         want = [r[0] for r in conn.execute("SELECT path FROM tracks")]
-    todo = [p for p in want if p not in done]
+    todo, forced = _select_todo(want, done, force, bool(paths_file))
+    if forced:
+        print(f"--force: {len(forced)} named tracks are already analyzed and will be "
+              f"analyzed again anyway; their fingerprint rows are rebuilt afterwards")
     if limit:
         todo = todo[:limit]
     # Counted AFTER --paths-file and --limit have narrowed the list, so the number is
@@ -577,6 +600,12 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
                 if redecoded:
                     _clear_clap(conn, [path], only_failed=False)
                     n_redecoded += 1
+                elif path in forced:
+                    # A forced track's old fingerprint was built from whatever the old
+                    # decode returned; the whole point of forcing is that it was wrong.
+                    # Clear it here, in the same transaction as the new features row, so
+                    # the embed stage rebuilds it from the audio just decoded.
+                    _clear_clap(conn, [path], only_failed=False)
                 elif path in retry:
                     _clear_clap(conn, [path])
                 if path in retry:
@@ -598,6 +627,10 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
         print(f"{n_redecoded} tracks came back short from the first decoder and were "
               f"decoded again with ffmpeg; any CLAP row they held was built from the "
               f"same short read and was cleared with them")
+    if forced:
+        print(f"{len(forced)} tracks were re-analyzed because --force named them; their "
+              f"CLAP rows were cleared as each landed, so run the embed stage next to "
+              f"rebuild the fingerprints from the audio just decoded")
     if short_reads:
         # Not a failure and not fixed here: these tracks have a vector, it is just built
         # from part of the song. Rewriting a vector that already exists is a judgement
@@ -626,6 +659,10 @@ def main():
     ap.add_argument("--read-map", nargs=2, metavar=("FROM", "TO"), action="append",
                     help="read audio from a local mirror: FROM path-prefix -> TO path-prefix "
                          "(repeatable). DB paths stay unchanged; only reads are redirected.")
+    ap.add_argument("--force", action="store_true",
+                    help="with --paths-file: analyze the named tracks again even when the "
+                         "database counts them as done, and rebuild their fingerprints. "
+                         "For tracks whose vector was built from a fragment of the song.")
     ap.add_argument("--retry-failed", action="store_true",
                     help="re-attempt every track whose last analysis failed. Tracks that "
                          "failed only for want of a decoder are retried automatically "
@@ -641,7 +678,7 @@ def main():
         import_catalog(a.db, a.arg)
     elif a.cmd == "analyze":
         analyze(a.db, a.limit, a.workers, a.paths_file, read_map=a.read_map,
-                retry_failed=a.retry_failed)
+                retry_failed=a.retry_failed, force=a.force)
     elif a.cmd == "stats":
         print(dbm.stats(dbm.connect(a.db)))
 
