@@ -1592,6 +1592,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     scan_job = scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load,
                                       "logger": scan_logger})
     reload_ctx["scan_job"] = scan_job       # see the note where reload_ctx is built
+    # Flask's own per-app registry, so a test can reach the live scan job (to hold its
+    # start lock, or mark it running) without a module-level global or a route for it.
+    app.extensions["attune_scan_job"] = scan_job
 
     # ---- auto-scan: honors scan_on_launch (previously dead) and, if `watchdog` is
     # installed, live-watches library_folders so new/changed audio triggers the same

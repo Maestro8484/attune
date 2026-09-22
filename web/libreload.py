@@ -187,13 +187,23 @@ def register(app, ctx):
         # autoscan.py in particular can start a scan from its own thread at any moment.
         # Refuse rather than publish a wrong pool. (Raised by the Codex read, 2026-09-20.)
         scan_job = ctx.get("scan_job")
-        if scan_job is not None and getattr(scan_job, "running", False):
-            return jsonify(ok=False,
-                           error="a scan is running — the library loads when it finishes"), 409
-        try:
-            job.start()
-        except RuntimeError as e:
-            return jsonify(ok=False, error=str(e)), 409
+        # The check above and the start below used to be two steps with nothing holding
+        # them together, while ScanJob.start() held its own lock: a scan could begin
+        # between "no scan is running" and job.start(). Both now happen under the scan
+        # job's OWN start lock (ScanJob.start_lock), so a scan starting at the same
+        # moment either lands first and is seen here, or waits for this reload to be
+        # launched. ISSUES.md row 2, 2026-09-21. A scan job without the attribute (an
+        # older module, or a test double) falls back to a private lock, which keeps the
+        # old behaviour rather than crashing the route.
+        gate = getattr(scan_job, "start_lock", None) or threading.Lock()
+        with gate:
+            if scan_job is not None and getattr(scan_job, "running", False):
+                return jsonify(ok=False,
+                               error="a scan is running — the library loads when it finishes"), 409
+            try:
+                job.start()
+            except RuntimeError as e:
+                return jsonify(ok=False, error=str(e)), 409
         return jsonify(ok=True)
 
     @bp.get("/api/lib/reload/status")

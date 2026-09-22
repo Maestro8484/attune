@@ -127,6 +127,12 @@ class ScanJob:
     """At most one scan runs at a time; state is read lock-free by /status (GIL-safe
     reads of plain attributes; the deque bounds memory)."""
 
+    # The module-level start lock, exposed so the ONE other job that must not overlap a
+    # scan, the library reload in libreload.py, can take the same lock around its own
+    # check-and-start. The two modules are loaded by file path and cannot import each
+    # other, so the lock travels on the object instead. ISSUES.md row 2, 2026-09-21.
+    start_lock = _START_LOCK
+
     def __init__(self, db_path, logger=None):
         self.db_path = db_path
         # Structured logging, first slice (AUDIT_FABLE_2026-07-28.md S2 item 9): a
