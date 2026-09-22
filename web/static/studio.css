@@ -467,6 +467,15 @@ thead th { position:sticky; top:0; z-index:2; background:var(--panel2);
   color:var(--muted); text-transform:uppercase; letter-spacing:.4px;
   padding:6px 8px; cursor:pointer; user-select:none; white-space:nowrap; }
 thead th:hover { color:var(--fg); }
+/* the drag handle on each header's right edge: a thin line shows on hover. It sits wholly
+   inside its own header: each sticky th paints over the one before, so a handle hanging
+   past the edge is covered by the next header and cannot be grabbed. */
+thead th .colgrip { position:absolute; top:0; right:0; width:8px; height:100%;
+  cursor:col-resize; z-index:3; touch-action:none; }
+thead th .colgrip::after { content:""; position:absolute; top:5px; bottom:5px; right:0;
+  width:1px; background:var(--line); }
+thead th:hover .colgrip::after, thead th .colgrip:hover::after { background:var(--accent); width:2px; }
+body.colresizing, body.colresizing * { cursor:col-resize !important; user-select:none !important; }
 thead th.sorted::after { content:" ▾"; color:var(--accent); }
 thead th.sorted.asc::after { content:" ▴"; }
 tbody td { padding:4px 8px; border-bottom:1px solid var(--rowalt);

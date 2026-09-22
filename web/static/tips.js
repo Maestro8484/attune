@@ -150,6 +150,7 @@
   }
 
   function fromData(el) {
+    if (el.closest('.colgrip')) return 'Drag to make this column wider or narrower. Double-click to put it back.';
     const th = el.closest('thead th');
     if (th) {
       if (th.dataset.sort === 'pos') return 'The song\'s place in this list: the order it plays and saves in. Drag rows to change it.';

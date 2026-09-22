@@ -484,10 +484,54 @@ function ymd(unix) {
          `${String(d.getDate()).padStart(2, '0')}`;
 }
 
+/* Column widths he set by dragging a header's right edge ("the columns need to be able to
+   resized", 2026-09-22). Pixels by column id, kept across restarts; a column with no entry
+   keeps its stylesheet width, and Title/Artist/Album share whatever is left. */
+let colW = store.get('colW', {});
 function renderHead() {
   $('thead-row').innerHTML = shownCols().map(c =>
-    `<th data-sort="${c.id}" class="${c.cls}">${c.label}</th>`).join('');
+    `<th data-sort="${c.id}" class="${c.cls}"${colW[c.id] ? ` style="width:${colW[c.id]}px"` : ''}>` +
+    `${c.label}<span class="colgrip" data-col="${c.id}"></span></th>`).join('');
   setHeaderSort();
+}
+// Drag a grip to resize; double-click it to put the column back to its default width.
+// The click that ends a drag must not also sort, so a drag sets S._colDragged and the
+// sort handler below skips that one click.
+function initColResize() {
+  const head = $('thead-row');
+  head.addEventListener('pointerdown', e => {
+    const g = e.target.closest('.colgrip'); if (!g || e.button !== 0) return;
+    e.preventDefault(); e.stopPropagation();
+    const th = g.parentElement, id = g.dataset.col;
+    const x0 = e.clientX, w0 = th.getBoundingClientRect().width;
+    let moved = false;
+    g.setPointerCapture(e.pointerId);
+    document.body.classList.add('colresizing');
+    const move = ev => {
+      const w = Math.max(36, Math.round(w0 + ev.clientX - x0));
+      if (Math.abs(ev.clientX - x0) > 2) moved = true;
+      th.style.width = w + 'px';
+    };
+    const up = () => {
+      g.removeEventListener('pointermove', move);
+      g.removeEventListener('pointerup', up);
+      g.removeEventListener('pointercancel', up);
+      document.body.classList.remove('colresizing');
+      if (moved) {
+        colW[id] = Math.round(th.getBoundingClientRect().width);
+        store.set('colW', colW);
+        S._colDragged = true; setTimeout(() => { S._colDragged = false; }, 0);
+      }
+    };
+    g.addEventListener('pointermove', move);
+    g.addEventListener('pointerup', up);
+    g.addEventListener('pointercancel', up);
+  });
+  head.addEventListener('dblclick', e => {
+    const g = e.target.closest('.colgrip'); if (!g) return;
+    delete colW[g.dataset.col]; store.set('colW', colW);
+    g.parentElement.style.width = '';
+  });
 }
 
 /* ------------------------------------------------------------------ table */
@@ -2305,7 +2349,9 @@ function bindEvents() {
   $('tableWrap').addEventListener('scroll', maybeLoadMore);
 
   // sorting + column chooser
+  initColResize();
   $('thead-row').addEventListener('click', e => {
+    if (S._colDragged || e.target.closest('.colgrip')) return;   // a resize, not a sort
     const th = e.target.closest('th'); if (!th) return;
     const s = th.dataset.sort;
     if (s === 'pos') return;              // '#' IS the order; there is nothing to sort by
