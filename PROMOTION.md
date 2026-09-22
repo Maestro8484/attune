@@ -136,7 +136,7 @@ What it does:
 - Runs entirely on your machine. No account, no server, nothing leaves the PC unless you point it at your own Plex.
 - If you still run MusicIP, Attune will use it as the engine. Almost nobody does, so almost everybody gets Attune's own.
 
-What I learned taking MusicIP apart through its own local interface, without touching its code: its famous "variety" slider is a biased coin flip down one ranked list, with the bias at exactly one over one-plus-the-setting. And the bigger, newer audio model I planned to upgrade to won on the similarity numbers and came last by ear in a five-track listening test. So the numbers stopped deciding what ships. Ears do.
+What I learned measuring MusicIP through its own local interface, without touching its code: its famous "variety" slider is a biased coin flip down one ranked list, with the bias at exactly one over one-plus-the-setting. And the bigger, newer audio model I planned to upgrade to won on the similarity numbers and came last by ear in a five-track listening test. So the numbers stopped deciding what ships. Ears do.
 
 Source is MIT. The installer is GPL because of what's bundled inside it (a tag library and FFmpeg). Details in the repo's NOTICE file.
 
