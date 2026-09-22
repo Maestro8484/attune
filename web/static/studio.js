@@ -157,9 +157,22 @@ function paintStats(s) {
     ? `Your library holds ${fmt(s.db_tracks)} tracks. ${fmt(s.songs)} of them can go in a `
       + `mix; ${fmt(failed)} could not be analyzed — see "Not Mixable" in the sidebar.`
     : 'Every track in your library can go in a mix.';
-  $('sTot').textContent = `${fmt(s.songs)} songs · ${s.gb} GB · ${s.hours} h · ` +
-    `${fmt(s.genres)} genres · ${fmt(s.artists)} artists · ${fmt(s.albums)} albums` +
-    (failed ? ` · library holds ${fmt(s.db_tracks)}` : '');
+  // The status line, cut to what he asked for on 2026-09-22: songs, albums, artists, and
+  // the running time as hours:minutes and as days. It used to say the song count three
+  // ways ("21,215 songs ... library holds 21,255"), which read as songs gone missing.
+  // One number now: what the library holds. The gap is the Not Mixable tracks, and the
+  // hover says so. The duration is the mixable pool's, the only one the server totals.
+  const secs = s.seconds != null ? s.seconds : Math.round((s.hours || 0) * 3600);
+  const hh = Math.floor(secs / 3600), mm = Math.floor(secs / 60) % 60;
+  const held = s.db_tracks || s.songs;
+  $('sTot').textContent = `${fmt(held)} songs · ${fmt(s.albums)} albums · ` +
+    `${fmt(s.artists)} artists · ${fmt(hh)}:${String(mm).padStart(2, '0')} · ` +
+    `${(secs / 86400).toFixed(2)} days`;
+  $('sTot').title = failed
+    ? `${fmt(s.songs)} of these ${fmt(held)} songs can go in a mix; ${fmt(failed)} could `
+      + 'not be analyzed (see Not Mixable in Smart Views). Running time counts the '
+      + `${fmt(s.songs)}. ${s.gb} GB on disk.`
+    : `Every song can go in a mix. ${s.gb} GB on disk.`;
   $('missingN').textContent = fmt(s.missing || 0);
   $('failedN').textContent = fmt(failed);
   // nothing to show, no sidebar entry -- it appears the moment a scan leaves something behind
@@ -385,6 +398,10 @@ async function initRecipes() {
 
 /* ------------------------------------------------------------------ columns */
 const COLS = [
+  // '#': the song's place in the list on screen -- 1, 2, 3 in the order it will play and
+  // save. Shown automatically in every list that IS a playlist (see ORDERED_VIEWS) and
+  // never offered in the column chooser, because it is not a fact about the song.
+  { id: 'pos',    label: '#',      cls: 'c-pos'    },
   { id: 'track',  label: 'Track',  cls: 'c-track'  },
   { id: 'title',  label: 'Title',  cls: 'c-title'  },
   { id: 'length', label: 'Length', cls: 'c-len'    },
@@ -406,7 +423,21 @@ const COLS = [
   { id: 'path',     label: 'File path', cls: 'c-path'   },
 ];
 let visCols = new Set(store.get('cols',
-  ['track', 'title', 'length', 'artist', 'album', 'year', 'rating', 'plays', 'status']));
+  ['title', 'length', 'artist', 'album', 'year', 'rating', 'plays', 'status']));
+// The album's own track number was on by default and read as the song's place in the
+// playlist, which it is not ("that's confusing", 2026-09-22). Take it off ONCE for a
+// layout saved before then; anyone who turns it back on from the header menu keeps it.
+if (!store.get('colsTrackOff', false)) {
+  visCols.delete('track'); store.set('cols', [...visCols]); store.set('colsTrackOff', true);
+}
+/* Views whose rows ARE a playlist, in play order: they get the '#' column, drag to
+   re-order, and the Play / Save / Copy bar. The library and its smart views are a
+   catalogue sorted by a column, so they get none of it. */
+const ORDERED_VIEWS = new Set(['mix', 'nowplaying', 'playlist', 'smartlist']);
+const DRAG_VIEWS = new Set(['mix', 'nowplaying', 'playlist']);
+function shownCols() {
+  return COLS.filter(c => c.id === 'pos' ? ORDERED_VIEWS.has(S.view) : visCols.has(c.id));
+}
 
 function starsHtml(r, cls = 'stars') {
   let h = `<span class="${cls}" data-i="${r.i}">`;
@@ -415,8 +446,9 @@ function starsHtml(r, cls = 'stars') {
   return h + '</span>';
 }
 
-function cellHtml(c, r) {
+function cellHtml(c, r, k) {
   switch (c.id) {
+    case 'pos':    return k + 1;
     case 'track':  return r.track || '';
     case 'title':  return esc(r.title);
     case 'length': return r.length;
@@ -453,7 +485,7 @@ function ymd(unix) {
 }
 
 function renderHead() {
-  $('thead-row').innerHTML = COLS.filter(c => visCols.has(c.id)).map(c =>
+  $('thead-row').innerHTML = shownCols().map(c =>
     `<th data-sort="${c.id}" class="${c.cls}">${c.label}</th>`).join('');
   setHeaderSort();
 }
@@ -478,6 +510,9 @@ function renderRows(rows, opts = {}) {
   const inMissing = S.view === 'library' && S.smart === 'missing' && !S.folder;
   $('verifyTools').hidden = !inMissing;
   document.body.classList.toggle('inMissingView', inMissing);
+  // The '#' column comes and goes with the view, so the header is rebuilt here too.
+  renderHead();
+  paintListChrome();
   S.rows = rows;
   // Crash/restart slice 3: "the mix the user last had open" means literally that -- only
   // persisted while Mix is the view actually on screen, matching slices 1-2 (window
@@ -527,9 +562,11 @@ function tuneHtml(i) {
 function rowsHtml(rows, opts = {}) {
   const seed = opts.seed ?? (S.view === 'mix' ? S.seed : null);
   const playing = (typeof Player !== 'undefined') ? Player.currentPool() : -1;
-  const cols = COLS.filter(c => visCols.has(c.id));
-  const draggable = S.view === 'nowplaying';
-  return rows.map(r => {
+  const cols = shownCols();
+  const draggable = DRAG_VIEWS.has(S.view);
+  const base = opts.base || 0;              // appendRows() continues the numbering
+  return rows.map((r, k0) => {
+    const k = base + k0;
     const cls = [];
     if (S.sel.has(r.i)) cls.push('sel');
     if (r.i === playing && r.i >= 0) cls.push('playing');
@@ -549,7 +586,7 @@ function rowsHtml(rows, opts = {}) {
       if (c.id === 'status' && r.status !== 'Analyzed') {
         extra = (r.status === 'Unanalyzable') ? ' no bad' : ' no';
       }
-      const cell = cellHtml(c, r) + (tune && c.id === 'title' ? tuneHtml(r.i) : '');
+      const cell = cellHtml(c, r, k) + (tune && c.id === 'title' ? tuneHtml(r.i) : '');
       // A path is wider than any sane column, so the cell truncates and hover shows
       // the whole thing rather than forcing the table to scroll to read one row.
       // The Status cell borrows the SAME per-cell mechanism for the reason a track
@@ -568,7 +605,7 @@ function rowsHtml(rows, opts = {}) {
   }).join('');
 }
 function appendRows(rows) {
-  const opts = {};
+  const opts = { base: S.rows.length };
   $('tbody').insertAdjacentHTML('beforeend', rowsHtml(rows, opts));
   S.rows = S.rows.concat(rows);
   updateSelStatus();
@@ -593,6 +630,130 @@ function setHeaderSort() {
   });
 }
 
+/* ------------------------------------------------------ the list as a playlist
+   Asked for 2026-09-22, in his words: the song list should be "a WYSIWYG representation
+   of what it will actually become". So every list that is a playlist carries one bar of
+   next steps, and every one of them acts on exactly the rows on screen, in the order on
+   screen: Play, Save as new, Save (an opened playlist only), Copy to USB, Export. */
+S.plDirty = false;                     // an opened playlist has been re-ordered or edited
+S.facetsOpen = store.get('facetsOpen', false);
+
+function paintListChrome() {
+  const ordered = ORDERED_VIEWS.has(S.view);
+  $('listTools').hidden = !ordered;
+  $('lSave').hidden = S.view !== 'playlist';
+  $('lSave').classList.toggle('dirty', S.view === 'playlist' && S.plDirty);
+  $('lSave').textContent = (S.view === 'playlist' && S.plDirty) ? 'Save changes' : 'Save';
+  if (!ordered) $('saveNewBox').hidden = true;
+  // The genre / artist / album boxes describe the whole library, so they belong to the
+  // Library view alone, and even there stay folded until asked for.
+  // A choice already made in them (an album card click picks its album) keeps them open,
+  // so a filtered list always shows what is filtering it.
+  const lib = S.view === 'library';
+  document.body.classList.toggle('inLibrary', lib);
+  const picked = S.facets.genre.size + S.facets.artist.size + S.facets.album.size > 0;
+  const open = S.facetsOpen || picked;
+  $('btnFacets').hidden = !lib;
+  $('btnFacets').classList.toggle('on', open);
+  $('btnFacets').textContent = 'Browse by genre · artist · album ' + (open ? '▴' : '▾');
+  document.body.classList.toggle('facetsShut', !(lib && open));
+}
+
+function setFacetsOpen(open) {
+  S.facetsOpen = open; store.set('facetsOpen', open);
+  // Folding the boxes away must not leave the list silently filtered by a choice the
+  // person can no longer see, so closing clears what was picked in them.
+  const had = S.facets.genre.size + S.facets.artist.size + S.facets.album.size;
+  if (!open && had) {
+    S.facets = { genre: new Set(), artist: new Set(), album: new Set() };
+    loadLibrary(true);
+  } else {
+    paintListChrome();
+    if (open) loadFacets();
+  }
+}
+
+/* Every row of the list, in screen order -- never just the selected ones, because the
+   bar's buttons mean "this list". (The export panel keeps its own rule, currentExportIds,
+   where a selection narrows what is sent.) */
+function listIds() {
+  if (S.view === 'mix' && S.mix.length) return S.mix.slice();
+  if (S.view === 'smartlist' && S._slIds && S._slIds.length) return S._slIds.slice();
+  return S.rows.filter(r => r.i >= 0).map(r => r.i);
+}
+
+function listPlay() {
+  const ids = listIds();
+  if (!ids.length) return toast('Nothing to play', true);
+  Player.playList(ids, 0);
+}
+
+function openSaveNew() {
+  const box = $('saveNewBox');
+  if (!box.hidden) { box.hidden = true; return; }
+  if (!listIds().length) return toast('Nothing to save', true);
+  $('saveNewMsg').textContent = ''; $('saveNewMsg').className = 'msg';
+  const sr = S.view === 'mix' ? S.rows.find(r => r.i === S.seed) : null;
+  $('saveNewName').value = S.view === 'playlist' && S.playlist
+    ? S.playlist.split('/').pop().replace(/\.m3u8?$/i, '') + ' (copy)'
+    : S.view === 'mix' && sr ? `like ${sr.title}`
+    : S.view === 'nowplaying' ? 'Queue ' + new Date().toISOString().slice(0, 10)
+    : $('viewLabel').textContent;
+  box.hidden = false;
+  $('saveNewName').focus(); $('saveNewName').select();
+}
+
+async function saveNew() {
+  const ids = listIds();
+  const name = $('saveNewName').value.trim();
+  const msg = $('saveNewMsg');
+  if (!name) { msg.className = 'msg err'; msg.textContent = 'Type a name first'; return; }
+  const body = { ids, name, new: true, flavor: $('flavor').value };
+  if (S.view === 'mix' && S.seed != null) body.seed = S.seed;
+  msg.className = 'msg'; msg.textContent = 'Saving…';
+  try {
+    const j = await jpost('/api/export/m3u_dir', body);
+    $('saveNewBox').hidden = true;
+    toast(`Saved "${j.name}" · ${j.count} songs`);
+    await loadPlaylists();
+    // Open what was just saved, so the list on screen IS that playlist from now on and
+    // the next change goes back into it with Save.
+    S.plDirty = false;
+    await showPlaylist(j.rel || j.name);
+  } catch (e) { msg.className = 'msg err'; msg.textContent = e.message; }
+}
+
+async function saveInPlace() {
+  if (S.view !== 'playlist' || !S.playlist) return;
+  // Songs this playlist names that are not in the library have no id to send, so writing
+  // back would quietly delete them from the file. Refuse and say what to do instead.
+  const lost = S.rows.filter(r => r.i < 0).length;
+  if (lost) {
+    return toast(`${lost} song${lost === 1 ? ' in this playlist is' : 's in this playlist are'} `
+      + 'not in your library, and saving would drop them from the file. Use Save as new.', true);
+  }
+  try {
+    const j = await jpost('/api/export/m3u_dir',
+      { ids: listIds(), replace: S.playlist, flavor: $('flavor').value });
+    S.plDirty = false; paintListChrome();
+    toast(`Saved "${j.name}" · ${j.count} songs`);
+  } catch (e) { toast(e.message, true); }
+}
+
+/* Move one row to where another sits, for every list that is a playlist. The queue has
+   its own owner (Player.q); a mix keeps S.mix in step because every export reads it; an
+   opened playlist only changes on screen until Save. */
+function moveRow(from, to) {
+  if (from === to || from < 0 || to < 0) return;
+  if (S.view === 'nowplaying') { Player.moveInQueue(from, to); showNowPlaying(); return; }
+  const rows = S.rows.slice();
+  const [r] = rows.splice(from, 1);
+  rows.splice(to, 0, r);
+  if (S.view === 'mix') S.mix = rows.filter(x => x.i >= 0).map(x => x.i);
+  if (S.view === 'playlist') S.plDirty = true;
+  renderRows(rows, { seed: S.seed });
+}
+
 /* ------------------------------------------------------------------ views */
 const SMART_LABELS = { loved: 'Loved', toprated: 'Top Rated', recent: 'Recently Added',
   mostplayed: 'Most Played', neverplayed: 'Never Played', missing: 'Missing Files' };
@@ -609,6 +770,7 @@ function setTableMode(grid) {
     $('azBar').hidden = true; $('diagView').hidden = true; $('diagUnavailable').hidden = true;
     $('verifyTools').hidden = true; document.body.classList.remove('inMissingView');
     store.set('lastMix', null);      // the album grid is a Library presentation, not Mix
+    paintListChrome();
   }
   $('btnViewList').classList.toggle('on', !grid);
   $('btnViewGrid').classList.toggle('on', grid);
@@ -859,6 +1021,7 @@ async function jumpToLetter(letter) {
 }
 
 async function loadFacets() {
+  if (document.body.classList.contains('facetsShut')) return;   // folded away: no fetch
   const j = await jget('/api/lib/facets?' + facetQS());
   const paint = (elId, list, kind, countId) => {
     $(countId).textContent = fmt(list.length);
@@ -1144,6 +1307,7 @@ async function showDiagnostics() {
   $('queueTools').hidden = true;
   $('pager').innerHTML = '';
   $('filterBar').hidden = true;
+  paintListChrome();               // no Play / Save bar, no genre boxes, here
   // Diagnostics doesn't render table rows, so it never passes through renderRows()'s
   // chrome-restore choke point -- hide the table-view pieces explicitly on entry, the
   // same way setTableMode(true) does for the album grid.
@@ -1284,7 +1448,7 @@ function setRailTab(id) {
 }
 
 async function showPlaylist(name) {
-  S.view = 'playlist'; S.playlist = name;
+  S.view = 'playlist'; S.playlist = name; S.plDirty = false;
   document.querySelectorAll('#tree li').forEach(l => l.classList.remove('on'));
   document.querySelectorAll('#plList li').forEach(l =>
     l.classList.toggle('on', l.dataset.name === name));
@@ -1343,12 +1507,17 @@ async function loadPlaylists() {
     `<li data-name="${esc(p.name)}" title="${esc(p.name)}"><span class="ti">≡</span>${esc(p.name)}</li>`).join('');
   $('exportDir').textContent = j.dir ? 'Folder: ' + j.dir : 'No playlist folder configured';
   $('btnSaveDir').disabled = !j.dir;
+  $('lSaveNew').disabled = !j.dir;
+  $('lSaveNew').title = j.dir ? 'Save this list, in this order, as a new playlist'
+    : 'Set a playlist folder in Preferences, Playlists and export, first';
+  $('plFilter').dispatchEvent(new Event('input'));     // keep a typed filter applied
 }
 
 function markTree(v) {
   document.querySelectorAll('#tree li[data-view]').forEach(l =>
     l.classList.toggle('on', l.dataset.view === v));
   document.querySelectorAll('#plList li').forEach(l => l.classList.remove('on'));
+  if (S._paintSmartFold) S._paintSmartFold();
 }
 
 function setViewMode(mode) {
@@ -2032,7 +2201,7 @@ function placeFloating(el, x, y, pad = 6) {
 /* ------------------------------------------------------------------ column chooser */
 function openColMenu(x, y) {
   const m = $('colMenu');
-  m.innerHTML = COLS.map(c =>
+  m.innerHTML = COLS.filter(c => c.id !== 'pos').map(c =>
     `<li data-col="${c.id}"><span class="ck">${visCols.has(c.id) ? '✓' : ''}</span>${c.label}</li>`).join('');
   placeFloating(m, x, y);
 }
@@ -2102,6 +2271,7 @@ function bindEvents() {
   $('thead-row').addEventListener('click', e => {
     const th = e.target.closest('th'); if (!th) return;
     const s = th.dataset.sort;
+    if (s === 'pos') return;              // '#' IS the order; there is nothing to sort by
     if (S.sort === s) S.desc = !S.desc; else { S.sort = s; S.desc = false; }
     if (S.view === 'library') { S._userSorted = true; loadLibrary(true); }
     else {
@@ -2118,6 +2288,7 @@ function bindEvents() {
       // keep S.mix in step with what's on screen -- currentExportIds() reads S.mix in the
       // mix view, so a stale S.mix would export a different order than the user is looking at
       if (S.view === 'mix') S.mix = rows.map(r => r.i);
+      if (S.view === 'playlist') S.plDirty = true;   // a re-sort is a re-order to save
       renderRows(rows, { seed: S.seed }); setHeaderSort();
     }
   });
@@ -2228,7 +2399,38 @@ function bindEvents() {
     const b = e.target.closest('button[data-rail]'); if (!b) return;
     setRailTab(b.dataset.rail);
   });
-  setRailTab(store.get('railTab', 'queue'));
+  // The side panel shows the playing song's details only (2026-09-22); the queue lives in
+  // Now Playing, whose list already shows what played and what is next.
+  setRailTab('info');
+
+  // Smart Views fold shut by default and remember the choice. They open by themselves
+  // when one of them is the view on screen, so the highlighted entry is never hidden.
+  const paintSmartFold = () => {
+    const active = !!S.smart || S.view === 'failures';
+    const open = store.get('smartOpen', false) || active;
+    document.body.classList.toggle('smartShut', !open);
+    $('smartTog').textContent = open ? '▾' : '▸';
+  };
+  $('smartHead').onclick = () => {
+    const open = !document.body.classList.contains('smartShut');
+    store.set('smartOpen', !open);
+    if (open && (S.smart || S.view === 'failures')) { S.smart = ''; loadLibrary(true); }
+    paintSmartFold();
+  };
+  paintSmartFold();
+  S._paintSmartFold = paintSmartFold;
+
+  // Playlists: a find box, because a column of 280 names cannot be scanned by eye.
+  $('plFilter').addEventListener('input', e => {
+    const q = e.target.value.trim().toLowerCase();
+    $('plList').querySelectorAll('li').forEach(li => {
+      li.hidden = !!q && !li.dataset.name.toLowerCase().includes(q);
+    });
+  });
+  $('plFilter').addEventListener('keydown', e => e.stopPropagation());
+
+  // Diagnostics now opens from Preferences, Advanced.
+  $('prefDiagOpen').onclick = () => { $('prefsWrap').hidden = true; showDiagnostics(); };
   $('upNext').addEventListener('click', e => {
     const li = e.target.closest('li[data-k]'); if (!li) return;
     if (e.target.closest('.qx')) {
@@ -2265,30 +2467,49 @@ function bindEvents() {
     updateSelStatus();
   };
 
-  // drag-reorder inside the queue view
+  // drag-reorder: the queue, a mix, and an opened playlist (see moveRow)
   let dragFrom = null;
   $('tbody').addEventListener('dragstart', e => {
-    if (S.view !== 'nowplaying') return;
+    if (!DRAG_VIEWS.has(S.view)) return;
     const tr = e.target.closest('tr'); if (!tr) return;
     dragFrom = [...$('tbody').children].indexOf(tr);
     e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', String(dragFrom)); } catch {}
   });
   $('tbody').addEventListener('dragover', e => {
-    if (S.view !== 'nowplaying' || dragFrom === null) return;
+    if (!DRAG_VIEWS.has(S.view) || dragFrom === null) return;
     e.preventDefault();
     const tr = e.target.closest('tr'); if (!tr) return;
     $('tbody').querySelectorAll('tr.dragover').forEach(t => t.classList.remove('dragover'));
     tr.classList.add('dragover');
   });
   $('tbody').addEventListener('drop', e => {
-    if (S.view !== 'nowplaying' || dragFrom === null) return;
+    if (!DRAG_VIEWS.has(S.view) || dragFrom === null) return;
     e.preventDefault();
     const tr = e.target.closest('tr'); if (!tr) return;
     const to = [...$('tbody').children].indexOf(tr);
-    Player.moveInQueue(dragFrom, to);
-    dragFrom = null;
-    showNowPlaying();
+    const from = dragFrom; dragFrom = null;
+    moveRow(from, to);
   });
+
+  // the list's own bar: Play, Save as new, Save, Copy to USB, Export
+  $('lPlay').onclick = listPlay;
+  $('lSaveNew').onclick = openSaveNew;
+  $('saveNewGo').onclick = saveNew;
+  $('saveNewCancel').onclick = () => { $('saveNewBox').hidden = true; };
+  $('saveNewName').addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); saveNew(); }
+    if (e.key === 'Escape') { e.preventDefault(); $('saveNewBox').hidden = true; }
+    e.stopPropagation();                 // typing a name must not trigger player keys
+  });
+  $('lSave').onclick = saveInPlace;
+  $('lUsb').onclick = () => sendToFolder(listIds());
+  $('lExport').onclick = () => {
+    $('optionsPanel').hidden = true;
+    $('exportPanel').hidden = !$('exportPanel').hidden;
+    if (!$('exportPanel').hidden) updateSelStatus();
+  };
+  $('btnFacets').onclick = () => setFacetsOpen(!S.facetsOpen);
   $('tbody').addEventListener('dragend', () => {
     dragFrom = null;
     $('tbody').querySelectorAll('tr.dragover').forEach(t => t.classList.remove('dragover'));
@@ -2543,7 +2764,7 @@ function bindEvents() {
     if (!e.target.closest('#colMenu') && !e.target.closest('#thead-row')) $('colMenu').hidden = true;
     if (!e.target.closest('.why')) $('why').hidden = true;
     if (!e.target.closest('.popover') && !e.target.closest('#toolbar button')
-        && !e.target.closest('#queueTools button'))
+        && !e.target.closest('#queueTools button') && !e.target.closest('#listTools button'))
       { $('optionsPanel').hidden = true; $('exportPanel').hidden = true; }
     if (!e.target.closest('#eqPanel') && !e.target.closest('#tEq')) $('eqPanel').hidden = true;
   });

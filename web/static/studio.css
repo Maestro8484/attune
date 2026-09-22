@@ -1045,3 +1045,131 @@ html[data-theme="bee"] ::-webkit-scrollbar { width:10px; height:10px; }
 html[data-theme="bee"] ::-webkit-scrollbar-track { background:var(--panel); }
 html[data-theme="bee"] ::-webkit-scrollbar-thumb { background:#3a3f47; border-radius:2px; }
 html[data-theme="bee"] ::-webkit-scrollbar-thumb:hover { background:#4a505a; }
+
+/* =====================================================================================
+   GUI Flow Audit, 2026-09-22: Joe's marks on the published audit page, built.
+   Everything below is layout and look. Nothing here changes what a mix contains.
+   ===================================================================================== */
+
+/* Native dropdown lists, scrollbars and the date/number pickers follow the theme. Without
+   this the webview drew every open <select> list, the EQ presets among them, as a white
+   sheet on a dark window ("weirdly contrasted with a white background"). */
+html:not([data-theme="daylight"]) { color-scheme:dark; }
+html[data-theme="daylight"] { color-scheme:light; }
+select option { background:var(--panel); color:var(--fg); }
+#eqPreset { background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  padding:3px 6px; }
+#eqPanel { box-shadow:0 16px 48px #000a, inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent); }
+#eqPanel .chip { background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  padding:3px 9px; cursor:pointer; }
+
+/* ---- the side list: Smart Views fold like Folders; the playlist find box ---- */
+.tree .grouphead.foldhead { cursor:pointer; }
+.tree .grouphead.foldhead:hover { color:var(--muted); }
+body.smartShut #tree .smartItem { display:none; }
+/* Same starvation #tree was protected from on 2026-07-26: with 280 playlists the flexible
+   list below squeezed the Auto-Playlists and Playlists headings (and so the find box) to
+   8-10px slivers, measured 2026-09-22. Headings never shrink; the auto-playlist list gets
+   a ceiling instead. */
+#treeMid, #treeTail { flex:0 0 auto; overflow:visible; }
+#slList { flex:0 0 auto; max-height:22vh; }
+#treeTail .plFilterRow { padding:2px 4px 4px; cursor:default; }
+#treeTail .plFilterRow:hover { background:none; }
+#plFilter { width:100%; background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  padding:4px 8px; font-size:12px; color:var(--fg); }
+#plFilter:focus { outline:none; border-color:var(--accent); }
+
+/* ---- genre / artist / album boxes: folded shut unless asked for ---- */
+body.facetsShut #facets, body.facetsShut #splitFacets { display:none; }
+#btnFacets.on { border-color:var(--accent); color:var(--accent); }
+
+/* ---- the list as a playlist: '#' column, drag to re-order, the next-step bar ---- */
+.c-pos { width:44px; text-align:right; font-variant-numeric:tabular-nums; color:var(--dim); }
+tbody tr[draggable="true"] { cursor:grab; }
+tbody tr[draggable="true"]:active { cursor:grabbing; }
+#listTools { display:flex; gap:6px; align-items:center; }
+.viewBar #listTools button.lPrimary, .saveNewBox button.lPrimary {
+  background:var(--accent); border-color:var(--accent); color:#fff; font-weight:600; }
+html[data-theme="aurora"] .viewBar #listTools button.lPrimary,
+html[data-theme="aurora"] .saveNewBox button.lPrimary,
+html[data-theme="attune"] .viewBar #listTools button.lPrimary,
+html[data-theme="attune"] .saveNewBox button.lPrimary { color:#06110a; }
+.viewBar #listTools button.lPrimary:hover, .saveNewBox button.lPrimary:hover { filter:brightness(1.1); }
+.viewBar #listTools button.dirty { border-color:var(--warn); color:var(--warn); font-weight:600; }
+.viewBar button:disabled { opacity:.45; cursor:not-allowed; }
+.saveNewBox { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:7px 10px;
+  border-bottom:1px solid var(--line); background:var(--panel); flex:0 0 auto; font-size:12px; }
+.saveNewBox label { color:var(--muted); }
+.saveNewBox input { flex:0 1 320px; min-width:140px; background:var(--panel2); color:var(--fg);
+  border:1px solid var(--accent); border-radius:6px; padding:5px 9px; }
+.saveNewBox input:focus { outline:none; }
+.saveNewBox button { background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  padding:4px 11px; cursor:pointer; font-size:12px; }
+
+/* ---- the side panel: the playing song's details, narrower ---- */
+#grid { grid-template-columns:var(--leftw,230px) 6px minmax(0,1fr) 6px var(--rightw,230px); }
+body.norail #grid { grid-template-columns:var(--leftw,230px) 6px minmax(0,1fr) 0 0; }
+
+/* ---- the player: three raised buttons you can press, then four lit switches ---- */
+.transport { gap:10px; }
+.transport .deck, .transport .modes { display:flex; align-items:center; gap:5px; }
+.transport .deck button {
+  width:36px; height:32px; display:inline-flex; align-items:center; justify-content:center;
+  padding:0; font-size:15px; color:var(--fg); border-radius:7px;
+  background:linear-gradient(180deg, color-mix(in srgb, var(--fg) 10%, var(--panel2)),
+                                     color-mix(in srgb, #000 18%, var(--panel2)));
+  border:1px solid color-mix(in srgb, #000 45%, var(--line));
+  box-shadow:inset 0 1px 0 color-mix(in srgb, var(--fg) 16%, transparent), 0 2px 3px #0008;
+  transition:transform .06s, box-shadow .06s, filter .12s; }
+.transport .deck button:hover { filter:brightness(1.15); color:var(--fg); }
+.transport .deck button:active { transform:translateY(1px);
+  box-shadow:inset 0 2px 4px #0009; }
+.transport .deck button.play { width:46px; height:38px; font-size:20px; border-radius:50% / 46%;
+  background:linear-gradient(180deg, color-mix(in srgb, #fff 18%, var(--accent)),
+                                     color-mix(in srgb, #000 22%, var(--accent)));
+  border-color:color-mix(in srgb, #000 40%, var(--accent)); color:#fff; text-shadow:0 1px 1px #0008; }
+.transport .modes { padding:3px; border-radius:8px; background:color-mix(in srgb, #000 22%, var(--panel2));
+  box-shadow:inset 0 1px 3px #0008; }
+.transport .modes button { font-size:13px; padding:3px 6px; color:var(--dim); border-radius:5px; }
+.transport .modes button.on { color:var(--accent); background:color-mix(in srgb, var(--accent) 14%, transparent);
+  text-shadow:0 0 6px color-mix(in srgb, var(--accent) 70%, transparent); }
+html[data-theme="attune"] .transport .deck button { color:#e4e8ee; text-shadow:1px 1px 0 #000; }
+html[data-theme="attune"] .transport .deck button.play { color:#1a1204; text-shadow:none; }
+
+/* ---- stars and heart: each star its own pressable target ---- */
+.barRight .stars { font-size:19px; letter-spacing:0; display:inline-flex; gap:1px; }
+.barRight .heart { font-size:19px; }
+.stars i { font-style:normal; display:inline-block; padding:0 1px; cursor:pointer;
+  transition:transform .08s, color .08s, text-shadow .08s; }
+.stars i:hover { transform:scale(1.25); color:var(--star);
+  text-shadow:0 0 8px color-mix(in srgb, var(--star) 60%, transparent); }
+.stars:hover i { color:var(--star); }
+.stars i:hover ~ i { color:var(--dim); text-shadow:none; }
+.stars .on { text-shadow:0 0 6px color-mix(in srgb, var(--star) 45%, transparent); }
+.barRight .heart:hover { transform:scale(1.2); color:var(--heart); }
+.barRight .heart { transition:transform .08s; display:inline-block; }
+
+/* ---- display colour (Preferences, Appearance) ---- */
+html[data-lcd="amber"] { --lcd:#ffb000; --lcd-bg:#120b02; --lcd-dim:#4a3300;
+  --led-low:#ffb000; --led-mid:#ffd36a; --led-high:#ff5a1f; }
+html[data-lcd="vfd"]   { --lcd:#4ff2e0; --lcd-bg:#03110f; --lcd-dim:#0d3d38;
+  --led-low:#4ff2e0; --led-mid:#9af7ee; --led-high:#ff5d8a; }
+html[data-lcd="ice"]   { --lcd:#e8f1ff; --lcd-bg:#0a0d12; --lcd-dim:#2a3140;
+  --led-low:#9fc3ff; --led-mid:#e8f1ff; --led-high:#ff6b6b; }
+.lcdgrid { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:6px; }
+.lcdcard { display:flex; flex-direction:column; align-items:center; gap:5px; cursor:pointer;
+  background:var(--panel2); border:1px solid var(--line); border-radius:8px; padding:8px 10px 6px; }
+.lcdcard.on { border-color:var(--accent); box-shadow:0 0 0 1px var(--accent); }
+.lcdcard .lcdsw { font:700 18px/1 "Lucida Console",Consolas,monospace; background:#05080a;
+  padding:6px 12px; border-radius:3px; text-shadow:0 0 6px currentColor; }
+.lcdcard .nm { font-size:11px; color:var(--muted); }
+
+/* The bar above the list carries up to five next-step buttons now, so it must never wrap
+   a button onto two lines (seen 2026-09-22 with the side panel open). Buttons keep their
+   width; the grey detail line gives way first, then the title. List / Albums only means
+   anything in the Library, so elsewhere it steps aside. */
+.viewBar { gap:8px; min-width:0; }
+.viewBar button { white-space:nowrap; flex:0 0 auto; }
+#viewLabel { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:28%; flex:0 1 auto; }
+#viewSub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:0 1 auto; }
+body:not(.inLibrary) .viewBar .viewToggle { display:none; }

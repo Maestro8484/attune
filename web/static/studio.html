@@ -36,8 +36,12 @@
   </label>
 
   <button id="btnOptions" title="Mix options">⚙ Options</button>
-  <button id="btnShuffle" title="Shuffle the current view">⤨ Shuffle</button>
-  <button id="btnExport" title="Export">⇪ Export</button>
+  <!-- Shuffle and Export left the top bar on 2026-09-22 (Joe's marks on the GUI Flow
+       Audit: "move"). Shuffle was the third shuffle on screen; Export now opens from the
+       bar above the song list, beside the thing it saves. Both elements stay, hidden,
+       because the script binds them at boot and the mini-player CSS names them. -->
+  <button id="btnShuffle" title="Shuffle the current view" hidden>⤨ Shuffle</button>
+  <button id="btnExport" title="Export" hidden>⇪ Export</button>
 
   <span class="spacer"></span>
 
@@ -112,8 +116,9 @@
       <button data-preset="v2" class="chip">V2 (default)</button>
       <button data-preset="nobpm" class="chip">bpm = 0 <span class="tag">measured</span></button>
     </div>
-    <label class="chk"><input id="mmr" type="checkbox"> MMR variety</label>
-    <label class="chk"><input id="flow" type="checkbox"> Flow ordering</label>
+    <!-- Same two switches (MMR variety, flow ordering), named on screen for what they do. -->
+    <label class="chk" title="MMR variety: skips a pick that sounds almost the same as one already chosen"><input id="mmr" type="checkbox"> Avoid near-identical picks</label>
+    <label class="chk" title="Flow ordering: arranges the result so each song leads into the next, instead of ranking it"><input id="flow" type="checkbox"> Arrange for flow</label>
 
     <div class="expsep">Radio — infinite journey</div>
     <label class="chk"><input id="radioOn" type="checkbox"> Radio (keep the queue playing forever)</label>
@@ -290,20 +295,25 @@
         <li data-view="library" class="on"><span class="ti">▤</span> Library</li>
         <li data-view="nowplaying"><span class="ti">▶</span> Now Playing <b id="npN">0</b></li>
         <li data-view="mix"><span class="ti">✦</span> Mix <b id="mixN">0</b></li>
-        <li class="grouphead">Smart Views</li>
-        <li data-smart="loved"><span class="ti">♥</span> Loved</li>
-        <li data-smart="toprated"><span class="ti">★</span> Top Rated</li>
-        <li data-smart="recent"><span class="ti">✚</span> Recently Added</li>
-        <li data-smart="mostplayed"><span class="ti">↻</span> Most Played</li>
-        <li data-smart="neverplayed"><span class="ti">·</span> Never Played</li>
-        <li data-smart="missing"><span class="ti">⚠</span> Missing Files <b id="missingN">0</b></li>
+        <!-- Folded shut by default (GUI Flow Audit, 2026-09-22: "simplify"). The heading is
+             the switch, the same idiom as Folders below. -->
+        <li class="grouphead foldhead" id="smartHead" title="Show or hide the smart views">Smart Views <span class="fold" id="smartTog">▸</span></li>
+        <li data-smart="loved" class="smartItem"><span class="ti">♥</span> Loved</li>
+        <li data-smart="toprated" class="smartItem"><span class="ti">★</span> Top Rated</li>
+        <li data-smart="recent" class="smartItem"><span class="ti">✚</span> Recently Added</li>
+        <li data-smart="mostplayed" class="smartItem"><span class="ti">↻</span> Most Played</li>
+        <li data-smart="neverplayed" class="smartItem"><span class="ti">·</span> Never Played</li>
+        <li data-smart="missing" class="smartItem"><span class="ti">⚠</span> Missing Files <b id="missingN">0</b></li>
         <!-- Tracks the library holds that analysis never got through, so they are in no
              mix and no other view. Hidden while the count is 0 (see paintStats). -->
-        <li data-view="failures" hidden title="Tracks in your library that analysis could
+        <li data-view="failures" class="smartItem" hidden title="Tracks in your library that analysis could
             not finish, so they are in no mix and nowhere else in this window"><span
             class="ti">✖</span> Not Mixable <b id="failedN">0</b></li>
-        <li class="grouphead">Tools</li>
-        <li data-view="diagnostics"><span class="ti">▨</span> Diagnostics</li>
+        <!-- Diagnostics moved to Preferences, Advanced, 2026-09-22: a log viewer is a
+             fault-finding tool, not a place to browse music. The entry stays in the page,
+             hidden, so the click wiring that opens the view keeps one owner. -->
+        <li class="grouphead" hidden>Tools</li>
+        <li data-view="diagnostics" hidden><span class="ti">▨</span> Diagnostics</li>
         <li class="grouphead" id="foldersHead">Folders <span class="fold" id="foldersTog">▸</span></li>
       </ul>
       <ul id="folderTree" class="tree folders" hidden></ul>
@@ -314,6 +324,8 @@
       <ul id="slList" class="tree pl"></ul>
       <ul id="treeTail" class="tree">
         <li class="grouphead">Playlists <b id="plN">0</b></li>
+        <li class="plFilterRow"><input id="plFilter" type="search" placeholder="Find a playlist"
+            autocomplete="off" title="Type part of a name to narrow the list"></li>
       </ul>
       <ul id="plList" class="tree pl"></ul>
     </div>
@@ -355,8 +367,23 @@
             everything still to come in the queue">✦ Playlist from these</button>
           <button id="qClear" title="Clear the queue">Clear</button>
           <button id="qShuffle" title="Shuffle the queue">Shuffle</button>
-          <button id="qSave" title="Save queue as playlist">Save…</button>
+          <!-- replaced by "Save as new" in #listTools, which saves the list as shown -->
+          <button id="qSave" title="Save queue as playlist" hidden>Save…</button>
         </span>
+        <!-- The next steps for a list of songs you are looking at as a playlist: a mix, the
+             queue, an opened playlist, an auto-playlist. Left to right in the order you use
+             them. What is on screen is exactly what saves, plays and copies, in the order
+             shown (GUI Flow Audit, 2026-09-22: "a WYSIWYG representation of what it will
+             actually become"). -->
+        <span id="listTools" hidden>
+          <button id="lPlay" class="lPrimary" title="Play this list from the top, in this order">▶ Play</button>
+          <button id="lSaveNew" title="Save this list, in this order, as a new playlist">Save as new…</button>
+          <button id="lSave" title="Write this list back into the playlist you opened" hidden>Save</button>
+          <button id="lUsb" title="Copy these songs to a folder or USB stick, in this order">Copy to USB…</button>
+          <button id="lExport" title="Download, Plex and path options">Export…</button>
+        </span>
+        <!-- Library only: the genre, artist and album boxes, folded shut by default -->
+        <button id="btnFacets" hidden title="Show or hide the genre, artist and album boxes">Browse by genre · artist · album ▾</button>
         <!-- Missing Files only. The check behind this button (POST /api/lib/verify) shipped
              with the view itself but had no way in from the window, so the table it fills
              was permanently empty and a mix could still serve a track whose audio is gone. -->
@@ -371,9 +398,17 @@
           <button id="btnViewList" class="on" title="List view">☰ List</button>
           <button id="btnViewGrid" title="Album grid">▦ Albums</button>
         </span>
-        <button id="btnBackLib" hidden>← Back to Library</button>
+        <button id="btnBackLib" hidden title="Back to the Library">← Library</button>
       </div>
       <!-- live mix filters: every removal is visible and one click from undone -->
+      <!-- "Save as new": the name box opens here, right under the button, not in a dialog -->
+      <div id="saveNewBox" class="saveNewBox" hidden>
+        <label for="saveNewName">Name the new playlist</label>
+        <input id="saveNewName" type="text" autocomplete="off" placeholder="e.g. Sunday drive">
+        <button id="saveNewGo" class="lPrimary">Save</button>
+        <button id="saveNewCancel">Cancel</button>
+        <span id="saveNewMsg" class="msg"></span>
+      </div>
       <div id="filterBar" class="filterBar" hidden>
         <span class="fbLabel">Filtered out:</span>
         <span id="fbChips"></span>
@@ -436,7 +471,11 @@
        unchanged. Collapsible from the toolbar (#btnRail), resizable via #splitRight. -->
   <aside id="rightRail">
     <div class="pane railpane">
-      <div class="railTabs" id="railTabs">
+      <!-- One job now: the playing song's details, in a narrower panel. The song list in
+           Now Playing already shows what played and what is next (GUI Flow Audit,
+           2026-09-22), so the Up Next tab is retired from view; its markup stays hidden so
+           the queue code that paints it keeps working. -->
+      <div class="railTabs" id="railTabs" hidden>
         <button data-rail="queue" class="on">Up Next <b id="railQN">0</b></button>
         <button data-rail="info">Track Info</button>
       </div>
@@ -474,15 +513,23 @@
      The display panel is the Winamp throwback zone: LCD marquee + waveform seek,
      green-on-black in every theme (see --lcd-* in studio.css). -->
 <div id="bottomBar">
+  <!-- Previous, Play, Next are the three real buttons, raised and pressable. The four
+       modes sit beside them as small lit switches. Stop left the bar on 2026-09-22 (Play
+       already pauses); the V key still stops, and the element stays hidden because
+       player.js binds it. -->
   <div class="transport">
-    <button id="tShuf" title="Shuffle queue (S)">⤨</button>
-    <button id="tPrev" title="Previous (Z)">⏮</button>
-    <button id="tPlay" class="play" title="Play/Pause (Space)">▶</button>
-    <button id="tStop" title="Stop (V)">⏹</button>
-    <button id="tNext" title="Next (B)">⏭</button>
-    <button id="tRep" title="Repeat: off / all / one (R)">🔁</button>
-    <button id="tDj" title="Auto-DJ: keep the queue full with similar tracks (D)">∞</button>
-    <button id="tRadio" title="Radio — an infinite journey from Now Playing (J)">📻</button>
+    <div class="deck">
+      <button id="tPrev" title="Previous (Z)">⏮</button>
+      <button id="tPlay" class="play" title="Play/Pause (Space)">▶</button>
+      <button id="tStop" title="Stop (V)" hidden>⏹</button>
+      <button id="tNext" title="Next (B)">⏭</button>
+    </div>
+    <div class="modes" role="group" aria-label="Play modes">
+      <button id="tShuf" title="Shuffle queue (S)">⤨</button>
+      <button id="tRep" title="Repeat: off / all / one (R)">🔁</button>
+      <button id="tDj" title="Auto-DJ: keep the queue full with similar tracks (D)">∞</button>
+      <button id="tRadio" title="Radio — an infinite journey from Now Playing (J)">📻</button>
+    </div>
   </div>
 
   <div class="displayPanel">
@@ -539,8 +586,8 @@
 </div>
 
 <footer id="status">
-  <span id="sLib">—</span>
-  <span class="sep">│</span>
+  <span id="sLib" hidden>—</span>
+  <span class="sep" hidden>│</span>
   <span id="sSel">—</span>
   <span class="spacer"></span>
   <span id="sTot">—</span>
@@ -793,6 +840,14 @@
           <div class="tabpage" data-page="appearance" hidden>
             <div class="prefrow"><span class="k">Theme</span>
               <div class="v"><div class="themegrid" id="themeGrid"></div></div></div>
+            <!-- The display's colour, on its own, because the display is the one part
+                 that is meant to look like hardware. Four classic display colours: green
+                 phosphor, amber phosphor, the blue-green of a hi-fi deck's vacuum
+                 fluorescent display, and a modern white. -->
+            <div class="prefrow"><span class="k">Display colour</span>
+              <div class="v"><div class="lcdgrid" id="lcdGrid"></div>
+                <span class="hint">The time and song readout under the player buttons.
+                  Changes as you click.</span></div></div>
             <div class="prefrow"><span class="k">Columns</span>
               <div class="v"><span class="hint">Right-click any table header to choose visible
                 columns.</span></div></div>
@@ -808,7 +863,8 @@
               <div class="v"><span class="hint" id="prefsPathAdvanced"></span></div></div>
             <div class="prefrow"><span class="k">Logs</span>
               <div class="v"><div class="btnrow">
-                  <button id="prefLogsOpen" type="button">Show log files</button></div>
+                  <button id="prefLogsOpen" type="button">Show log files</button>
+                  <button id="prefDiagOpen" type="button" title="Read the log files inside the window">Open Diagnostics</button></div>
                 <span class="hint" id="prefLogsInfo"></span></div></div>
           </div>
         </div>

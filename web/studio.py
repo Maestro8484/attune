@@ -713,6 +713,7 @@ def register(app, ctx):
             # which, since nothing in the window started a check (MORNING_REPORT §4.2).
             verified=sum(1 for t in lib.checked_at if t),
             hours=round(lib.total_seconds / 3600.0, 1),
+            seconds=int(lib.total_seconds),     # the status line shows hours:minutes and days
             gb=round(lib.total_bytes / 1e9, 1),
             genres=len({t for g in lib.gtags for t in g}),
             artists=len({a for a in lib.artist if a}),
@@ -1020,10 +1021,32 @@ def register(app, ctx):
             default_name = ctx["expand_playlist_name"](_template(), seed_name, sm.get("artist"))
         if not tracks:
             return jsonify(ok=False, error="empty playlist"), 400
-        try:
-            dest = _safe_out(playlist_dir, body.get("name") or default_name)
-        except ValueError as e:
-            return jsonify(ok=False, error=str(e)), 400
+        # Two ways the song list saves itself (the window's "Save as new" and "Save",
+        # asked for 2026-09-22). `replace` names a playlist the person OPENED from the
+        # Playlists list and is writing back in place, subfolder and all, resolved the same
+        # way GET /api/playlist resolves it so it can only ever be a file that route could
+        # have shown. `new` refuses to write over a file that already exists: a person
+        # typing a name for a new playlist must never lose an old one of the same name.
+        # Neither flag set is the export panel's old behaviour, unchanged.
+        replace = body.get("replace")
+        if replace:
+            try:
+                root = os.path.realpath(playlist_dir)
+                dest = os.path.realpath(os.path.join(root, str(replace).replace("/", os.sep)))
+                if (os.path.commonpath([root, dest]) != root or not os.path.isfile(dest)
+                        or not dest.lower().endswith(_M3U_EXT)):
+                    raise ValueError("not a playlist in the configured folder")
+            except ValueError as e:
+                return jsonify(ok=False, error=str(e)), 400
+        else:
+            try:
+                dest = _safe_out(playlist_dir, body.get("name") or default_name)
+            except ValueError as e:
+                return jsonify(ok=False, error=str(e)), 400
+            if body.get("new") and os.path.exists(dest):
+                return jsonify(ok=False, exists=True,
+                               error=f'A playlist called "{os.path.basename(dest)}" '
+                                     "already exists. Pick another name."), 409
 
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
         # Same one call the download route uses (app.py's /api/export/m3u), so the two
@@ -1049,7 +1072,10 @@ def register(app, ctx):
                tracks=[f"{(eng.meta.get(p, {}).get('artist') or '?')} - "
                        f"{(eng.meta.get(p, {}).get('title') or os.path.basename(p))}"
                        for p in tracks])
-        return jsonify(ok=True, path=dest, name=os.path.basename(dest),
+        # `rel` is the name the Playlists list and GET /api/playlist use for this file, so
+        # the window can open what it just saved.
+        rel = os.path.relpath(dest, os.path.realpath(playlist_dir)).replace(os.sep, "/")
+        return jsonify(ok=True, path=dest, name=os.path.basename(dest), rel=rel,
                        count=len(tracks), fallback=report)
 
     @bp.get("/studio")

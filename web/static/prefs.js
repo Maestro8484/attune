@@ -29,7 +29,33 @@ const Prefs = (() => {
     document.documentElement.dataset.theme = id;
     store.set('theme', id);
   }
+  /* Display colour: the LCD readout and the spectrum, on their own. Four classic
+     hardware display colours, chosen on 2026-09-22 when he asked for "a modern take on old
+     school PC desktop staple": green phosphor (the Winamp default and the house one),
+     amber phosphor (the P3 monochrome monitor), the blue-green of a hi-fi deck's vacuum
+     fluorescent display, and a modern white. Kept in the browser like the theme's instant
+     boot copy; nothing on the server needs it. */
+  const LCDS = [
+    { id: 'green', name: 'Green phosphor', c: '#00e800' },
+    { id: 'amber', name: 'Amber',          c: '#ffb000' },
+    { id: 'vfd',   name: 'Hi-fi blue',     c: '#4ff2e0' },
+    { id: 'ice',   name: 'Modern white',   c: '#e8f1ff' },
+  ];
+  function applyLcd(id) {
+    if (!LCDS.some(l => l.id === id)) id = 'green';
+    if (id === 'green') delete document.documentElement.dataset.lcd;
+    else document.documentElement.dataset.lcd = id;
+    store.set('lcd', id);
+  }
+  function paintLcdGrid() {
+    const cur = store.get('lcd', 'green');
+    $('lcdGrid').innerHTML = LCDS.map(l => `
+      <button type="button" class="lcdcard ${l.id === cur ? 'on' : ''}" data-lcd="${l.id}">
+        <span class="lcdsw" style="color:${l.c}">0:00</span><span class="nm">${l.name}</span>
+      </button>`).join('');
+  }
   function applyThemeEarly() {
+    applyLcd(store.get('lcd', 'green'));
     // The house default is now 'bee' (the MusicBee-style flat skin); 'attune' remains a
     // first-class choice, one click away. The GUARD is unchanged: a stored theme only
     // wins once the user has EXPLICITLY picked one (themeChosen) — earlier builds
@@ -54,6 +80,7 @@ const Prefs = (() => {
     $('prefsMsg').textContent = '';
     plexTokenDirty = false;
     paintThemeGrid();
+    paintLcdGrid();
     jget('/api/settings').then(j => {
       serverSettings = j.settings;
       $('prefsPath').textContent = j.path;
@@ -1073,10 +1100,19 @@ const Prefs = (() => {
     // loaded, so it must NOT set wizardSkipped the way the generic [data-close] buttons
     // do. Landing them on the Library list is the point -- that is where a seed is
     // picked, and an empty-handed "go on then" is how a first run quietly fails.
-    $('wizFinish').onclick = () => {
+    // "Start mixing" makes the first mix and plays it (2026-09-22). It used to close the
+    // window onto a list of every song with the one instruction ("pick any song, press
+    // Create Mix") closing with it. Genius picks the song, so the first thing a new person
+    // meets is music. With nothing mixable it falls back to the old refresh.
+    $('wizFinish').onclick = async () => {
       $('wizWrap').hidden = true;
-      try { if (typeof loadLibrary === 'function') loadLibrary(true); }
+      try { if (typeof loadLibrary === 'function') await loadLibrary(true); }
       catch (e) { console.error('[wizard] library refresh', e); }
+      try {
+        if (typeof geniusMix === 'function' && S.stats && (S.stats.songs || 0) > 0) {
+          await geniusMix();
+        }
+      } catch (e) { console.error('[wizard] first mix', e); }
     };
     // folder picker (its own close buttons resolve the pickFolder() promise)
     $('fsList').addEventListener('click', e => {
@@ -1111,6 +1147,12 @@ const Prefs = (() => {
         x.classList.toggle('on', x === b));
       document.querySelectorAll('.tabpage').forEach(p =>
         p.hidden = p.dataset.page !== b.dataset.tab);
+    });
+    // display colour cards: live, no Save needed
+    $('lcdGrid').addEventListener('click', e => {
+      const c = e.target.closest('.lcdcard'); if (!c) return;
+      applyLcd(c.dataset.lcd);
+      paintLcdGrid();
     });
     // theme cards
     $('themeGrid').addEventListener('click', e => {
