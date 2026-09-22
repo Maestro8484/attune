@@ -502,6 +502,10 @@ tbody tr.missing, tbody tr.unmixable { opacity:.45; font-style:italic; }
    .missing -- it wants the greyed-out look, not the hide. */
 body.hideMissing:not(.inMissingView) tbody tr.missing { display:none; }
 tbody tr.dragover td { border-top:2px solid var(--accent); }
+/* Title is what you read first, but with no width of its own it came out the narrowest text
+   column at 1400 wide and cut 9 of the first 21 titles in a mix. 22% of the row cut 1 of 21
+   with artists still at 1 (measured at 18/22/26/30%). A width dragged by hand wins. */
+thead th.c-title { width:22%; }   /* on the header only: a cell width would outvote a dragged one */
 .c-track { width:52px; text-align:right; font-variant-numeric:tabular-nums; }
 .c-len { width:60px; text-align:right; font-variant-numeric:tabular-nums; }
 .c-year { width:56px; text-align:right; font-variant-numeric:tabular-nums; }

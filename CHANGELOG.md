@@ -9,7 +9,7 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **Resizable song list columns.** Drag the right edge of any column header to make that
   column wider or narrower; Attune remembers the width. Double-click the edge to put the
-  column back.
+  column back. Titles get a larger share of the row by default, so fewer are cut short.
 
 ### Changed (2026-09-22): a calmer window, and the song list is the playlist
 
