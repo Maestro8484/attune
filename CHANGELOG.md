@@ -7,6 +7,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Changed (2026-09-22)
 
+- **The learned head has a licence now.** `NOTICE.md` section 8 says `metric_head.onnx` and
+  `learned_norm.json` are offered under the same MIT licence as the code, as the author's own
+  work, with the disclosure in section 4 standing beside it. Before this the code was MIT and
+  the head was described but not licensed.
+- **The FFmpeg source sentence says what is true.** Section 3 used to promise to send the
+  corresponding source for the exact build; nothing here holds it. It now points at FFmpeg's
+  own release and at the library list inside gyan.dev's download, and offers to help find
+  them. Fetching FFmpeg on first run instead of bundling it is on the roadmap for 0.2.
 - **The notices now say that MusicIP's own licence agreement was read, and what it
   actually restricts.** Its one clause on the subject covers reverse-engineering,
   decompiling, modifying or disassembling the object code of the program, and no object

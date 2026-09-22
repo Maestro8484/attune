@@ -25,11 +25,9 @@
   <img alt="Cloud not required" src="https://img.shields.io/badge/cloud-not%20required-brightgreen">
 </p>
 
-<!-- SCREENSHOT SLOT: docs/img/studio-main.png
 <p align="center">
   <img alt="Attune's main window: the library on the left, a mix on the right" src="docs/img/studio-main.png" width="820">
 </p>
--->
 
 ---
 
@@ -68,11 +66,9 @@ Get-FileHash .\AttuneSetup-0.1.0.exe -Algorithm SHA256
 
 ### First run
 
-<!-- SCREENSHOT SLOT: docs/img/first-run.png
 <p align="center">
   <img alt="The first-run window asking for a music folder" src="docs/img/first-run.png" width="620">
 </p>
--->
 
 A window called **Welcome to Attune** opens. Press **Browse...** and pick your music
 folder, **+ Add another** if your music lives in more than one place, then **Scan my music**.
@@ -111,11 +107,25 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
   with it.
 - **Repair a library.** Find tracks whose files have moved or gone, and relink them.
 
-<!-- SCREENSHOT SLOT: docs/img/export.png
+<p align="center">
+  <img alt="Right-click a song: Create Mix, Blend Selected, Adventure from first to last, More Like This, Less Like This" src="docs/img/context-menu.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="Genius picked the starting song and built the queue on the right; the player is running" src="docs/img/genius.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="The Auto-Playlist builder: rules such as rating at least 4, with a live count of matches" src="docs/img/auto-playlist.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="Preferences: library folders, folders to skip, scan on launch, live watch" src="docs/img/preferences.png" width="820">
+</p>
+
 <p align="center">
   <img alt="The export panel, copying a mix to a USB stick" src="docs/img/export.png" width="620">
 </p>
--->
 
 ## Why this exists (a true story)
 
