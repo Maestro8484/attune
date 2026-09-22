@@ -38,12 +38,20 @@ Stdlib only. No network. Never runs either .exe. Writes only under --out and --l
         --venv ../mixer-ng/.venv-standalone
 
 Run it with the build environment's own python, so that the standard-library name list and
-the marshal format match the interpreter that froze the app.
+the marshal format match the interpreter that froze the app. THIS IS ENFORCED, not
+advised: the tool reads the Python version out of each frozen program's own PyInstaller
+cookie and refuses (exit 2) when the interpreter running it is a different major.minor.
+Measured 2026-09-21: under Python 3.14 the tool reported four genuine 3.12
+standard-library modules (_compression, aifc, chunk, sunau, all removed in 3.13) as
+unattributed, because ``sys.stdlib_module_names`` is the RUNNING interpreter's list.
+Under the build environment's 3.12 it reports zero. A legal document that changes with
+whichever python happened to run it is not a document; hence the refusal.
 
 Exit codes:  0 clean
              1 a declared native component is missing, a component has no license text, or
                a top-level name could not be attributed
-             2 bad input (missing app folder or build environment, unreadable archive)
+             2 bad input (missing app folder or build environment, unreadable archive, or
+               an interpreter whose major.minor differs from the one that froze the app)
 """
 
 from __future__ import annotations
@@ -167,6 +175,37 @@ def read_frozen_archive(exe_path: Path) -> tuple[list[str], list[str]]:
         if not toc or not all(isinstance(k, str) for k in toc):
             raise ArchiveError(f"the PYZ index of {exe_path} is not a module table")
     return sorted(toc), sorted(other_entries)
+
+
+def frozen_python_version(exe_path: Path) -> tuple[int, int]:
+    """The major.minor of the Python that froze this .exe, from its own PKG cookie.
+
+    PyInstaller writes the version into the cookie as one integer, major*100+minor
+    (312 for 3.12), so it is read straight out of the binary and cannot be stale.
+    """
+    with open(exe_path, "rb") as fp:
+        cookie_at = _find_cookie(fp)
+        if cookie_at == -1:
+            raise ArchiveError(f"no PyInstaller PKG cookie in {exe_path}")
+        fp.seek(cookie_at, os.SEEK_SET)
+        (_magic, _archive_length, _toc_offset, _toc_length,
+         pyvers, _pylib_name) = struct.unpack(_COOKIE_FORMAT, fp.read(_COOKIE_LENGTH))
+    return (pyvers // 100, pyvers % 100)
+
+
+def interpreter_mismatch(frozen: tuple[int, int], running: tuple[int, int],
+                         program: str = "", venv: Path | None = None) -> str | None:
+    """A refusal message when the running interpreter is not the one that froze the app,
+    or None when it is. Pure, so a test can hold it without a build on disk."""
+    if tuple(frozen[:2]) == tuple(running[:2]):
+        return None
+    hint = (f"{venv}{os.sep}Scripts{os.sep}python.exe" if venv is not None
+            else "the build environment's own python")
+    return (f"[notices] REFUSING: {program or 'the frozen app'} was frozen by Python "
+            f"{frozen[0]}.{frozen[1]} and this tool is running under Python "
+            f"{running[0]}.{running[1]}. The standard-library list and the bytecode format "
+            f"are read from the RUNNING interpreter, so the answer would be wrong in a way "
+            f"the document cannot show. Run it with {hint}.")
 
 
 # ---------------------------------------------------------------------------------------
@@ -745,6 +784,25 @@ def main() -> int:
     if not venv.is_dir():
         print(f"[notices] build environment not found: {venv}", file=sys.stderr)
         return 2
+
+    # The interpreter gate, before anything is read or written. Both programs are
+    # checked: they are frozen by the same environment today, and if that ever stops
+    # being true this is where it shows.
+    for label, exe_rel, _internal_rel in PROGRAMS:
+        exe = app / exe_rel
+        if not exe.is_file():
+            continue                      # bundle_evidence() reports the missing program
+        try:
+            frozen = frozen_python_version(exe)
+        except ArchiveError as exc:
+            print(f"[notices] {exc}", file=sys.stderr)
+            return 2
+        refusal = interpreter_mismatch(frozen, sys.version_info[:2], label, venv)
+        if refusal:
+            print(refusal, file=sys.stderr)
+            return 2
+        print(f"[notices] {label}: frozen by Python {frozen[0]}.{frozen[1]}, "
+              f"running under {sys.version_info[0]}.{sys.version_info[1]}: match")
 
     site = _site_packages(venv)
     by_top, info_dirs = load_build_env(site)

@@ -6,7 +6,9 @@
 Thin driver: finds ISCC.exe, shells it at desktop\\installer\\attune.iss with the
 /DSourceDir, /DOutputDirOverride, /DAppVersion and /DLongestRelPath defines, then prints
 the resulting installer's real path and size. With --zip it also produces the portable
-Attune-<version>-win64.zip from the same folder.
+Attune-<version>-win64.zip from the same folder, and appends the repository's own licence
+texts to it (LICENSE_TEXTS below) so the zip carries the same paperwork the installer
+lays down beside Attune.exe.
 
 Prior art, not invention: Inno Setup's own command-line compiler (ISCC.exe) already
 does everything a build script would otherwise reinvent (dependency-ordered file
@@ -258,12 +260,82 @@ def compile_installer(dist, out_dir, version, iscc=None, quiet=False):
 
 ZIP_ROOT = "Attune"
 
+# The project's own licence paperwork, which the build folder never contains: it lives at
+# the repository root and the installer picks it up from there at compile time (the four
+# "Third-party licence texts" lines in desktop\installer\attune.iss). The portable zip
+# used to ship without any of it -- opened on 2026-09-21: 4,502 entries, 132 licence
+# files, every one belonging to a bundled Python package, and nothing for Attune itself
+# or for the GPL it is conveyed under. This list mirrors the .iss lines one for one, as
+# (path relative to the repository root, path relative to the zip's Attune\ folder).
+# Keep the two in step: a text the installer carries and the zip does not is the
+# defect this exists to close. Added to the archive AFTER it is built rather than copied
+# into the build folder, so dist\Attune stays exactly what desktop\build.py produced
+# and assert_expected_layout keeps its three-entry rule with no exemption.
+LICENSE_TEXTS = [
+    ("licenses",                "licenses"),
+    ("THIRD_PARTY_NOTICES.md",  "THIRD_PARTY_NOTICES.md"),
+    ("NOTICE.md",               "NOTICE.md"),
+    ("LICENSE",                 "LICENSE.txt"),
+]
 
-def make_zip(dist, out_dir, version, use_7zip=True):
+
+def add_license_texts(zip_path, root_name=ZIP_ROOT, repo=ATT):
+    """Append the repository's licence texts to an existing archive, under root_name.
+
+    Refuses, rather than producing a zip with a gap, when any of the four sources is
+    missing: the installed app is conveyed under GPL-3.0-or-later (NOTICE.md section 3)
+    and the GPL wants the texts beside the binary, not only in the source tree.
+    """
+    missing = [src for src, _dest in LICENSE_TEXTS
+               if not os.path.exists(os.path.join(repo, src))]
+    if missing:
+        raise SystemExit(
+            "[build_installer] REFUSING to finish the zip: licence text(s) missing from "
+            "the repository root:\n  " + "\n  ".join(missing) +
+            f"\n  looked in: {repo}\nThe installer ships these four beside Attune.exe and "
+            "the portable zip must carry the same. Run tools/gen_third_party_notices.py "
+            "against the build first if THIRD_PARTY_NOTICES.md or licenses/ is missing.")
+    added = 0
+    with zipfile.ZipFile(zip_path, "a", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
+        for src, dest in LICENSE_TEXTS:
+            full = os.path.join(repo, src)
+            if os.path.isdir(full):
+                for dp, _dn, fns in os.walk(full):
+                    for fn in fns:
+                        f = os.path.join(dp, fn)
+                        rel = os.path.relpath(f, full).replace("\\", "/")
+                        zf.write(f, f"{root_name}/{dest}/{rel}")
+                        added += 1
+            else:
+                zf.write(full, f"{root_name}/{dest}")
+                added += 1
+    print(f"[build_installer] licence texts added to the zip: {added} files under "
+          f"{root_name}/ ({', '.join(d for _s, d in LICENSE_TEXTS)})")
+    return added
+
+
+def _ensure_license_texts(zip_path, root_name=ZIP_ROOT):
+    """Verify the four licence entries are really in the archive, after the fact."""
+    with zipfile.ZipFile(zip_path) as zf:
+        names = set(n.replace("\\", "/") for n in zf.namelist())
+    absent = []
+    for _src, dest in LICENSE_TEXTS:
+        want = f"{root_name}/{dest}"
+        if want not in names and not any(n.startswith(want + "/") for n in names):
+            absent.append(want)
+    if absent:
+        raise SystemExit(
+            f"[build_installer] zip is missing licence texts it was meant to carry: "
+            f"{', '.join(absent)}. Delete {zip_path} and rerun.")
+
+
+def make_zip(dist, out_dir, version, use_7zip=True, repo=ATT):
     """Portable Attune-<version>-win64.zip, one top-level folder named Attune.
 
     Unpacking must give the reader a single folder, never 4,000 loose files in their
     Downloads folder, so the layout is checked after the fact rather than assumed.
+    The project's own licence texts (LICENSE_TEXTS above) are appended from `repo`
+    once the build folder is in, and their presence is checked the same way.
     """
     assert_no_database(dist)   # same reason as in compile_installer
     os.makedirs(out_dir, exist_ok=True)
@@ -297,7 +369,9 @@ def make_zip(dist, out_dir, version, use_7zip=True):
                     rel = os.path.relpath(full, dist)
                     zf.write(full, (ZIP_ROOT + "/" + rel.replace("\\", "/")))
 
+    add_license_texts(zip_path, ZIP_ROOT, repo)
     _ensure_zip_root(zip_path, ZIP_ROOT)
+    _ensure_license_texts(zip_path, ZIP_ROOT)
     size = os.path.getsize(zip_path) / (1 << 20)
     print(f"[build_installer] zip: {zip_path}  ({size:.1f} MiB)")
     return zip_path
