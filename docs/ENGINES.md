@@ -91,7 +91,9 @@ you don't want to fetch the 263 MiB model, and it's what `attune-mix` runs.
 
 ## How we know V2 is the one
 
-Six engines were mixed on the same five seeds and rated by ear, partly blind: genuine MusicIP,
+This is the one round written up in full; the same test was sat about twenty times, five seeds
+a round, five to seven engines each, ranked by ear, and the README says how it was run. In the
+written-up round six engines were mixed on the same five seeds and rated, partly blind: genuine MusicIP,
 the librosa engine and raw CLAP with no rules were shuffled and unlabelled, while the two tuned
 hybrids and a larger neural model that was later dropped were labelled. What came out of it:
 

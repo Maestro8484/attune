@@ -212,12 +212,17 @@ timbre, genre overlap, how far apart the tempos are, and how far apart the years
 Those adjustments are what stop an ears-only neural match from jumping across tempo and
 decade in a way that sounds wrong.
 
-That combination came out ahead of genuine MusicIP in a listening test I sat through myself:
-five seed songs, six engines, a full playlist from each, thirty playlists and several hundred
-tracks heard and ranked best to worst, seed by seed. It was partly blind: MusicIP and two other
-outside engines were shuffled and unlabelled, the project's own engines were labelled. Five
-seeds is not enough to call it a win, so I don't; it was enough to stop needing MusicIP. The
-exact weights it comes with are the ones that came out ahead. Two ideas that sound clever and lost by ear are deliberately
+That combination came out ahead of genuine MusicIP in a listening test I sat myself, and it
+was more than a quick listen. Think of a multiple-choice exam. Each question is one song. The
+answer choices are the playlists that five to seven different song-matchers built from that
+song, the real MusicIP among them, and instead of ticking one you rank them all, best to
+worst, by ear. A paper is five questions. I sat about twenty papers: over a hundred questions,
+five to seven playlists each, several hundred playlists heard through and ranked. Part of
+every paper was blind: MusicIP and the other outside matchers were shuffled and unlabelled,
+my own were labelled, so this is a partly blind test and I say so. One paper is written up in
+full on the [engines page](docs/ENGINES.md); the rest were sat the same way. Five songs on
+one paper is not enough to call a winner, so I don't; twenty papers was enough that I stopped
+needing MusicIP. The exact weights it comes with are the ones that came out ahead. Two ideas that sound clever and lost by ear are deliberately
 switched off in the default: matching keys around the circle of fifths, and folding tempo
 octaves so that 87 and 174 BPM count as the same. Both are in the code and both are off. The
 reasoning is written into `src/hybrid.py` beside the weights themselves.

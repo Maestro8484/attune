@@ -67,7 +67,7 @@ So the number we'd been steering by didn't predict what sounded good. It rewarde
 
 Two: the plan to just wrap MusicIP got thrown out. The original plan, written down and everything, was that MusicIP would do the picking underneath and Attune would be a modern face on top. Then the same listening test put my simplest homemade song-matcher -- the one we'd already "moved past" -- above the real MusicIP. So the face became the product, and MusicIP became an option you can still switch on if you happen to own it.
 
-That listening test is five songs, and it was only partly blind: the three outside contenders, MusicIP among them, were shuffled and unlabelled, while my own were labelled as mine. One of its five rounds has a labelling note I never resolved. So here's what it does and doesn't prove. In five songs, my own song-matcher scored higher than the real MusicIP. Five songs isn't enough to call that a win, so I don't. It's enough that I stopped needing MusicIP.
+That listening test was papers of five songs, five to seven song-matchers each, sat about twenty times, and it was only partly blind: the three outside contenders, MusicIP among them, were shuffled and unlabelled, while my own were labelled as mine. One of the five songs on the paper I wrote up has a labelling note I never resolved. So here's what it does and doesn't prove. On that paper, my own song-matcher scored higher than the real MusicIP. One paper isn't enough to call that a win, so I don't. It's enough that I stopped needing MusicIP.
 
 ---
 
@@ -86,7 +86,7 @@ Use these rather than inventing new ones.
 - The style dial runs to about 845, not the 0 to 100 we had assumed. Past about 950 the only songs left are the starting song's own artist, measured on one song.
 - What MusicIP holds onto while it roams across genres: loudness, brightness and texture, strongly. Tempo is the weakest of everything measured, but it is held.
 - With its genre filter off, songs of the same genre still come out together two to seven times more often than chance, purely from how they sound.
-- The listening test, partly blind as described above: five songs, six contenders, scored best to worst. My simplest song-matcher 25, its successor 22, the real MusicIP 19, plain hand-built measurements of the sound 19, the listening model on its own 11, the big new model 9.
+- The listening test, partly blind as described above, the written-up paper: five songs, six contenders, scored best to worst. My simplest song-matcher 25, its successor 22, the real MusicIP 19, plain hand-built measurements of the sound 19, the listening model on its own 11, the big new model 9.
 - That big new model had the best similarity number of anything measured, 0.157, and came last by ear.
 - Attune's own library today is about 21,000 tracks.
 - Roughly one mp3 in fourteen in a real library can't be decoded without ffmpeg. Measured at 22 of a random 300.
@@ -189,7 +189,7 @@ These aren't style preferences. Each one has a reason.
 - Don't say "clean-room". It means something specific: one team studies the original and writes a spec, a second team who never saw it builds from the spec. That isn't what happened here. One person did both. `NOTICE.md` says the true thing instead.
 - Don't make any claim about patents in either direction. No patent search has been done and nobody here is qualified to do one. An earlier draft asserted Attune didn't practise anyone's patent; that was withdrawn because it hadn't been established.
 - Don't say MusicIP's stored analysis was decoded. It wasn't. The analysis blobs were harvested out of the tags of my own files and kept, their byte layout was studied, one partial reading gave a weak signal and was dropped, and nothing in Attune reads them. "Harvested, looked at, never decoded" is true; "decoded" and "reverse-engineered" are not. The same goes for the program's library file: looked at as bytes, never decoded, not read by anything here.
-- Don't state "Attune beats MusicIP" as settled. Five songs, only partly blind, one round with an unresolved labelling note. Say it scored higher in a five-song listen, and say that five songs isn't enough to call it a win.
+- Don't state "Attune beats MusicIP" as settled. Papers of five songs, only partly blind, and the written-up paper has an unresolved labelling note. Say it scored higher, say how the test was run, and don't call it a win.
 - Don't quote the head-to-head precision benchmark that seems to show Attune winning by a mile. It rewards returning more of the same artist and album, which is exactly what MusicIP deliberately avoids, so it's measuring the wrong thing. Ears decided this, not that number.
 - No machine names, no network share names, no personal file paths, no library names. The research notes are full of them; none of it belongs in public copy. "The NAS" and "the network drive" are fine; its name is not.
 - Don't link or quote the private research folder. It holds MusicIP's own program and its own licence keys, and it stays private.
