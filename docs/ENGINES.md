@@ -91,8 +91,9 @@ you don't want to fetch the 263 MiB model, and it's what `attune-mix` runs.
 
 ## How we know V2 is the one
 
-Five engines were mixed on the same seeds and presented blind: genuine MusicIP, the librosa
-engine, raw CLAP with no rules, and two tuned hybrids. What came out of it:
+Six engines were mixed on the same five seeds and rated by ear, partly blind: genuine MusicIP,
+the librosa engine and raw CLAP with no rules were shuffled and unlabelled, while the two tuned
+hybrids and a larger neural model that was later dropped were labelled. What came out of it:
 
 - **Raw CLAP alone was the weakest.** Neural ears with no rules wander across tempo, era and
   key, and make matches that are acoustically defensible and musically wrong.

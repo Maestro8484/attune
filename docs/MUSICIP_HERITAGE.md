@@ -33,7 +33,7 @@ API must be re-enabled by hand on every launch).
 | MusicDNS/GenPUID online identification | **Dropped.** Identification is not similarity and mixing never needed it |
 | `.m3lib` binary library | One SQLite file |
 | `style` / `variety` sliders, artist spacing | The same knobs, called Similarity and Variety, with the implementation on show |
-| `localhost:10002` HTTP API, re-enabled by hand every launch | A local web app that just runs. `.m3u8` export and Plex shipped; Jellyfin has not |
+| `localhost:10002` HTTP API, off until switched on in its preferences, alive only while the program runs | A local web app that just runs. `.m3u8` export and Plex shipped; Jellyfin has not |
 | Heavy legacy desktop UI | A small local web UI in a native window. The engine stays UI-agnostic |
 | Windows and Mac only, unmaintained | Windows for now, with a portable Python engine underneath. Source MIT, built app GPL-3.0-or-later because of what it bundles |
 

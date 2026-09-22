@@ -21,6 +21,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (2026-09-21)
 
+- **The portable zip now carries Attune's own licence paperwork.** The installer already
+  laid `licenses/`, `THIRD_PARTY_NOTICES.md`, `NOTICE.md` and `LICENSE.txt` beside
+  `Attune.exe`; the zip carried none of them, only the licence files belonging to the
+  bundled Python packages. Both downloads now hold the same four, and the release script
+  refuses to finish a zip without them.
+- **The third-party notices tool refuses to run under the wrong Python.** It reads the
+  Python version out of each frozen program and stops, without writing anything, when the
+  interpreter running it is a different one. Run under a newer Python it used to report
+  four genuine standard-library modules as unattributed third-party code.
 - **Folders you tell Attune to skip are now skipped by every scan.** The excluded-folders
   list in Preferences was obeyed by the Rescan button and ignored by the scan that runs when
   Attune starts and by the folder watcher, which are the two that actually run once it is
@@ -988,8 +997,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - **Journey (Radio) mode: an infinite ambient-radio queue** (`src/hybrid.py`
   `HybridEngine.radio_next()` NEW, `src/engine.py` `V2Engine.radio_next()` NEW,
   `web/app.py` `GET /api/radio/next` NEW, `web/static/{studio.html,studio.js,player.js}`).
-  Reimplements MusicIP Mixer's actual variety mechanism, reverse-engineered in
-  `TEACHER_MECHANICS.md` B.1/B.7: i.i.d. Bernoulli thinning (`p = 1/(1+variety)`) of a
+  Reimplements MusicIP Mixer's actual variety mechanism, measured off the running program
+  through its own API and recorded in `TEACHER_MECHANICS.md` B.1/B.7: i.i.d. Bernoulli thinning (`p = 1/(1+variety)`) of a
   single fixed similarity-rank scan — NOT a diversity/packing walk — plus the same
   artist-spacing drop-for-good rule `mix()` already uses. Adds an energy-arc corridor
   MusicIP never had: a second Bernoulli-style accept/reject on the stored librosa

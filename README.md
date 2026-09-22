@@ -197,8 +197,9 @@ descriptor and a few plain musical facts: timbre, genre overlap, how far apart t
 and how far apart the years are. Those adjustments are what stop an ears-only neural match
 from jumping across tempo and decade in a way that sounds wrong.
 
-That combination won a blind listening test against genuine MusicIP, and the exact weights it
-ships with are the ones that won. Two ideas that sound clever and lost by ear are deliberately
+That combination came out ahead of genuine MusicIP in a five-track listening test, partly blind:
+MusicIP and two other outside engines were shuffled and unlabelled, the project's own engines
+were labelled. The exact weights it ships with are the ones that won. Two ideas that sound clever and lost by ear are deliberately
 switched off in the default: matching keys around the circle of fifths, and folding tempo
 octaves so that 87 and 174 BPM count as the same. Both are in the code and both are off. The
 reasoning is written into `src/hybrid.py` beside the weights themselves.

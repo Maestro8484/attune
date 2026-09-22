@@ -54,8 +54,8 @@ Five sliders sit above the mix. Each one says how much that thing is allowed to 
 - **Tempo** penalises a big gap in BPM.
 - **Era** penalises a big gap in years.
 
-**Presets** sets them all at once. **V2 (shipped)** is the combination that won the blind
-listening test and is what you get by default.
+**Presets** sets them all at once. **V2 (shipped)** is the combination that came out ahead
+in a five-track, partly blind listening test and is what you get by default.
 
 Two tick boxes underneath:
 
