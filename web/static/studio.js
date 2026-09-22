@@ -1503,8 +1503,35 @@ async function showFailures() {
 async function loadPlaylists() {
   const j = await jget('/api/playlists');
   $('plN').textContent = j.playlists.length;
-  $('plList').innerHTML = j.playlists.map(p =>
-    `<li data-name="${esc(p.name)}" title="${esc(p.name)}"><span class="ti">≡</span>${esc(p.name)}</li>`).join('');
+  // Playlists at the top of the folder come first, one line each. Every subfolder is a
+  // folded group under them, closed until clicked ("relegate those to somewhere else",
+  // 2026-09-22: 218 of 280 were the ABTest listening-test papers). The files stay where
+  // they are; the regression gate reads its baseline out of ABTest.
+  const open = new Set(store.get('plOpen', []));
+  const top = [], groups = new Map();
+  for (const p of j.playlists) {
+    const cut = p.name.indexOf('/');
+    if (cut < 0) { top.push(p); continue; }
+    const f = p.name.slice(0, cut);
+    if (!groups.has(f)) groups.set(f, []);
+    groups.get(f).push(p);
+  }
+  const item = (p, child) => {
+    const shown = child ? p.name.slice(p.name.indexOf('/') + 1) : p.name;
+    return `<li data-name="${esc(p.name)}"${child ? ` data-folder="${esc(p.name.slice(0, p.name.indexOf('/')))}" class="plChild"` : ''}`
+      + ` title="Open the playlist ${esc(p.name)}. Double-click a song to play from it."`
+      + `${child && !open.has(p.name.slice(0, p.name.indexOf('/'))) ? ' hidden' : ''}>`
+      + `<span class="ti">≡</span>${esc(shown.replace(/\.m3u8?$/i, ''))}</li>`;
+  };
+  let html = top.map(p => item(p, false)).join('');
+  for (const [f, list] of [...groups].sort((a, b) => a[0].localeCompare(b[0]))) {
+    const isOpen = open.has(f);
+    html += `<li class="plFolder" data-pf="${esc(f)}" title="Folder ${esc(f)}: ${list.length} `
+      + `playlist${list.length === 1 ? '' : 's'}. Click to show or hide them.">`
+      + `<span class="ti">${isOpen ? '▾' : '▸'}</span>${esc(f)} <b>${list.length}</b></li>`
+      + list.map(p => item(p, true)).join('');
+  }
+  $('plList').innerHTML = html;
   $('exportDir').textContent = j.dir ? 'Folder: ' + j.dir : 'No playlist folder configured';
   $('btnSaveDir').disabled = !j.dir;
   $('lSaveNew').disabled = !j.dir;
@@ -2400,7 +2427,20 @@ function bindEvents() {
     $('viewLabel').textContent = a.album;      // name the album, not just "Library"
   });
   $('plList').addEventListener('click', e => {
-    const li = e.target.closest('li'); if (li) showPlaylist(li.dataset.name);
+    const li = e.target.closest('li'); if (!li) return;
+    if (li.classList.contains('plFolder')) {         // a folder header: fold / unfold
+      const f = li.dataset.pf;
+      const open = new Set(store.get('plOpen', []));
+      const now = !open.has(f);
+      if (now) open.add(f); else open.delete(f);
+      store.set('plOpen', [...open]);
+      li.querySelector('.ti').textContent = now ? '▾' : '▸';
+      $('plList').querySelectorAll('li.plChild').forEach(c => {
+        if (c.dataset.folder === f) c.hidden = !now;
+      });
+      return;
+    }
+    showPlaylist(li.dataset.name);
   });
   $('btnBackLib').onclick = () => loadLibrary(false);
 
@@ -2432,9 +2472,19 @@ function bindEvents() {
 
   // Playlists: a find box, because a column of 280 names cannot be scanned by eye.
   $('plFilter').addEventListener('input', e => {
+    // Typing searches inside the folded folders too; clearing the box puts every folder
+    // back the way it was left.
     const q = e.target.value.trim().toLowerCase();
-    $('plList').querySelectorAll('li').forEach(li => {
-      li.hidden = !!q && !li.dataset.name.toLowerCase().includes(q);
+    const open = new Set(store.get('plOpen', []));
+    const hits = new Set();
+    $('plList').querySelectorAll('li[data-name]').forEach(li => {
+      const match = !q || li.dataset.name.toLowerCase().includes(q);
+      const child = li.classList.contains('plChild');
+      li.hidden = q ? !match : (child && !open.has(li.dataset.folder));
+      if (q && match && child) hits.add(li.dataset.folder);
+    });
+    $('plList').querySelectorAll('li.plFolder').forEach(li => {
+      li.hidden = !!q && !hits.has(li.dataset.pf);
     });
   });
   $('plFilter').addEventListener('keydown', e => e.stopPropagation());

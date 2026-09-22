@@ -513,27 +513,27 @@
      The display panel is the Winamp throwback zone: LCD marquee + waveform seek,
      green-on-black in every theme (see --lcd-* in studio.css). -->
 <div id="bottomBar">
-  <!-- Previous, Play, Next are the three real buttons, raised and pressable. The four
-       modes sit beside them as small lit switches. Stop left the bar on 2026-09-22 (Play
-       already pauses); the V key still stops, and the element stays hidden because
-       player.js binds it. -->
+  <!-- Previous, Play, Stop, Next are the real buttons, raised and pressable. The four
+       modes sit beside them as lit switches, each with its word under the icon: at icon
+       size alone nobody could tell shuffle from Auto-DJ ("way too small to read or infer
+       their meaning", 2026-09-22). Stop came back the same day at his request. -->
   <div class="transport">
     <div class="deck">
-      <button id="tPrev" title="Previous (Z)">⏮</button>
-      <button id="tPlay" class="play" title="Play/Pause (Space)">▶</button>
-      <button id="tStop" title="Stop (V)" hidden>⏹</button>
-      <button id="tNext" title="Next (B)">⏭</button>
+      <button id="tPrev" title="Previous song. More than 3 seconds into a song, it starts that song again instead (Z)">⏮</button>
+      <button id="tPlay" class="play" title="Play or pause (Space)">▶</button>
+      <button id="tStop" title="Stop, and go back to the start of the song (V)">⏹</button>
+      <button id="tNext" title="Next song (B)">⏭</button>
     </div>
     <div class="modes" role="group" aria-label="Play modes">
-      <button id="tShuf" title="Shuffle queue (S)">⤨</button>
-      <button id="tRep" title="Repeat: off / all / one (R)">🔁</button>
-      <button id="tDj" title="Auto-DJ: keep the queue full with similar tracks (D)">∞</button>
-      <button id="tRadio" title="Radio — an infinite journey from Now Playing (J)">📻</button>
+      <button id="tShuf" title="Shuffle: play the list in a random order. Lit when on (S)"><span class="ic">⤨</span><span class="cap">Shuffle</span></button>
+      <button id="tRep" title="Repeat is off. Click to repeat the whole list; click again for just this song (R)"><span class="ic">🔁</span><span class="cap">Repeat</span></button>
+      <button id="tDj" title="Auto-DJ: when the list runs low, add more songs that sound like it, so the music never stops. Lit when on (D)"><span class="ic">∞</span><span class="cap">Auto-DJ</span></button>
+      <button id="tRadio" title="Radio: an endless mix that keeps growing from the song playing now. Its settings are in Options (J)"><span class="ic">📻</span><span class="cap">Radio</span></button>
     </div>
   </div>
 
   <div class="displayPanel">
-    <div class="lcd" id="lcd" title="Attune display">
+    <div class="lcd" id="lcd" title="The display: time played and the song playing, then its bitrate and sample rate, and which modes are lit (shuffle, repeat, Auto-DJ, Radio, EQ). Change its colour in Preferences, Appearance.">
       <div class="lcdRow1">
         <span class="lcdTime" id="lcdTime">0:00</span>
         <span class="lcdTrackWrap"><span class="lcdTrack" id="lcdTrack">ATTUNE :: ready</span></span>
@@ -1027,5 +1027,6 @@
 <script src="/static/prefs.js"></script>
 <script src="/static/smartlist.js"></script>
 <script src="/static/boot.js"></script>
+<script src="/static/tips.js"></script>
 </body>
 </html>

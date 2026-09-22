@@ -1,31 +1,29 @@
 # Screenshots
 
-Three slots are referenced from the repository's README, and they're commented out there so
-that a missing file never renders as a broken image on the GitHub page. Capture the images,
-drop them in here, and delete the `<!-- SCREENSHOT SLOT ... -->` wrapper around each block.
+The pictures the repository's README shows. Every one is a published picture: anyone can read every pixel of it.
 
-| File | What it shows | Width in the README |
-|---|---|---|
-| `studio-main.png` | The main window: library list on the left, a finished mix on the right, something playing | 820 |
-| `first-run.png` | The **Welcome to Attune** window with a folder picked and **Scan my music** visible | 620 |
-| `export.png` | The export panel with **Folder / USB** filled in and **Layout** showing | 620 |
+## What each one shows
+
+| File | What it shows |
+|---|---|
+| `studio-main.png` | A mix in the main window, numbered in play order, with its bar of next steps and the playing song on the right |
+| `genius.png` | Genius has picked a song, built a mix and started playing |
+| `albums.png` | The album view |
+| `context-menu.png` | Right-click on a song |
+| `mix-options-radio.png` | Mix options with Radio switched on |
+| `blend.png`, `adventure.png` | A Blend and an Adventure mix |
+| `export.png`, `usb-copy.png` | The export panel, top and the copy-to-USB part |
+| `preferences.png` | Preferences, Library |
+| `first-run.png` | The Welcome window |
+| `auto-playlist.png` | The Auto-Playlist builder |
+| `hover-help.png` | The hover help on the Auto-DJ switch |
 
 ## Rules for capturing them
 
-**Never use the owner's real library.** Album and track names are personal. Capture against
-a scratch library instead: `python examples/make_demo_library.py` builds a small synthetic
-one with no copyrighted audio in it, or use a folder of your own test files.
+Rewritten 2026-09-22. The older text here said never to use the owner's real library and to capture a synthetic one; the published pictures have used the real library since 2026-09-22, by Joe's direction, with four kinds of text replaced. This is that rule.
 
-**Point `APPDATA` at an empty folder** before launching, so the capture shows a clean app and
-not somebody's saved settings.
+**Replace these four before every shot, in the page itself:** the network share name, drive letters and every path (replaced whole, to the end of the line, because a folder name after a space is still a real folder name), the Windows username, and every playlist name and folder name in the side list. The literal strings to catch are in `.leakpatterns`, which is not published.
 
-**Capture from the built app**, not the dev server in a browser tab. The window chrome is
-part of what a reader is trying to recognise.
+**Read every picture back by eye before committing it.** `tools/leak_check.py` reads text, not images, so it cannot catch a path in a corner of a picture. The first capture on 2026-09-22 leaked all four kinds; the second left a folder layout showing after a replaced drive name.
 
-**Default theme, default window size.** A reader should see what they will get.
-
-**Check every pixel of text before committing.** A file path, a server address, a Plex
-library name or a track title can all sit in a corner of a screenshot and go straight onto a
-public page. `tools/leak_check.py` reads text, not images, so it will not catch this for you.
-
-Save as PNG. Keep each one under about 400 KB.
+**Size 1400 by 860, the app's own theme.** The capture script used on 2026-09-22 drove the running app with Playwright in Microsoft Edge, set each view up, replaced the text, then shot it. It is not kept in the repository because it reads `.leakpatterns`.

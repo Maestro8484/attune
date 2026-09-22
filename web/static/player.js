@@ -122,7 +122,14 @@ const Player = (() => {
   function paintTransport() {
     $('tShuf').classList.toggle('on', P.shuffle);
     $('tRep').classList.toggle('on', P.repeat !== 'off');
-    $('tRep').textContent = P.repeat === 'one' ? '🔂' : '🔁';
+    // The icon only: the button also carries its word underneath (studio.html, 2026-09-22)
+    const repIc = $('tRep').querySelector('.ic') || $('tRep');
+    repIc.textContent = P.repeat === 'one' ? '🔂' : '🔁';
+    const repCap = $('tRep').querySelector('.cap');
+    if (repCap) repCap.textContent = P.repeat === 'one' ? 'Repeat 1' : 'Repeat';
+    $('tRep').title = P.repeat === 'one' ? 'Repeat is on: this one song over and over. Click to turn repeat off (R).'
+      : P.repeat === 'all' ? 'Repeat is on: the whole list starts again when it ends. Click to repeat just this song (R).'
+      : 'Repeat is off. Click to repeat the whole list; click again for just this song (R).';
     $('tDj').classList.toggle('on', P.autodj);
     $('tRadio').classList.toggle('on', P.radio);
     $('tEq').classList.toggle('on', P.eqOn);

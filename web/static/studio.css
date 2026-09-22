@@ -1173,3 +1173,24 @@ html[data-lcd="ice"]   { --lcd:#e8f1ff; --lcd-bg:#0a0d12; --lcd-dim:#2a3140;
 #viewLabel { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:28%; flex:0 1 auto; }
 #viewSub { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0; flex:0 1 auto; }
 body:not(.inLibrary) .viewBar .viewToggle { display:none; }
+
+/* Hover help (tips.js): quick to appear, readable, in the theme's own colours. */
+#tip { position:fixed; z-index:1000; max-width:320px; padding:7px 10px; border-radius:7px;
+  background:var(--panel2); color:var(--fg); border:1px solid var(--accent);
+  box-shadow:0 8px 24px #000a; font-size:12px; line-height:1.4; pointer-events:none;
+  white-space:normal; }
+
+/* The four play modes: big enough to see, each with its word under the icon. */
+.transport .modes { gap:4px; padding:3px 4px; }
+.transport .modes button { display:flex; flex-direction:column; align-items:center; gap:1px;
+  min-width:50px; padding:4px 6px 3px; color:var(--muted); line-height:1; }
+.transport .modes button .ic { font-size:18px; line-height:1.1; }
+.transport .modes button .cap { font-size:10px; letter-spacing:.3px; }
+.transport .modes button.on .cap { color:var(--accent); }
+.transport .modes button:hover { color:var(--fg); background:var(--hover); }
+
+/* Folded playlist folders in the side list */
+#plList li.plFolder { color:var(--muted); font-weight:600; }
+#plList li.plFolder .ti { color:var(--muted); }
+#plList li.plFolder b { margin-left:4px; }
+#plList li.plChild { padding-left:22px; }

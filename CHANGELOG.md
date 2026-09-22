@@ -19,14 +19,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Diagnostics moved to Preferences, Advanced. The side panel shows the playing song's
   details only, narrower. The status line says songs, albums, artists and running time,
   once each.
-- **The player looks pressable.** Previous, Play and Next are raised buttons; shuffle,
-  repeat, Auto-DJ and Radio are small lit switches beside them. Stop is off the bar (the V
-  key still stops). The rating stars are bigger and light up under the pointer.
+- **The player looks pressable.** Previous, Play, Stop and Next are raised buttons;
+  shuffle, repeat, Auto-DJ and Radio are lit switches beside them. The rating stars are
+  bigger and light up under the pointer.
 - **Display colour.** Preferences, Appearance offers green phosphor, amber, hi-fi blue and
   modern white for the readout and spectrum.
 - **The first run ends in music.** "Start mixing" after the first scan now picks a song,
   builds a mix and plays it.
-- **Playlists can be found.** A find box above the Playlists list.
+- **Playlists can be found.** A find box above the Playlists list, and every subfolder of
+  the playlist folder is a folded group under the playlists at its top, closed until clicked.
+- **Help on hover, everywhere.** Every button, dial, setting, column, song row and readout
+  says what it does when the pointer rests on it, in a popup that follows the theme.
+- **Stop is back** beside Play, and the four play modes (Shuffle, Repeat, Auto-DJ, Radio)
+  are larger, with their names written under their icons.
 - Dropdown lists, the EQ presets among them, are dark in dark themes instead of white.
 - "MMR variety" and "Flow ordering" read "Avoid near-identical picks" and "Arrange for
   flow". Same switches.

@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img alt="Attune's main window: the library on the left, a mix on the right" src="docs/img/studio-main.png" width="820">
+  <img alt="Attune's main window: a mix numbered in play order, with Play, Save as new, Copy to USB and Export above it, and the playing song's cover on the right" src="docs/img/studio-main.png" width="820">
 </p>
 
 ---
@@ -99,7 +99,11 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
   lately if it can, then something you rated highly, then anything analysed.
 - **Recipes.** Save a set of mix settings under a name and use it again.
 - **Auto-Playlists.** Rules instead of a starting song: artist, genre, year, rating, tempo and more.
+- **The list is the playlist.** Every mix, queue and playlist is numbered in play order.
+  Drag songs to re-order them, then **Play**, **Save as new**, **Save**, **Copy to USB** or
+  **Export** from the bar above the list, and what you see is exactly what you get.
 - **Browse and play.** Search, album and folder views, album art, ratings, loved tracks, tags.
+- **Help on hover.** Rest the pointer on any button, dial or setting and it says what it does.
 - **Copy a mix to a USB stick.** Numbered filenames so a car stereo plays them in order, tags
   intact, either flat or as Artist / Album folders.
 - **Save a playlist file.** `.m3u8`, readable by MusicBee, foobar2000, Plex, anything.
@@ -140,7 +144,15 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 </p>
 
 <p align="center">
-  <img alt="The export panel, copying a mix to a USB stick" src="docs/img/export.png" width="620">
+  <img alt="The export panel: save a playlist file, download it, or send it to Plex" src="docs/img/export.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="The album view: every album as a cover" src="docs/img/albums.png" width="820">
+</p>
+
+<p align="center">
+  <img alt="Hover help: resting the pointer on Auto-DJ explains what it does" src="docs/img/hover-help.png" width="820">
 </p>
 
 ## Why this exists (a true story)
