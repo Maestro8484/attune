@@ -3,6 +3,33 @@
 All notable changes to Attune are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Changed (2026-09-22)
+
+- **The notices now say that MusicIP's own licence agreement was read, and what it
+  actually restricts.** Its one clause on the subject covers reverse-engineering,
+  decompiling, modifying or disassembling the object code of the program, and no object
+  code was touched here: MusicIP was run, watched through its own local interface, and two
+  data files it had written were looked at as raw bytes. That is in NOTICE.md section 4, so
+  a reader can check the scope against the agreement instead of taking the section on
+  trust. Section 2's summary line used to stop at "nothing here reads any MusicIP file
+  format", which was true but left the byte-level examination for somebody to find forty
+  lines later; it now names it in the same breath and points at section 4.
+- **The pages a listener reads say what the app says.** The README, the walkthrough and
+  the privacy page dropped "seed" and "shipped" for the words the buttons use, and
+  "engine" is explained once where it first matters. The settings and command-line
+  switches keep their names, so nothing on screen changed.
+
+### Fixed (2026-09-22)
+
+- **A comment in the default engine described the MusicIP work with a word the project's
+  own public pages forbid.** It said the variety mechanism came from "reverse-engineering";
+  it came from measuring the running program through its own local HTTP interface, which is
+  what every other page says. Five source comments also cited a research document by bare
+  filename without saying it lives in a private folder outside this repository, which left a
+  reader of the code with a dead reference.
+
 ## [0.1.0] - 2026-09-22 (initial public cut)
 
 Published at https://github.com/Maestro8484/attune/releases/tag/v0.1.0 from tag `v0.1.0`.

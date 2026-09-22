@@ -136,9 +136,10 @@ class HybridEngine:
                             # constant can never silently reshape real data.
     # features.py's FEATURE_GROUPS['texture'] = (71, 78), ordered centroid/bandwidth/
     # rolloff/zcr/rms_mean/rms_std/flatness -> rms_mean (loudness) is offset 71+4 = 75.
-    # This is radio_next()'s energy-arc axis: TEACHER_MECHANICS.md B.3 measured it as one
-    # of MusicIP's most strongly-held corridor axes (ratio 0.563 vs a matched-CLAP-distance
-    # control, second only to brightness/texture).
+    # This is radio_next()'s energy-arc axis: measured as one of MusicIP's most
+    # strongly-held corridor axes (ratio 0.563 vs a matched-CLAP-distance control,
+    # second only to brightness/texture). Recorded in TEACHER_MECHANICS.md B.3, in
+    # the private MusicIP research folder, not in this repository.
     RMS_MEAN_INDEX = 75
 
     # radio_next() energy-arc tuning (see that method's docstring for the corridor math).
@@ -376,7 +377,9 @@ class HybridEngine:
         stateless (caller tracks `exclude` + `pos` across calls).
 
         Reimplements MusicIP Mixer's actual variety mechanism, per the overnight
-        teacher-loop reverse-engineering (TEACHER_MECHANICS.md B.1/B.7): variety is
+        teacher-loop measurement of the running program through its own local HTTP
+        API (recorded in TEACHER_MECHANICS.md B.1/B.7, in the private MusicIP
+        research folder, not in this repository; see NOTICE.md section 4): variety is
         NOT a diversity/packing constraint, it is i.i.d. Bernoulli thinning of a fixed
         rank list -- `p = 1/(1+variety)` per candidate, single ordered scan, no lookback,
         no walk relative to the previous pick. That is exactly what's below: the SAME
@@ -389,10 +392,10 @@ class HybridEngine:
         mix(seed, size=n)'s walk (same order, same spacing), which is what the byte-
         identical /api/mix regression gate (and this feature's own verification #1)
         checks against. The energy-arc corridor is an IMPROVEMENT over the teacher (which
-        has no corridor at all, see TEACHER_MECHANICS.md B.3's finding that MusicIP DOES
-        hold acoustic axes but not by any disclosed corridor mechanism): it only ever
-        acts as a second, independent Bernoulli-style accept/reject layered on top of the
-        variety coin, so it never fires in the deterministic v<=0 path either.
+        has no corridor at all, see TEACHER_MECHANICS.md B.3 in that same private
+        folder, and its finding that MusicIP DOES hold acoustic axes but not by any
+        disclosed corridor mechanism): it only ever acts as a second, independent
+        Bernoulli-style accept/reject layered on top of the variety coin, so it never fires in the deterministic v<=0 path either.
 
         arc: 'flat' holds near the SEED's own energy (steady); 'rise'/'fall' sweep
         linearly across the pool's 10th-90th percentile band over ARC_PERIOD tracks;

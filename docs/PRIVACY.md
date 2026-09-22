@@ -11,7 +11,7 @@ No analytics, no crash reporting, no usage counting, no update check, no licence
 account, no sign-in. There is nothing in Attune that contacts the project, its author, or
 any third party, at any time, for any reason.
 
-Attune makes network calls in exactly four places in the shipped app, and they're all listed
+Attune makes network calls in exactly four places in the installed app, and they're all listed
 below. You can confirm the list yourself:
 
 ```
@@ -90,8 +90,8 @@ from the audio. No audio is kept. The numbers aren't reversible into sound.
 
 If you install from a source checkout, `tools/fetch_model.py` downloads the audio model from
 this project's own GitHub release assets (`tools/fetch_model.py:46, 165-166`). That's a
-deliberate command you type, once, and it isn't part of the installed app, which ships the
-model inside it.
+deliberate command you type, once, and it isn't part of the installed app, which already has
+the model inside it.
 
 The optional `bridge/` and the research scripts in `eval/` and `tools/` are not part of the
 app either. `bridge/bridge.py:35` talks to MusicIP, and `bridge/README.md` explains its own

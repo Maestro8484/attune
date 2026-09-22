@@ -42,9 +42,10 @@ SLIDER_KEYS = ("clap", "lib", "genre", "bpm", "era")
 MUSICIP_STYLE_DEFAULT = 40
 MUSICIP_VARIETY_DEFAULT = 5
 
-# The style dial is NOT 0-100. Measured against the live engine (extracted/TEACHER_MECHANICS.md
-# B.6): the eligible pool is flat (~14,810 tracks) from style 0 to ~400 while the ORDERING keeps
-# changing, then a hard threshold bites between 845 and 846 and the pool collapses -- at style
+# The style dial is NOT 0-100. Measured against the live engine (TEACHER_MECHANICS.md B.6,
+# in the private MusicIP research folder, not in this repository): the eligible pool is
+# flat (~14,810 tracks) from style 0 to ~400 while the ORDERING keeps changing, then a
+# hard threshold bites between 845 and 846 and the pool collapses -- at style
 # >= 950 the only survivors are the seed's own artist. Clamping to 100 discarded ~88% of the
 # usable range. 845 is the last value that still returns a workable pool.
 MUSICIP_STYLE_MAX = 845
@@ -754,9 +755,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         indices) and `pos` (progress through the energy arc) across repeated calls; see
         hybrid.HybridEngine.radio_next() for the mechanism itself: MusicIP's actual
         variety mechanism (i.i.d. Bernoulli thinning of a fixed similarity ranking, per
-        TEACHER_MECHANICS.md B.1/B.7 -- NOT a diversity/packing walk) plus an energy-arc
-        corridor MusicIP never had. Shares this route's weight-override/lock plumbing
-        with /api/mix (_weight_overrides/_with_weights) rather than re-parsing dials.
+        TEACHER_MECHANICS.md B.1/B.7, private research folder -- NOT a diversity/packing
+        walk) plus an energy-arc corridor MusicIP never had. Shares this route's
+        weight-override/lock plumbing with /api/mix (_weight_overrides/_with_weights) rather than re-parsing dials.
 
         V2-only for now (gated on the 'radio' capability, same pattern as /api/refine
         and /api/explain below) -- the mechanism is a HybridEngine ranking walk, and

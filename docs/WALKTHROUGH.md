@@ -60,7 +60,7 @@ in a five-track, partly blind listening test and is what you get by default.
 Two tick boxes underneath:
 
 - **MMR variety** stops the mix filling up with tracks that are near-identical to each other
-  as well as to the seed.
+  as well as to the song you started from.
 - **Flow ordering** arranges the result so it plays as a set, instead of just listing it
   best-match-first.
 
@@ -75,11 +75,11 @@ engine actually takes.
 
 - **Radio (keep the queue playing forever)** keeps going instead of stopping at a fixed
   length, with **Radio variety** and an **Energy arc**: flat, rising, falling, or a wave.
-- **Blend Selected (2+)** takes two or more seeds and aims between them.
+- **Blend Selected (2+)** takes two or more songs and aims between them.
 - **Adventure** takes a first and a last track and builds the path from one to the other.
-- **Genius** picks the seed for you: something you loved and haven't played lately if it can,
-  then something you rated highly, then anything analysed.
-- **Auto-Playlists**, in the sidebar, skip the seed entirely and select on rules: artist,
+- **Genius** picks the starting song for you: something you loved and haven't played
+  lately if it can, then something you rated highly, then anything analysed.
+- **Auto-Playlists**, in the sidebar, skip the starting song entirely and select on rules: artist,
   genre, year, rating, tempo. Not to be confused with **Smart Views** just above them, which
   are a fixed set like Loved and Top Rated.
 
