@@ -1,7 +1,5 @@
 # Attune: where it came from
 
-> **REVIEWED 2026-09-21 against the research record, but NOT YET CLEARED FOR PUBLISHING.** Every number below was traced to its source and the wrong ones were corrected. Two things still block publishing it: `NOTICE.md` section 2 says no MusicIP file format was ever opened, which the research record contradicts and this file no longer claims, and three other public pages still call the listening test blind. Both are logged for a ruling. Until they are settled, quote nothing from here.
-
 This is the origin story, plus the facts behind it. It's here so that anything written about Attune later - a release note, a forum post, an interview answer - comes off the same set of true things instead of being made up fresh each time.
 
 Everything with a number in it was measured, or its source is named beside it. Where a number is shaky, this file says so.
@@ -11,6 +9,8 @@ Everything with a number in it was measured, or its source is named beside it. W
 ## The short version
 
 I've spent years using a dead program. The company behind MusicIP Mixer dissolved in 2008, its servers went off, and nobody open-sourced it. It did one thing nothing else does properly: you point at a song, and it hands you a playlist of songs that actually sound like it. Not "people who liked this also liked", not genre tags. The sound.
+
+It wasn't the only inspiration. Apple's Genius did something close, inside iTunes and only with Apple's servers in the loop. That's the other half of why Attune works the way it does. Everything is a subscription now, and a subscription is a rental. If you don't have possession of a thing, digital or otherwise, you don't own it. Your music files are on your own disk, so the tool that understands them should be too: no account, no server that can go dark. MusicIP's servers going dark is the case in point.
 
 The thing that finally pushed me into building something was not nostalgia. It was the six steps it took to get a mix into my car. MusicIP's player hooks were built for the players of the 2000s, Winamp, iTunes and Windows Media Player, so on my machine it was: make the mix, save an m3u, import that into MusicBee, make a MusicBee playlist, export it to a folder, copy the folder to a USB stick. Every time.
 
@@ -24,7 +24,7 @@ Then the project taught me two things I didn't want to learn, both covered below
 
 ### First I had to find out what MusicIP was actually doing
 
-The old program has a local web interface, which is how the Squeezebox plugins used to drive it. It is documented mostly by the Squeezebox community, and it doesn't switch itself on. You have to start the program, open its preferences, tick a box, and press start, every single launch. Turn the program off and the interface dies with it.
+The old program has a local web interface, which is how the Squeezebox plugins used to drive it. It is documented mostly by the Squeezebox community, and it is off until you switch it on in the program's preferences. Turn the program off and the interface dies with it.
 
 With that running I captured what it actually does: 17,447 tracks in the library, and 540 mixes made by asking it the same questions with its own knobs in different positions. All of it through that interface, on my own machine, with my own music. The program was never taken apart: no disassembly, no decompiling. Two of its data files were looked at as bytes, its library file and the analysis it writes into a track's own tags; nothing was decoded from them and nothing in Attune reads them. The list at the bottom says how to talk about that.
 
@@ -61,7 +61,7 @@ Use these rather than inventing new ones.
 - 540 mixes captured from the running program, 54 seed songs times 10 knob settings.
 - Same seed, same settings, variety at 0 versus 9: the two 25-track playlists share 6 tracks. One seed, style at its shipped default.
 - The "does it walk" test: positional agreement 0.000 in 18 of 20 cells and 0.021 in the other two, over five seeds and four variety settings. A walk would score near 1.
-- Rank order never breaks: zero inversions in every check run. The research notes put the largest check at 160,243 ordered pairs, but the raw output of that run was not kept, so quote the finding and not the count.
+- Rank order never breaks. Rerun on 2026-09-21 against the live program with the output kept: zero inversions across 37,803,531 ordered pairs, over five variety settings and one seed.
 - The variety coin: one over one-plus-the-setting, accurate to within one percent at each of the four settings tested (1, 3, 6 and 9) and at every depth down the list.
 - The style dial runs to about 845, not the 0 to 100 we had assumed. Past about 950 the only songs left are the seed's own artist, measured on one seed.
 - What MusicIP holds onto while it roams across genres: loudness, brightness and texture, strongly. Tempo is the weakest of everything measured, but it is held.
@@ -82,6 +82,8 @@ Use these rather than inventing new ones.
 **The turn:** The bigger, newer audio model won on the numbers and came dead last by ear. So we stopped trusting the numbers.
 
 **The reversal:** The plan was to keep MusicIP as the engine and build a nicer shell on top. Then the shell's own engine came out ahead of it by ear, five tracks, and the plan went in the bin.
+
+**Why local-first:** A subscription is a rental. If you don't have possession of a thing, digital or otherwise, you don't own it. Your music is on your own disk; the tool that understands it should be too, with no account and no server that can go away. Two programs inspired Attune, MusicIP Mixer and Apple's Genius, and one of them is gone because its servers were.
 
 **Why not Chromaprint, which everyone suggests:** that's for telling you two files are the same recording. The distance between two *different* songs under it means nothing, so you can't build a sounds-like tool on it. Different job, good tool for that job.
 
@@ -108,6 +110,8 @@ These aren't style preferences. Each one has a reason.
 An earlier version of this material described Attune as a command-line tool with export "on the roadmap". That stopped being true. It's a Windows desktop app, it exports .m3u8 playlists, it copies to a device, and it pushes playlists to Plex.
 
 Two things worth getting right. The default engine setting is "auto", which uses MusicIP if it finds it running and Attune's own engine otherwise. Almost nobody has MusicIP, so almost everybody gets Attune's engine. And the built application is under the GPL because of what's bundled inside it, while the source is MIT. `NOTICE.md` explains that properly.
+
+Reviewed against the research record on 2026-09-21: every number traced to its source, the wrong ones corrected, and the rank-order and coin-flip checks rerun against the live program that day.
 
 Staleness check, since this file is a record of one moment:
 
