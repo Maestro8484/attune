@@ -1016,6 +1016,22 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             raise IndexError
         return i, size
 
+    def _explicit_tracks(raw):
+        """The rows the window is showing, as pool ids in screen order, turned into paths.
+        None when the caller sent no list (then the route builds the mix from the seed,
+        exactly as it always has); ValueError when the list is malformed. Added 2026-09-22
+        so Download and Create Plex playlist carry a re-ordered or edited mix the way
+        Save, Save as new and Copy to USB already did (ISSUES.md row 72)."""
+        if not raw:
+            return None
+        out = []
+        for x in raw:
+            k = int(x)
+            if not (0 <= k < len(eng.paths)):
+                raise ValueError("unknown track")
+            out.append(eng.paths[k])
+        return out
+
     @app.get("/api/export/m3u")
     @_locked
     def export_m3u():
@@ -1025,6 +1041,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error="bad request"), 400
         except IndexError:
             return jsonify(error="unknown seed"), 404
+        try:
+            explicit = _explicit_tracks(request.args.getlist("ids"))
+        except (TypeError, ValueError):
+            return jsonify(error="bad ids"), 400
         # An explicit ?flavor wins; with none, the SETTING answers, and only then the
         # built-in default. Until this read existed, path_flavor was a field the window
         # showed and no Python ever consulted: it seeded the export dropdown at page
@@ -1035,10 +1055,13 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         flavor = request.args.get("flavor") or _setting_flavor()
         if flavor not in ("local", "unc", "plex"):
             flavor = "unc"
-        try:
-            tracks = _active_mix_tracks(i, size, _dedup_arg())
-        except ValueError:
-            return jsonify(error="bad request"), 400
+        if explicit is not None:
+            tracks = explicit          # the list as shown; the seed only names the file
+        else:
+            try:
+                tracks = _active_mix_tracks(i, size, _dedup_arg())
+            except ValueError:
+                return jsonify(error="bad request"), 400
         oneline = lambda s: (s or "").replace("\r", " ").replace("\n", " ")
         # convert_all() never raises: a path it cannot rewrite honestly keeps its LOCAL
         # form and is counted in the report (ruling (a), MORNING_REPORT §5.1). The body
@@ -1093,10 +1116,18 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(ok=False, error="bad request"), 400
         except IndexError:
             return jsonify(ok=False, error="unknown seed"), 404
+        body = request.get_json(silent=True) or {}
         try:
-            tracks = _active_mix_tracks(i, size, _dedup_arg())
-        except ValueError:
-            return jsonify(ok=False, error="bad request"), 400
+            explicit = _explicit_tracks(body.get("ids"))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error="bad ids"), 400
+        if explicit is not None:
+            tracks = explicit
+        else:
+            try:
+                tracks = _active_mix_tracks(i, size, _dedup_arg())
+            except ValueError:
+                return jsonify(ok=False, error="bad request"), 400
         try:
             if "plex" not in plex_holder:
                 plex_holder["plex"] = export.plex_from_settings(cfgmod.load(), cfg, mapper)
@@ -1104,7 +1135,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(ok=False, error=str(e)), 400
         except ValueError as e:
             return jsonify(ok=False, error=str(e)), 400
-        title = f"Attune — like {labels[i]}"
+        # A list that is not a mix (an opened playlist, the queue) is named for itself,
+        # not "like" its first song. One line, at most 100 characters.
+        named = " ".join(str(body.get("title") or "").split())[:100]
+        title = f"Attune — {named}" if named else f"Attune — like {labels[i]}"
         try:
             res = plex_holder["plex"].create_playlist(title, tracks)
         except ValueError as e:

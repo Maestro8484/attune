@@ -1,7 +1,7 @@
 """The song list saves itself two ways (asked for 2026-09-22): "Save as new", which must
 never write over a playlist that already exists, and "Save", which writes back into the
 exact file the person opened from the Playlists list, subfolder included, and nowhere
-else. Both go through POST /api/export/m3u_dir on the real app, stood up against a
+else. Both go through POST /api/export/m3u_dir on the real app. Download and Create Plex playlist carry the same on-screen list (ISSUES.md row 72). All of it runs against a
 throwaway twelve-track library the same way test_settings_routes.py does it.
 
 File names are built by the two helpers below rather than written out, so the leak
@@ -113,3 +113,38 @@ def test_save_refuses_anything_but_an_existing_playlist_in_the_folder(env, bad):
     r = _save(client, ids=[0], replace=bad)
     assert r.status_code == 400
     assert not (pl.parent / _pl("escape")).exists()
+
+
+def test_download_carries_the_list_as_shown(env):
+    client, _ = env
+    r = client.get("/api/export/m3u?i=0&flavor=local&ids=7&ids=2&ids=0")
+    assert r.status_code == 200
+    got = [os.path.basename(ln) for ln in r.get_data(as_text=True).splitlines()
+           if ln and not ln.startswith("#")]
+    assert got == [_song(7), _song(2), _song(0)]
+
+
+def test_download_without_a_list_still_builds_the_mix_from_the_seed(env):
+    client, _ = env
+    r = client.get("/api/export/m3u?i=0&size=5&flavor=local")
+    assert r.status_code == 200
+    got = [ln for ln in r.get_data(as_text=True).splitlines() if ln and not ln.startswith("#")]
+    assert len(got) >= 2 and os.path.basename(got[0]) == _song(0)
+
+
+def test_download_and_plex_refuse_a_bad_list(env):
+    client, _ = env
+    assert client.get("/api/export/m3u?i=0&ids=999").status_code == 400
+    r = client.post("/api/export/plex?i=0", json={"ids": [0, "x"]},
+                    environ_base={"REMOTE_ADDR": "127.0.0.1"})
+    assert r.status_code == 400 and r.get_json()["error"] == "bad ids"
+
+
+def test_plex_accepts_the_list_and_gets_as_far_as_the_plex_settings(env):
+    client, _ = env
+    # No Plex server is configured in this sandbox, so a good list must get past the id
+    # check and stop at the Plex settings instead. That proves the list was accepted.
+    r = client.post("/api/export/plex?i=0", json={"ids": [3, 1], "title": "Road trip"},
+                    environ_base={"REMOTE_ADDR": "127.0.0.1"})
+    assert r.status_code == 400
+    assert r.get_json()["error"] != "bad ids"

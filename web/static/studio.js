@@ -1723,9 +1723,14 @@ async function exportSaveDir() {
    said what happened (MORNING_REPORT §5.2). Same fetch-then-blob shape app.py's own /mix
    page already uses. */
 async function exportDownload() {
-  const seed = S.seed ?? firstSelected();
-  if (seed == null) return toast('Create a mix first', true);
-  const p = mixParams(); p.set('i', seed); p.set('flavor', $('flavor').value);
+  // The rows on screen, in screen order (a selection narrows them, as for every button in
+  // this panel). The seed only names the file. Before 2026-09-22 this re-ran the mix on
+  // the server, so a re-ordered or edited mix downloaded as the original (ISSUES row 72).
+  const ids = currentExportIds();
+  if (!ids.length) return toast('Nothing to export', true);
+  const seed = (S.view === 'mix' && S.seed != null) ? S.seed : ids[0];
+  const p = new URLSearchParams(); p.set('i', seed); p.set('flavor', $('flavor').value);
+  ids.forEach(i => p.append('ids', i));
   $('exportMsg').className = 'msg'; $('exportMsg').textContent = 'Building playlist…';
   try {
     const r = await fetch('/api/export/m3u?' + p);
@@ -1756,12 +1761,17 @@ async function exportDownload() {
   }
 }
 async function exportPlex() {
-  const seed = S.seed ?? firstSelected();
-  if (seed == null) return toast('Create a mix first', true);
-  const p = mixParams(); p.set('i', seed);
+  // Same rule as exportDownload: the list as shown, in order (ISSUES row 72).
+  const ids = currentExportIds();
+  if (!ids.length) return toast('Nothing to export', true);
+  const isMix = S.view === 'mix' && S.seed != null;
+  const p = new URLSearchParams(); p.set('i', isMix ? S.seed : ids[0]);
+  const body = { ids };
+  // A mix keeps its "like <song>" title; anything else is named for itself.
+  if (!isMix) body.title = $('plName').value.trim() || $('viewLabel').textContent.replace(/\.m3u8?$/i, '');
   $('exportMsg').className = 'msg'; $('exportMsg').textContent = 'Creating Plex playlist…';
   try {
-    const j = await jpost('/api/export/plex?' + p, {});
+    const j = await jpost('/api/export/plex?' + p, body);
     $('exportMsg').className = 'msg ok';
     $('exportMsg').textContent = `Plex: ${j.matched ?? j.count ?? '?'} added` +
       (j.missed && j.missed.length ? `, ${j.missed.length} missed` : '');

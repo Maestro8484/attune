@@ -33,6 +33,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (2026-09-22)
 
+- **Download .m3u8 and Create Plex playlist use the list as you see it.** They used to
+  rebuild the mix from its first song, so a mix you had re-ordered or trimmed came out as
+  the original. A playlist that is not a mix is now named for itself in Plex.
 - **The Auto-Playlists and Playlists headings show again** with a long playlist folder.
   They were squeezed to slivers by the list below them.
 
