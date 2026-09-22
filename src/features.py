@@ -82,6 +82,16 @@ _FFMPEG_FORMATS = {".m4a", ".aac", ".wma", ".m4b", ".m4p", ".alac", ".ape", ".wv
 # healthy file, and since ffmpeg and libsndfile disagree by an encoder delay of a few hundred
 # samples, the longer answer would have won and replaced a good vector. The stated duration
 # is still read, but only to word the failure, where being wrong costs nothing.
+#
+# Amended 2026-09-21, on Joe's ruling to repair the songs judged on a fragment. The floor
+# trigger rescued reads under five seconds and nothing else; the full-library sweep that
+# evening found 77 tracks read to between 5.7 and 137 seconds of songs three to seventy
+# minutes long, and none of them could ever be rescued, --force or not, because 5.8 seconds
+# clears the floor. So the stated duration now NOMINATES a second decode as well (see
+# load_audio and _claim_says_short), and the auditors' objection is answered by the
+# acceptance bar rather than the trigger: ffmpeg's answer replaces the first read only when
+# it holds CONFIRM_GAIN times more audio, the same bar short_read_check already used before
+# calling anything short. An overstated header on a healthy file fails that bar by design.
 TRUNCATED_FRACTION = 0.5      # decoded below this share of the claim is worth a second look
 MIN_CLAIMED_SECONDS = 20.0    # below this, "half of it" is not a meaningful gap
 CONFIRM_GAIN = 1.5            # a second decoder must beat the first by this to be believed
@@ -348,12 +358,40 @@ def load_audio(path: str, sr: int = SR) -> tuple[np.ndarray, bool]:
         y, exc = None, e
     got = 0.0 if y is None else len(y) / sr
     if _worth_another_decoder(got, exc):
+        # The floor case, unchanged: nothing usable came back, so anything more wins.
         y2 = _ffmpeg_decode(path, sr)
         if y2 is not None and len(y2) > (0 if y is None else len(y)):
+            return y2, True
+    elif exc is None and _claim_says_short(path, got):
+        # The fragment case, added 2026-09-21: the first decoder returned a usable-looking
+        # fragment (5.8 seconds of a 504-second song was the worst measured) and the
+        # container says most of the song is missing. ffmpeg is asked, and its answer is
+        # used ONLY when it beats the first decoder by CONFIRM_GAIN, the same bar
+        # short_read_check applies before it will call a read short. That is what keeps
+        # the 2026-09-20 decision above intact: a healthy variable-bitrate file whose
+        # header overstates its length gets the same audio back from ffmpeg, a few
+        # hundred samples of encoder delay apart, and keeps its vector. Only a file that
+        # really holds materially more audio than the first decoder found is rewritten.
+        y2 = _ffmpeg_decode(path, sr)
+        if y2 is not None and len(y2) > len(y) * CONFIRM_GAIN:
             return y2, True
     if exc is not None:
         raise exc
     return (np.empty(0, dtype=np.float32) if y is None else y), False
+
+
+def _claim_says_short(path: str, got: float) -> bool:
+    """The container's stated length nominates a fragment; it never decides one.
+
+    True when the file claims at least MIN_CLAIMED_SECONDS and the first decoder returned
+    under TRUNCATED_FRACTION of that. The caller then asks ffmpeg and believes it only if
+    it beats the first read by CONFIRM_GAIN. Without a decoder on the machine the answer
+    is False, because there is nobody to ask."""
+    if not decoder_available():
+        return False
+    claimed = container_seconds(path)
+    return (claimed is not None and claimed >= MIN_CLAIMED_SECONDS
+            and got < claimed * TRUNCATED_FRACTION)
 
 
 def _short_error(path: str, got: float) -> str:
