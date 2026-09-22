@@ -1,0 +1,79 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 300" width="960" height="300" font-family="Segoe UI, Helvetica, Arial, sans-serif">
+  <title>How Attune turns a song into a fingerprint it can compare</title>
+  <rect width="960" height="300" fill="#ffffff" rx="12"/>
+
+  <!-- 1. the song -->
+  <g transform="translate(24,60)">
+    <rect width="160" height="120" rx="10" fill="#fff7e0" stroke="#d9a400" stroke-width="2"/>
+    <text x="80" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#333">1. the song</text>
+    <polyline fill="none" stroke="#d9a400" stroke-width="2.5" stroke-linejoin="round"
+      points="14,80 22,62 30,98 38,54 46,104 54,70 62,90 70,58 78,100 86,66 94,92 102,60 110,102 118,72 126,88 134,64 142,96 150,80"/>
+    <text x="80" y="112" text-anchor="middle" font-size="11" fill="#555">air pressure over time</text>
+  </g>
+  <path d="M190 120 h28" stroke="#888" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 2. spectrogram -->
+  <g transform="translate(224,60)">
+    <rect width="160" height="120" rx="10" fill="#eef4ff" stroke="#3b6fd6" stroke-width="2"/>
+    <text x="80" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#333">2. a picture of it</text>
+    <g transform="translate(24,38)">
+      <rect x="0" y="0" width="14" height="14" fill="#3b6fd6" opacity=".9"/><rect x="16" y="0" width="14" height="14" fill="#3b6fd6" opacity=".3"/><rect x="32" y="0" width="14" height="14" fill="#3b6fd6" opacity=".6"/><rect x="48" y="0" width="14" height="14" fill="#3b6fd6" opacity=".2"/><rect x="64" y="0" width="14" height="14" fill="#3b6fd6" opacity=".8"/><rect x="80" y="0" width="14" height="14" fill="#3b6fd6" opacity=".4"/><rect x="96" y="0" width="14" height="14" fill="#3b6fd6" opacity=".7"/>
+      <rect x="0" y="16" width="14" height="14" fill="#3b6fd6" opacity=".4"/><rect x="16" y="16" width="14" height="14" fill="#3b6fd6" opacity=".9"/><rect x="32" y="16" width="14" height="14" fill="#3b6fd6" opacity=".2"/><rect x="48" y="16" width="14" height="14" fill="#3b6fd6" opacity=".7"/><rect x="64" y="16" width="14" height="14" fill="#3b6fd6" opacity=".3"/><rect x="80" y="16" width="14" height="14" fill="#3b6fd6" opacity=".8"/><rect x="96" y="16" width="14" height="14" fill="#3b6fd6" opacity=".5"/>
+      <rect x="0" y="32" width="14" height="14" fill="#3b6fd6" opacity=".7"/><rect x="16" y="32" width="14" height="14" fill="#3b6fd6" opacity=".2"/><rect x="32" y="32" width="14" height="14" fill="#3b6fd6" opacity=".9"/><rect x="48" y="32" width="14" height="14" fill="#3b6fd6" opacity=".4"/><rect x="64" y="32" width="14" height="14" fill="#3b6fd6" opacity=".6"/><rect x="80" y="32" width="14" height="14" fill="#3b6fd6" opacity=".2"/><rect x="96" y="32" width="14" height="14" fill="#3b6fd6" opacity=".9"/>
+    </g>
+    <text x="80" y="100" text-anchor="middle" font-size="11" fill="#555">which pitches, how loud,</text>
+    <text x="80" y="113" text-anchor="middle" font-size="11" fill="#555">moment by moment</text>
+  </g>
+  <path d="M390 120 h28" stroke="#888" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 3. CLAP -->
+  <g transform="translate(424,60)">
+    <rect width="160" height="120" rx="10" fill="#f1ecff" stroke="#7a4fd6" stroke-width="2"/>
+    <text x="80" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#333">3. CLAP listens</text>
+    <text x="80" y="52" text-anchor="middle" font-size="11" fill="#555">a neural network trained</text>
+    <text x="80" y="66" text-anchor="middle" font-size="11" fill="#555">on music finds patterns,</text>
+    <text x="80" y="80" text-anchor="middle" font-size="11" fill="#555">then shrinks them,</text>
+    <text x="80" y="94" text-anchor="middle" font-size="11" fill="#555">again and again</text>
+    <text x="80" y="112" text-anchor="middle" font-size="10" fill="#7a4fd6">laion/larger_clap_music</text>
+  </g>
+  <path d="M590 120 h28" stroke="#888" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 4. fingerprint -->
+  <g transform="translate(624,60)">
+    <rect width="160" height="120" rx="10" fill="#eafaf0" stroke="#2f9e5b" stroke-width="2"/>
+    <text x="80" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#333">4. the fingerprint</text>
+    <text x="80" y="48" text-anchor="middle" font-size="11" fill="#555">512 numbers, saved once</text>
+    <g transform="translate(20,58)" font-family="Consolas, monospace" font-size="10" fill="#2f9e5b">
+      <text x="0" y="10">0.031 -0.118 0.204 0.007</text>
+      <text x="0" y="24">-0.062 0.145 0.019 -0.091</text>
+      <text x="0" y="38">0.177 -0.003 0.086 ... x512</text>
+    </g>
+    <text x="80" y="112" text-anchor="middle" font-size="11" fill="#555">cannot be played back</text>
+  </g>
+  <path d="M790 120 h28" stroke="#888" stroke-width="2" marker-end="url(#a)"/>
+
+  <!-- 5. compare -->
+  <g transform="translate(824,60)">
+    <rect width="112" height="120" rx="10" fill="#fdeeee" stroke="#d64545" stroke-width="2"/>
+    <text x="56" y="26" text-anchor="middle" font-size="14" font-weight="700" fill="#333">5. compare</text>
+    <g transform="translate(56,74)">
+      <line x1="0" y1="0" x2="-34" y2="-26" stroke="#d64545" stroke-width="2.5"/>
+      <line x1="0" y1="0" x2="-28" y2="-32" stroke="#2f9e5b" stroke-width="2.5"/>
+      <line x1="0" y1="0" x2="36" y2="-10" stroke="#999" stroke-width="2.5"/>
+      <circle r="3" fill="#333"/>
+      <text x="-40" y="-36" font-size="10" fill="#2f9e5b">alike</text>
+      <text x="16" y="4" font-size="10" fill="#999">not</text>
+    </g>
+    <text x="56" y="112" text-anchor="middle" font-size="11" fill="#555">same way = alike</text>
+  </g>
+
+  <text x="480" y="222" text-anchor="middle" font-size="13" fill="#333">Every song in your library goes through this once. A mix is then just: which fingerprints point the same way as this one?</text>
+  <text x="480" y="244" text-anchor="middle" font-size="11" fill="#777">Two songs never share a fingerprint, and a fingerprint cannot be turned back into a song. It is a summary of the sound, not a copy of it.</text>
+  <text x="480" y="278" text-anchor="middle" font-size="10" fill="#999">Attune, docs/img/clap-fingerprint.svg. For the same idea with every number shown live, see Adam Sohn's "CLAP, visualized".</text>
+
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M0 0 L10 5 L0 10 z" fill="#888"/>
+    </marker>
+  </defs>
+</svg>

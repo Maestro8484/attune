@@ -189,6 +189,20 @@ Every track gets listened to once and turned into two things:
 
 - A **CLAP embedding**: 512 numbers from a neural network trained on music. It's the closest
   thing anyone has to "what this sounds like" in a form a computer can compare.
+
+<p align="center">
+  <img alt="The song becomes a picture of its sound, CLAP listens to the picture, and out comes a fingerprint of 512 numbers that can be compared by direction" src="docs/img/clap-fingerprint.svg" width="960">
+</p>
+
+Think of the 512 numbers as a fingerprint of the sound. It is a bit like a QR code, in that a
+whole song is boiled down to a small block of data a machine can read in an instant, but with
+one difference that is the whole point. A QR code stores a message exactly, so a reader gets
+the same text back every time. A CLAP fingerprint stores a *summary*: it cannot be turned back
+into the song, and two different songs that sound alike get fingerprints that point in nearly
+the same direction. That is what makes "more like this" a single comparison rather than a
+guess. If you want to watch every step of that with real numbers on screen, Adam Sohn's
+[CLAP, visualized](https://adamsohn.com/clap/) follows one sound all the way through the
+model, and it is the best explanation of it I have seen.
 - A **79-number acoustic descriptor** from classic signal processing: timbre (MFCC), harmony
   (chroma), spectral contrast, texture, and tempo.
 
@@ -198,9 +212,12 @@ timbre, genre overlap, how far apart the tempos are, and how far apart the years
 Those adjustments are what stop an ears-only neural match from jumping across tempo and
 decade in a way that sounds wrong.
 
-That combination came out ahead of genuine MusicIP in a five-track listening test, partly blind:
-MusicIP and two other outside engines were shuffled and unlabelled, the project's own engines
-were labelled. The exact weights it comes with are the ones that won. Two ideas that sound clever and lost by ear are deliberately
+That combination came out ahead of genuine MusicIP in a listening test I sat through myself:
+five seed songs, six engines, a full playlist from each, thirty playlists and several hundred
+tracks heard and ranked best to worst, seed by seed. It was partly blind: MusicIP and two other
+outside engines were shuffled and unlabelled, the project's own engines were labelled. Five
+seeds is not enough to call it a win, so I don't; it was enough to stop needing MusicIP. The
+exact weights it comes with are the ones that came out ahead. Two ideas that sound clever and lost by ear are deliberately
 switched off in the default: matching keys around the circle of fifths, and folding tempo
 octaves so that 87 and 174 BPM count as the same. Both are in the code and both are off. The
 reasoning is written into `src/hybrid.py` beside the weights themselves.
