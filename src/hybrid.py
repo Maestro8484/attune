@@ -11,8 +11,9 @@ vector and light rules:
                 - w_era   * |year gap| / 25
                 + w_key   * key_compatibility(seed)            # OFF by default
 
-This is **V2**, the recipe that won a blind A/B/C/V2/V3 listening test against genuine
-MusicIP (extracted/human_ratings.md). Notes from that result:
+This is **V2**, the recipe that came out ahead of genuine MusicIP in a five-seed, partly
+blind A/B/C/V2/V3 listening test (human_ratings.md, in the private MusicIP research
+folder, not in this repository; docs/ENGINES.md has the public account). Notes from that result:
   * the librosa "lib" term stays — dropping it (the V3/V4 lineage) lost by ear;
   * the key term is OFF by default: it lost by ear, and its _key_compat was reversed
     until fixed. It's available (set "key">0) now that the formula is correct;
@@ -28,7 +29,8 @@ from __future__ import annotations
 import os, json, sqlite3, pathlib
 import numpy as np
 
-# V2 — the recipe that WON the human blind listening test (see extracted/human_ratings.md).
+# V2 — the recipe that came out ahead in the partly blind listening test (human_ratings.md,
+# in the private MusicIP research folder, not in this repository).
 # CLAP ears + librosa 'lib' timbre + genre + linear tempo + era. NO key term by default:
 # the key idea was sound but lost by ear (and its code was reversed until fixed). The key
 # term remains available (set "key">0) now that _key_compat is correct, but ships off.

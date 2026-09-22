@@ -2,7 +2,7 @@ r"""Phase 2 of the behavioral head -- train a projection head on the operator's 
 pairs, and MEASURE whether it generalises before believing it.
 
 Architecture and preprocessing follow the proven recipe that produced the shipped learned
-head (the MusicIP workspace's extracted/distill.py): inputs are the CLAP-512 + librosa-79
+head (distill.py, in the private MusicIP research folder, not in this repository): inputs are the CLAP-512 + librosa-79
 features ALREADY in mixer.db (LAW 2 -- the base embedding is never swapped, only
 re-projected), librosa z-scored on visible rows only, head = 591 -> 4096 GELU -> 512 with an
 L2-normalized output, InfoNCE with in-batch + random negatives.

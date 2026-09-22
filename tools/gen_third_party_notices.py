@@ -504,8 +504,10 @@ NATIVE_COMPONENTS = [
     # THIRD_PARTY_NOTICES.md say a component was inside the bundle when it was not, which
     # is a false statement in a legal document, so the row is gone rather than the gap
     # being tolerated. Nothing is lost if it comes back: an undeclared tbb12.dll lands in
-    # "unattributed binaries", which is a gate, and licenses/intel-onetbb/LICENSE.txt is
-    # still on disk. To restore it, put this row back and re-add the HAND_PLACED entry.
+    # "unattributed binaries", which is a gate. To restore it, put this row back and re-add
+    # the HAND_PLACED entry (Apache-2.0 text from https://www.apache.org/licenses/LICENSE-2.0.txt;
+    # the orphan copy under licenses/intel-onetbb/ was deleted 2026-09-22 because the installer
+    # copies the whole folder and was shipping a text for a component not in the box).
     dict(name="Microsoft OpenMP runtime", license="Microsoft Visual C++ redistributable terms",
          url="https://learn.microsoft.com/cpp/parallel/openmp/",
          files=["analyzer/_internal/VCOMP140.DLL"],
@@ -615,7 +617,7 @@ HAND_PLACED = [
          source="https://www.gnu.org/licenses/gpl-3.0.txt",
          why="The GPL version 3 text, for the bundled FFmpeg build."),
     # intel-onetbb's hand-placed Apache-2.0 text was here. It goes back the moment the
-    # component row above does; the text itself is still at licenses/intel-onetbb/.
+    # component row above does; fetch the text again from apache.org when it does.
     dict(slug="openssl", file="LICENSE.txt", retrieved="2026-09-20",
          source="https://raw.githubusercontent.com/openssl/openssl/master/LICENSE.txt",
          why="OpenSSL 3 is Apache-2.0; CPython's LICENSE.txt does not include it."),

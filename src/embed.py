@@ -2,7 +2,7 @@
 
 Embeds each track with a music-specialized CLAP model into a `clap` table in the
 same SQLite DB the scanner uses. This is what lifts Attune from "decent" to
-"blind-tested competitive with MusicIP" — but it's optional: it needs PyTorch +
+"competitive with MusicIP in a partly blind listening test" — but it's optional: it needs PyTorch +
 transformers, and benefits from a GPU. Without it, the standalone librosa engine
 (mixer.py) still works.
 

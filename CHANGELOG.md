@@ -26,6 +26,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ### Fixed (2026-09-22)
 
+- **The default engine's own docstring still said V2 "won a blind" listening test, with
+  the ratings sheet cited by a filename that is not in this repository.** Found by the legal
+  re-audit. It now says what the public pages say: five songs, partly blind, came out ahead,
+  and the sheet lives in the private research folder. The embedder's docstring had the same
+  "blind-tested" phrase and three research citations named only "the MusicIP workspace";
+  all reworded the same way.
+- **The notices said the model weights under `src/models/` were in the repository and not
+  Attune's to license.** The CLAP weights are a release asset the repository does not carry,
+  and the learned head is the author's own. Section 1 now says which is which. The CLAP
+  model's Apache-2.0 licence was re-read from its model card on 2026-09-22.
+- **The licence folder carried an Apache-2.0 text for Intel oneTBB, a component that is not
+  in the box.** The notices generator was re-run against the built app to confirm it: no
+  oneTBB, and its output matched the committed notices byte for byte. The orphan text is gone
+  from the repository. The two 0.1.0 downloads still carry it; that is harmless and they are
+  not being rebuilt for it.
+- **The heritage page read as if the style and variety knobs were invented independently.**
+  It now has a section saying what was measured off the running program, what was not, and
+  where the full account is.
 - **A comment in the default engine described the MusicIP work with a word the project's
   own public pages forbid.** It said the variety mechanism came from "reverse-engineering";
   it came from measuring the running program through its own local HTTP interface, which is

@@ -37,6 +37,18 @@ API must be re-enabled by hand on every launch).
 | Heavy legacy desktop UI | A small local web UI in a native window. The engine stays UI-agnostic |
 | Windows and Mac only, unmaintained | Windows for now, with a portable Python engine underneath. Source MIT, built app GPL-3.0-or-later because of what it bundles |
 
+## What was measured off the original, and what was not
+
+The knobs in the table above were not guessed at. MusicIP was run on the author's own library,
+through the local HTTP interface described above, and its output was recorded and compared
+setting by setting. Two results of that shape the default engine: variety is a coin flip per
+candidate at one over one plus the setting, not a diversity rule; and loudness is the axis the
+radio mode holds, because measurement showed MusicIP holds it strongly. A third, the optional
+learned engine, was trained to reproduce MusicIP's rankings over that same library. The program
+itself was never taken apart: no disassembly, no decompiling, and nothing here reads its library
+file or the analysis it writes into tags. [NOTICE.md](../NOTICE.md) section 4 is the full
+account, including what MusicIP's own licence agreement says on the subject.
+
 ## The common misconception (worth stating loudly)
 
 A lot of "modernize MusicIP" advice reaches for **Chromaprint/AcoustID**. That's a category
@@ -51,4 +63,5 @@ tracks. Attune is built on the latter. (Chromaprint is great — just for a diff
 Attune stands on the shoulders of the MusicIP community that kept the flame alive for over a
 decade — especially the Logitech Media Server plugin authors (e.g. `lms-mipmixer`) who
 documented the local API and proved the concept still had legs. Attune reimplements the idea
-from scratch under an open license so it can outlive its inspiration.
+under an open license, with the parts that were measured off the original named above, so it
+can outlive its inspiration.

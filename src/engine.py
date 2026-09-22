@@ -251,7 +251,8 @@ class MusicIPAdapter(Engine):
 
 class LearnedEngine(Engine):
     """The distilled-metric engine: an ONNX-exported projection head (trained to imitate
-    MusicIP's similarity function, see the MusicIP workspace's extracted/distill.py) over
+    MusicIP's similarity function, see distill.py in the private MusicIP research folder,
+    not in this repository) over
     the CLAP-512 + librosa-79 features ALREADY in mixer.db. No torch anywhere -- inference
     is onnxruntime, preprocessing is numpy fed by models/learned_norm.json (the z-score
     stats the head was trained with; they are the TRAINING pool's stats and must never be

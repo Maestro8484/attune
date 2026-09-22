@@ -223,7 +223,7 @@ What would unblock it, in order of leverage:
    recommended path.
 3. **Hand-curate playlists deliberately, and label them.** If the operator builds lists
    himself, keep them out of the shared playlist folder or mark them, so provenance
-   never has to be reverse-engineered again. 25 machine lists is what the current
+   never has to be worked out after the fact again. 25 machine lists is what the current
    folder amounts to.
 
 Retry gate for the next attempt, replacing the pair-count gate that failed to bind:

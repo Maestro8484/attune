@@ -7,7 +7,8 @@ operator listens blind, then runs --score to rank each test interactively; the
 key is unsealed only at scoring time and the verdicts are appended to
 attune/eval/abtest_results.jsonl.
 
-Protocol ported from the MusicIP workspace's extracted/make_abtest.py (the
+Protocol ported from make_abtest.py, in the private MusicIP research folder and not
+in this repository (the
 harness that ran the original five-engine bakeoff); the engine wiring here goes
 through src/engine.py's common Engine contract instead of that repo's ad-hoc
 matrices, so any engine satisfying search()/similar() can enter a test.
