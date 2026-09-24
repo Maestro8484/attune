@@ -683,6 +683,21 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     app = Flask(__name__, static_folder=os.path.join(HERE, "static"),
                 static_url_path="/static")
 
+    # ONE guard for every state-changing request, ISSUES.md row 4 (ruled the first change
+    # of 0.1.1). The inline `request.remote_addr` checks it replaces were copied route by
+    # route, and seventeen of thirty-six POST routes had forgotten them. A before_request
+    # hook cannot be forgotten: it runs for every route, including any added later, so a
+    # caller on another machine (only possible with --host 0.0.0.0) can read and play but
+    # never change anything. tests/test_local_only_guard.py walks the whole URL map to hold
+    # it there. The older inline checks are left in place; they are now redundant, not wrong.
+    @app.before_request
+    def _state_changes_are_local_only():
+        if request.method in ("GET", "HEAD", "OPTIONS"):
+            return None
+        if request.remote_addr in ("127.0.0.1", "::1"):
+            return None
+        return jsonify(ok=False, error="only available on the Attune machine itself"), 403
+
     @app.get("/")
     def index():
         return redirect("/studio")

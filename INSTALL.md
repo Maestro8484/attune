@@ -18,14 +18,14 @@ the window; it is part of Windows 11 and of most up-to-date Windows 10 machines.
 missing, Attune says so when it starts and points you at
 [Microsoft's download page](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-1. Download **AttuneSetup-0.1.0.exe** from the
+1. Download **AttuneSetup-0.1.1.exe** from the
    [Releases page](https://github.com/Maestro8484/attune/releases).
 2. Run it. Windows shows **"Windows protected your PC"** because the file isn't
    code-signed. Click **More info**, then **Run anyway**.
 3. It installs into `%LOCALAPPDATA%\Programs\Attune` and adds an **Attune** entry to the
    Start menu. A desktop shortcut is offered as a tick box and is off by default.
 
-Prefer not to install anything? Take **Attune-0.1.0-win64.zip** from the same page instead,
+Prefer not to install anything? Take **Attune-0.1.1-win64.zip** from the same page instead,
 unzip it anywhere, and run `Attune.exe` from the folder.
 
 Either way, what happens next is in [docs/FIRST_RUN.md](docs/FIRST_RUN.md).
@@ -35,7 +35,7 @@ Either way, what happens next is in [docs/FIRST_RUN.md](docs/FIRST_RUN.md).
 `SHA256SUMS.txt` on the Releases page carries a checksum for both files.
 
 ```
-Get-FileHash .\AttuneSetup-0.1.0.exe -Algorithm SHA256
+Get-FileHash .\AttuneSetup-0.1.1.exe -Algorithm SHA256
 ```
 
 With Git Bash, WSL, macOS or Linux, `sha256sum -c SHA256SUMS.txt` checks both at once.

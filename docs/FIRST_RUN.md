@@ -97,7 +97,7 @@ your analysed library are never touched by any of it.
   details; it names the reason per file.
 - **Attune doesn't open at all.** If the drive holding its library database is unplugged,
   Attune stops before its window appears rather than opening onto a library that isn't
-  there. Reconnect the drive and start it again. This is a known rough edge in v0.1.0: it
+  there. Reconnect the drive and start it again. This is a known rough edge: it
   should say so on screen and offer to pick another library, and it doesn't yet.
 - **Something else.** Preferences, under Advanced, has the logs. Please open an issue and
   say what you saw.

@@ -5,6 +5,19 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-23
+
+### Security (2026-09-23)
+
+- **Only the machine Attune runs on can change anything.** Every request that changes
+  something (saving, rating, tagging, scanning, exporting, pushing to Plex) is refused
+  unless it comes from the same PC. Before this, seventeen of those commands had each
+  forgotten their own copy of the check. It is one check now, in one place, and a test
+  walks every command the app has and fails if any of them can be reached from another
+  machine. Nothing changes on default settings, which only ever listen to this PC; it
+  matters if you start the app with `--host 0.0.0.0`, where other machines can now browse
+  and play but not change anything.
+
 ### Added (2026-09-22)
 
 - **Resizable song list columns.** Drag the right edge of any column header to make that

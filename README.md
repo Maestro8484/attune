@@ -45,7 +45,7 @@ Everything happens on your machine. Nothing is uploaded and there is no account 
 
 ## Get it
 
-1. Download **AttuneSetup-0.1.0.exe** from the [Releases page](https://github.com/Maestro8484/attune/releases).
+1. Download **AttuneSetup-0.1.1.exe** from the [Releases page](https://github.com/Maestro8484/attune/releases).
 2. Run it. It installs for you alone, in your own user folder, so Windows won't ask for an
    administrator password.
 3. Windows will show a blue box saying **"Windows protected your PC"**. Click **More info**,
@@ -61,7 +61,7 @@ Everything happens on your machine. Nothing is uploaded and there is no account 
 To check your download against `SHA256SUMS.txt`, in PowerShell:
 
 ```
-Get-FileHash .\AttuneSetup-0.1.0.exe -Algorithm SHA256
+Get-FileHash .\AttuneSetup-0.1.1.exe -Algorithm SHA256
 ```
 
 ### First run
@@ -78,8 +78,9 @@ once per track. A big collection takes hours. It runs in the background and pick
 it left off.
 
 **Start mixing** appears when the scan has finished, not part way through, so on a big
-library that is the end of the wait rather than the middle of it. Press it, click any track
-in the list, and press **Create Mix**.
+library that is the end of the wait rather than the middle of it. Press it and Attune picks a
+song, builds a mix from it and starts playing. After that, click any track and press
+**Create Mix** to mix from that one.
 
 The click-by-click guide, including getting a mix onto a USB stick and into Plex, is in
 **[docs/WALKTHROUGH.md](docs/WALKTHROUGH.md)**.
@@ -89,8 +90,8 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 - **Mix from one song.** Click a track, press Create Mix, get a playlist that sounds like it.
   Five sliders say what "similar" is allowed to mean: **CLAP** for the sound itself,
   **Timbre**, **Genre**, **Tempo** and **Era**, with **Presets** if you would rather not
-  fiddle. Two tick boxes, **MMR variety** to stop it picking near-identical tracks and
-  **Flow ordering** to arrange the result rather than just rank it.
+  fiddle. Two tick boxes, **Avoid near-identical picks** to stop it choosing songs that sound
+  almost the same, and **Arrange for flow** to order the result rather than just rank it.
 - **Radio.** An endless queue that keeps going, with an energy shape you pick: flat, rising,
   falling, or a wave.
 - **Blend.** Give it two or more songs and it mixes toward the middle of them.
@@ -282,7 +283,7 @@ Details, with the file and line behind each claim, in [docs/PRIVACY.md](docs/PRI
 
 ## Status and limits
 
-Attune is v0.1.0. It's the app its author uses every day on a library of over twenty thousand
+Attune is v0.1.1. It's the app its author uses every day on a library of over twenty thousand
 tracks, and this is the first release anybody else can install. Expect rough edges.
 
 - **Windows 10 or 11 only** for now. The engine is plain Python and portable, but the app,

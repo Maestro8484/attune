@@ -104,7 +104,7 @@ The hook: MusicIP shut its doors in 2008 and nothing replaced its Mixer. I worke
 
 The turn: The bigger, newer listening model won on the numbers and came dead last by ear. So we stopped trusting the numbers.
 
-The reversal: The plan was to keep MusicIP doing the picking and build a nicer face on top. Then my own song-matcher scored higher than MusicIP in a five-song listen, and the plan went in the bin.
+The reversal: The plan was to keep MusicIP doing the picking and build a nicer face on top. Then my own song-matcher came out ahead of MusicIP in a listening test, about twenty papers of five songs, only partly blind, and the plan went in the bin.
 
 Why local-first: A subscription is a rental. If you don't have possession of a thing, digital or otherwise, you don't own it. Your music is on your own disk; the tool that understands it should be too, with no account and no server that can go away.
 
@@ -139,7 +139,7 @@ What it does:
 - Runs entirely on your machine. No account, no server, nothing leaves the PC unless you point it at your own Plex.
 - If you still run MusicIP, Attune can use it to pick the songs instead of its own matcher.
 
-What I learned measuring MusicIP through its own local interface, without touching its code: its famous "variety" slider is a biased coin flip down one ranked list, with the bias at exactly one over one-plus-the-setting. And the bigger, newer listening model I planned to upgrade to won on the similarity numbers and came last by ear in a five-song listening test. So the numbers stopped deciding what goes in. Ears do.
+What I learned measuring MusicIP through its own local interface, without touching its code: its famous "variety" slider is a biased coin flip down one ranked list, with the bias at exactly one over one-plus-the-setting. And the bigger, newer listening model I planned to upgrade to won on the similarity numbers and came last by ear in the listening test. So the numbers stopped deciding what goes in. Ears do.
 
 Source is MIT. The installer is GPL because of what's bundled inside it (a tag library and FFmpeg). Details in the NOTICE file in the repository.
 
@@ -170,7 +170,7 @@ Stuff this sub might care about:
 - Playlists written next to the music on the NAS play as-is on my original Logitech Squeezebox through Lyrion Music Server. No path rewriting.
 - The listening model runs on the CPU (ONNX Runtime). No CUDA, no torch in the installed app.
 - About one mp3 in fourteen in a real collection won't decode without FFmpeg, so it's bundled. That's why the installer is GPL while the source is MIT.
-- If you still have MusicIP running, Attune detects it and can use it to pick the songs. Otherwise you get Attune's own, which scored higher than MusicIP in a five-song listen. Too few songs to call it a win, enough that I stopped needing MusicIP.
+- If you still have MusicIP running, Attune detects it and can use it to pick the songs. Otherwise you get Attune's own, which came out ahead of MusicIP in a listening test I sat myself: about twenty papers of five songs, only partly blind. I don't call it a win; it's enough that I stopped needing MusicIP.
 
 One thing I found out on the way, by measuring the old program through its own local interface: MusicIP's variety slider was never "diversity logic". It ranks your whole library once and flips a biased coin down the list. The bias is exactly one over one-plus-the-setting. Twenty years of forum lore about "journeys" was a coin flip.
 

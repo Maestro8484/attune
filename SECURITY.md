@@ -47,7 +47,7 @@ Attune runs on your own machine, on your own files. The things worth reporting:
 covers both the installer and the portable zip.
 
 ```
-Get-FileHash .\AttuneSetup-0.1.0.exe -Algorithm SHA256
+Get-FileHash .\AttuneSetup-0.1.1.exe -Algorithm SHA256
 ```
 
 The releases are not code-signed, so the checksum is the only thing tying the file you have

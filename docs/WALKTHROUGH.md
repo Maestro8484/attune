@@ -32,13 +32,13 @@ You don't have to sit there. The scan carries on in the background and survives 
 interrupted, and the main window has a progress bar along the top with a **Details** button
 if you want to watch it.
 
-4. **Start mixing** appears when the scan has finished, not part way through. Press it. The
-   wizard closes onto your library. On a big collection that is the end of the wait, so shut
-   the lid and come back; on a small one it is a minute.
-5. Click any track in the list to select it.
+4. **Start mixing** appears when the scan has finished, not part way through. Press it. Attune
+   picks a song, builds a mix from it and starts playing. On a big collection the scan is the
+   end of the wait, so shut the lid and come back; on a small one it is a minute.
+5. To mix from a song of your own choosing, click it in the list.
 6. Press **Create Mix** (or Ctrl+M).
 
-That's a mix. It appears on the right, in order, ready to play.
+That's a mix. It fills the song list, numbered in play order, ready to play.
 
 **If you'd rather not scan yet,** press **Skip for now**. Attune opens empty and won't nag
 you. Rescan later from Preferences, under Library, with **Rescan library**.
@@ -61,9 +61,9 @@ to when you open the app.
 
 Two tick boxes underneath:
 
-- **MMR variety** stops the mix filling up with tracks that are near-identical to each other
+- **Avoid near-identical picks** stops the mix filling up with tracks that are near-identical to each other
   as well as to the song you started from.
-- **Flow ordering** arranges the result so it plays as a set, instead of just listing it
+- **Arrange for flow** arranges the result so it plays as a set, instead of just listing it
   best-match-first.
 
 Change one, press Create Mix again, listen. That's the whole loop. Nothing here is a number
