@@ -5,6 +5,12 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (2026-09-28)
+
+- **No black window while scanning.** When Attune falls back to FFmpeg's ffprobe to read
+  the tags of a file it could not open itself, that program now runs hidden like every
+  other one Attune starts. A test reads the source and fails if any new call forgets.
+
 ## [0.1.1] - 2026-09-23
 
 ### Security (2026-09-23)

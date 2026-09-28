@@ -277,6 +277,9 @@ def _ffprobe_tags(path):
              path],
             capture_output=True, text=True, timeout=30,
             encoding="utf-8", errors="replace",
+            # ffprobe is a console program: without this, a scan run from the windowed
+            # app flashes a black window for every file mutagen could not open.
+            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
         )
         j = json.loads(out.stdout or "{}")
         fmt = j.get("format", {})
