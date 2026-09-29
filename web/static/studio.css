@@ -980,7 +980,7 @@ html[data-theme="attune"] #wave {
   grid-auto-rows:max-content; gap:12px; padding:12px; align-content:start; overflow:auto; position:absolute; inset:0; }
 .acard { cursor:pointer; border-radius:8px; overflow:hidden; background:var(--panel2);
   border:1px solid var(--line); transition:.12s; }
-.acard:hover { border-color:var(--accent); transform:translateY(-2px); }
+.acard:hover { border-color:var(--accent); }
 .acard .cover { aspect-ratio:1/1; background:var(--panel2); display:flex; align-items:center;
   justify-content:center; overflow:hidden; position:relative; }
 .acard .cover img { width:100%; height:100%; object-fit:cover; display:block; }
@@ -1110,6 +1110,41 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#06110a; }
 .viewBar #listTools button.lPrimary:hover, .saveNewBox button.lPrimary:hover { filter:brightness(1.1); }
 .viewBar #listTools button.dirty { border-color:var(--warn); color:var(--warn); font-weight:600; }
 .viewBar button:disabled { opacity:.45; cursor:not-allowed; }
+/* ---- SEND TO bar: the bottom button row of a Winamp playlist window, on the list
+   pane. The two destinations are the only accent-coloured buttons on the pane, so the
+   eye lands on them after reading down the list. 2026-09-28. ---- */
+.sendBar { display:flex; align-items:center; gap:8px; padding:6px 10px; flex:0 0 auto;
+  border-top:1px solid var(--line); background:var(--panel2); min-width:0; }
+.sendLcd { font-size:12px; padding:4px 9px; letter-spacing:.08em; white-space:nowrap;
+  flex-direction:row; }
+.sendLabel { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.14em;
+  margin-left:4px; white-space:nowrap; }
+/* only the message line gives way when the bar is narrow; readout and buttons keep their size */
+.sendBar > :not(.msg) { flex-shrink:0; }
+.sendBar button { white-space:nowrap; cursor:pointer; font-size:12px; padding:5px 12px;
+  background:var(--panel); border:1px solid var(--line); border-radius:6px; }
+.sendBar button.sendBtn { background:var(--accent); border-color:var(--accent); color:#fff;
+  font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.sendBar button.sendBtn.off { background:var(--panel); border-style:dashed; color:var(--muted); }
+.sendBar button:hover { filter:brightness(1.1); }
+.sendBar button:disabled { opacity:.5; cursor:default; filter:none; }
+.sendBar .progressbar { flex:0 0 110px; }
+.sendBar .msg { flex:1 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis;
+  white-space:nowrap; }
+html[data-theme="attune"] .sendBar { background:linear-gradient(180deg,#262a30,#1e2126);
+  border-top:1px solid var(--bev-d); box-shadow:inset 0 1px 0 var(--bev-l); }
+html[data-theme="attune"] .sendBar button { background:linear-gradient(180deg,#333942,#262a30);
+  border:1px solid; border-color:var(--bev-l) var(--bev-d) var(--bev-d) var(--bev-l);
+  border-radius:3px; text-shadow:1px 1px 0 #0008; }
+html[data-theme="attune"] .sendBar button.sendBtn { background:linear-gradient(180deg,#f7bd52,#d98f16);
+  color:#1a1204; text-shadow:1px 1px 0 #ffffff55; border-color:#ffd98a #7a5008 #7a5008 #ffd98a; }
+html[data-theme="attune"] .sendBar button.sendBtn.off { background:linear-gradient(180deg,#333942,#262a30);
+  color:var(--muted); text-shadow:1px 1px 0 #0008;
+  border-color:var(--bev-l) var(--bev-d) var(--bev-d) var(--bev-l); }
+html[data-theme="attune"] .sendBar button:active { border-color:var(--bev-d) var(--bev-l) var(--bev-l) var(--bev-d);
+  transform:translate(1px,1px); }
+/* opened from the SEND TO bar, the export panel rises from the bottom, beside its button */
+#exportPanel.up { top:auto; bottom:calc(var(--barh) + 80px); max-height:calc(100vh - var(--barh) - 92px); }
 .saveNewBox { display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:7px 10px;
   border-bottom:1px solid var(--line); background:var(--panel); flex:0 0 auto; font-size:12px; }
 .saveNewBox label { color:var(--muted); }
@@ -1153,14 +1188,17 @@ html[data-theme="attune"] .transport .deck button.play { color:#1a1204; text-sha
 .barRight .stars { font-size:19px; letter-spacing:0; display:inline-flex; gap:1px; }
 .barRight .heart { font-size:19px; }
 .stars i { font-style:normal; display:inline-block; padding:0 1px; cursor:pointer;
-  transition:transform .08s, color .08s, text-shadow .08s; }
-.stars i:hover { transform:scale(1.25); color:var(--star);
+  transition:color .08s, text-shadow .08s; }
+/* Nothing grows on hover. Joe, 2026-09-28: "the resizing upon hover-over needs to be
+   fixed (stopped)". Stars, the heart and album cards used to scale or lift; now they
+   only change colour. */
+.stars i:hover { color:var(--star);
   text-shadow:0 0 8px color-mix(in srgb, var(--star) 60%, transparent); }
 .stars:hover i { color:var(--star); }
 .stars i:hover ~ i { color:var(--dim); text-shadow:none; }
 .stars .on { text-shadow:0 0 6px color-mix(in srgb, var(--star) 45%, transparent); }
-.barRight .heart:hover { transform:scale(1.2); color:var(--heart); }
-.barRight .heart { transition:transform .08s; display:inline-block; }
+.barRight .heart:hover { color:var(--heart); }
+.barRight .heart { transition:color .08s; display:inline-block; }
 
 /* ---- display colour (Preferences, Appearance) ---- */
 html[data-lcd="amber"] { --lcd:#ffb000; --lcd-bg:#120b02; --lcd-dim:#4a3300;

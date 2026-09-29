@@ -556,8 +556,10 @@ function renderRows(rows, opts = {}) {
   document.body.classList.toggle('inMissingView', inMissing);
   // The '#' column comes and goes with the view, so the header is rebuilt here too.
   renderHead();
-  paintListChrome();
   S.rows = rows;
+  // after S.rows: the SEND TO bar's readout sums the rows on screen, and with the old
+  // order it summed the previous view's rows (a fresh mix read "10:19" for 7:22:32).
+  paintListChrome();
   // Crash/restart slice 3: "the mix the user last had open" means literally that -- only
   // persisted while Mix is the view actually on screen, matching slices 1-2 (window
   // geometry, throttled seek restore), which also restore whatever was true at the moment
@@ -685,6 +687,7 @@ S.facetsOpen = store.get('facetsOpen', false);
 function paintListChrome() {
   const ordered = ORDERED_VIEWS.has(S.view);
   $('listTools').hidden = !ordered;
+  paintSendBar(ordered);
   $('lSave').hidden = S.view !== 'playlist';
   $('lSave').classList.toggle('dirty', S.view === 'playlist' && S.plDirty);
   $('lSave').textContent = (S.view === 'playlist' && S.plDirty) ? 'Save changes' : 'Save';
@@ -730,6 +733,75 @@ function listPlay() {
   const ids = listIds();
   if (!ids.length) return toast('Nothing to play', true);
   Player.playList(ids, 0);
+}
+
+/* ------------------------------------------------------------------ SEND TO bar
+   The payoff of a playlist, at the foot of the list where a Winamp playlist window
+   keeps its bottom row of buttons. Asked for 2026-09-28: after a mix is tuned, export
+   took "a minute or two of clicking to find", because Export was one small grey button
+   among four and the word never said Plex or USB. Both destinations are now named on
+   their own button, each one click, and the result is reported in the same bar.
+   No new pipeline: Plex goes through the same /api/export/plex call as the export
+   panel's button (plexCreate), the copy through the same startCopy() job. */
+function sendSay(cls, text) {
+  const m = $('sendMsg');
+  m.className = 'msg' + (cls ? ' ' + cls : '');
+  m.textContent = text;
+  m.title = text; delete m.dataset.tip;   // the line clips in a narrow window; hover reads it whole
+}
+function paintSendBar(ordered) {
+  $('sendBar').hidden = !ordered;
+  if (!ordered) return;
+  const ids = listIds();
+  const secsOf = new Map(S.rows.map(r => [r.i, r.seconds || 0]));
+  const secs = ids.reduce((a, i) => a + (secsOf.get(i) || 0), 0);
+  $('sendReadout').textContent = `${ids.length} TRACK${ids.length === 1 ? '' : 'S'}`
+    + (secs ? `  ${hms(secs)}` : '');
+  const plexOk = !!(S.stats && S.stats.plex);
+  const b = $('sendPlex');
+  b.classList.toggle('off', !plexOk);
+  // tips.js moves a title into data-tip on first hover; clear it so a changed title shows
+  b.title = plexOk
+    ? 'Make this list, in this order, a playlist on your Plex server. One click, nothing else to fill in.'
+    : 'Plex is not set up yet. Click to open Preferences, Plex, and connect it.';
+  delete b.dataset.tip;
+}
+async function plexCreate(ids, seed, title) {
+  const p = new URLSearchParams(); p.set('i', seed);
+  const body = { ids };
+  if (title) body.title = title;
+  return jpost('/api/export/plex?' + p, body);
+}
+async function sendPlexNow() {
+  if (!(S.stats && S.stats.plex)) {
+    sendSay('warn', 'Plex is not set up yet. Connect it under Preferences, Plex.');
+    Prefs.open();
+    const tab = document.querySelector('#prefNav button[data-tab="plex"]');
+    if (tab) tab.click();
+    return;
+  }
+  const ids = listIds();
+  if (!ids.length) return sendSay('err', 'Nothing to send');
+  const isMix = S.view === 'mix' && S.seed != null;
+  // A mix keeps its "like <song>" title; anything else is named for itself (as exportPlex).
+  const title = isMix ? '' : $('viewLabel').textContent.replace(/\.m3u8?$/i, '');
+  $('sendPlex').disabled = true;
+  sendSay('', `Creating the Plex playlist, ${ids.length} songs…`);
+  try {
+    const j = await plexCreate(ids, isMix ? S.seed : ids[0], title);
+    const missed = j.missed && j.missed.length ? `, ${j.missed.length} not found on Plex` : '';
+    sendSay('ok', `On Plex now: "${j.title || 'Attune'}" · ${j.matched ?? '?'} of ${ids.length} songs${missed}`);
+  } catch (e) { sendSay('err', e.message); }
+  finally { $('sendPlex').disabled = false; }
+}
+async function sendUsbNow() {
+  const ids = listIds();
+  if (!ids.length) return sendSay('err', 'Nothing to send');
+  const picked = await Prefs.pickFolder(copyDest || '');
+  if (!picked) return;
+  copyDest = picked; $('copyDest').value = picked; store.set('copyDest', picked);
+  sendSay('', `Copying ${ids.length} songs to ${picked}…`);
+  await startCopy(ids);
 }
 
 function openSaveNew() {
@@ -1836,13 +1908,11 @@ async function exportPlex() {
   const ids = currentExportIds();
   if (!ids.length) return toast('Nothing to export', true);
   const isMix = S.view === 'mix' && S.seed != null;
-  const p = new URLSearchParams(); p.set('i', isMix ? S.seed : ids[0]);
-  const body = { ids };
   // A mix keeps its "like <song>" title; anything else is named for itself.
-  if (!isMix) body.title = $('plName').value.trim() || $('viewLabel').textContent.replace(/\.m3u8?$/i, '');
+  const title = isMix ? '' : ($('plName').value.trim() || $('viewLabel').textContent.replace(/\.m3u8?$/i, ''));
   $('exportMsg').className = 'msg'; $('exportMsg').textContent = 'Creating Plex playlist…';
   try {
-    const j = await jpost('/api/export/plex?' + p, body);
+    const j = await plexCreate(ids, isMix ? S.seed : ids[0], title);
     $('exportMsg').className = 'msg ok';
     $('exportMsg').textContent = `Plex: ${j.matched ?? j.count ?? '?'} added` +
       (j.missed && j.missed.length ? `, ${j.missed.length} missed` : '');
@@ -1858,7 +1928,10 @@ let copyTimer = 0;
 // the #flavor change handler compares against it, so the synthetic change event fired at
 // boot does not POST the value straight back (contract F1).
 let savedFlavor = '';
-function copyErr(m) { $('copyMsg').className = 'msg err'; $('copyMsg').textContent = m; }
+function copyErr(m) {
+  $('copyMsg').className = 'msg err'; $('copyMsg').textContent = m;
+  if (!$('sendBar').hidden) sendSay('err', m);
+}
 async function copyBrowse() {
   const picked = await Prefs.pickFolder(copyDest || '');
   if (picked) { copyDest = picked; $('copyDest').value = picked; }
@@ -1893,9 +1966,13 @@ function paintCopy(st) {
   $('copyFill').style.width = pct + '%';
   $('btnCopy').hidden = st.running;
   $('btnCopyCancel').hidden = !st.running;
+  // the SEND TO bar shows the same job: thin progress bar while it runs, then the result
+  $('sendProg').hidden = !st.running;
+  $('sendFill').style.width = pct + '%';
   if (st.running) {
     $('copyMsg').className = 'msg';
     $('copyMsg').textContent = `Copying ${st.copied}/${st.total}… ${st.current || ''}`.trim();
+    sendSay('', `Copying ${st.copied} of ${st.total}… ${st.current || ''}`.trim());
   } else if (copyTimer && st.done) {
     stopCopyPoll();
     if (st.error) return copyErr(st.error);
@@ -1903,9 +1980,11 @@ function paintCopy(st) {
     if (st.cancelled) {
       $('copyMsg').className = 'msg';
       $('copyMsg').textContent = `Cancelled — ${st.copied} copied${skip}`;
+      sendSay('', `Cancelled, ${st.copied} copied${skip}`);
     } else {
       $('copyMsg').className = 'msg ok';
       $('copyMsg').textContent = `Copied ${st.copied} track${st.copied === 1 ? '' : 's'}${skip} → ${st.dest}`;
+      sendSay('ok', `On the drive now: ${st.copied} song${st.copied === 1 ? '' : 's'}${skip} in ${st.dest}`);
     }
   }
 }
@@ -2612,9 +2691,22 @@ function bindEvents() {
   $('lUsb').onclick = () => sendToFolder(listIds());
   $('lExport').onclick = () => {
     $('optionsPanel').hidden = true;
+    $('exportPanel').classList.remove('up');
     $('exportPanel').hidden = !$('exportPanel').hidden;
     if (!$('exportPanel').hidden) updateSelStatus();
   };
+  // the SEND TO bar at the foot of the list
+  $('sendPlex').onclick = sendPlexNow;
+  $('sendUsb').onclick = sendUsbNow;
+  $('sendMore').onclick = () => {
+    $('optionsPanel').hidden = true;
+    $('exportPanel').classList.add('up');
+    $('exportPanel').hidden = !$('exportPanel').hidden;
+    if (!$('exportPanel').hidden) updateSelStatus();
+  };
+  // the folder last copied to, so the picker opens there next time
+  copyDest = store.get('copyDest', '') || '';
+  if (copyDest) $('copyDest').value = copyDest;
   $('btnFacets').onclick = () => setFacetsOpen(!S.facetsOpen);
   $('tbody').addEventListener('dragend', () => {
     dragFrom = null;
@@ -2870,7 +2962,8 @@ function bindEvents() {
     if (!e.target.closest('#colMenu') && !e.target.closest('#thead-row')) $('colMenu').hidden = true;
     if (!e.target.closest('.why')) $('why').hidden = true;
     if (!e.target.closest('.popover') && !e.target.closest('#toolbar button')
-        && !e.target.closest('#queueTools button') && !e.target.closest('#listTools button'))
+        && !e.target.closest('#queueTools button') && !e.target.closest('#listTools button')
+        && !e.target.closest('#sendBar button'))
       { $('optionsPanel').hidden = true; $('exportPanel').hidden = true; }
     if (!e.target.closest('#eqPanel') && !e.target.closest('#tEq')) $('eqPanel').hidden = true;
   });
@@ -2969,6 +3062,7 @@ async function initCore() {
     $('mipControls').hidden = s.engine !== 'musicip';
     $('v2Controls').hidden = s.engine === 'musicip';
     $('btnPlex').disabled = !s.plex;
+    if (!$('sendBar').hidden) paintSendBar(true);
     paintStats(s);
   } catch (e) { console.error('[core] header', e); }
 

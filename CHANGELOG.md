@@ -5,7 +5,26 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (2026-09-28)
+
+- **Export is where the list ends, and it says where it goes.** Every list that is a
+  playlist (a mix, Now Playing, an opened playlist, an auto-playlist) now has a SEND TO
+  bar along its foot, the way a Winamp playlist window keeps its buttons at the bottom:
+  a readout of how many songs and how long, then two named destinations, **Plex
+  playlist** and **USB / car folder**, each one click. Plex writes the playlist straight
+  away and the bar reports "On Plex now" with the count. USB opens the folder picker at
+  the last folder you used and copies on OK, with a progress bar in the same strip. If
+  Plex is not connected yet the button stays, dashed, and clicking it opens Preferences,
+  Plex. **More...** holds what the old Export panel held: download a playlist file, save
+  it to the playlist folder, choose the path style, and mirror a folder to Plex. The
+  Copy to USB and Export buttons left the row above the list. Reasoning and before and
+  after pictures: `docs/GUI-ASSESS-2026-09-28.md`.
+
 ### Fixed (2026-09-28)
+
+- **Nothing grows when the pointer rests on it.** Rating stars, the heart and album
+  cards used to scale up or lift on hover, which made the row jitter under the pointer.
+  They now only change colour.
 
 - **No black window while scanning.** When Attune falls back to FFmpeg's ffprobe to read
   the tags of a file it could not open itself, that program now runs hidden like every

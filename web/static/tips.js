@@ -55,6 +55,10 @@
     ['#btnSaveDir', 'Write the playlist file into your playlist folder. It then shows under Playlists on the left.'],
     ['#btnDownload', 'Save the playlist as an .m3u8 file into your Downloads folder, to open in another player.'],
     ['#btnPlex', 'Make this list a playlist on your Plex server. Set Plex up in Preferences first.'],
+    // SEND TO bar at the foot of the list (the buttons carry their own titles)
+    ['#sendBar .sendLabel', 'Where this list goes once it sounds right: a Plex playlist, or the files copied to a USB stick for the car.'],
+    ['#sendProg', 'How far the copy has got.'],
+    ['#sendMsg', 'What the last send did.'],
     ['#exportPanel .expsep', el => /mirror/i.test(el.textContent)
       ? 'Keep a folder of music files matched onto one Plex playlist, for example a car USB stick.'
       : 'Copy the actual music files, not just a list of them, so they play anywhere.'],

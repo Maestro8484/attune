@@ -379,8 +379,12 @@
           <button id="lPlay" class="lPrimary" title="Play this list from the top, in this order">▶ Play</button>
           <button id="lSaveNew" title="Save this list, in this order, as a new playlist">Save as new…</button>
           <button id="lSave" title="Write this list back into the playlist you opened" hidden>Save</button>
-          <button id="lUsb" title="Copy these songs to a folder or USB stick, in this order">Copy to USB…</button>
-          <button id="lExport" title="Download, Plex and path options">Export…</button>
+          <!-- Copy to USB and Export left this row on 2026-09-28 for the SEND TO bar at the
+               foot of the list (#sendBar), where both destinations are named on their own
+               button. Both stay, hidden, because scripts and the capture tool reach them
+               by id. docs/GUI-ASSESS-2026-09-28.md. -->
+          <button id="lUsb" title="Copy these songs to a folder or USB stick, in this order" hidden>Copy to USB…</button>
+          <button id="lExport" title="Download, Plex and path options" hidden>Export…</button>
         </span>
         <!-- Library only: the genre, artist and album boxes, folded shut by default -->
         <button id="btnFacets" hidden title="Show or hide the genre, artist and album boxes">Browse by genre · artist · album ▾</button>
@@ -459,6 +463,23 @@
         <div id="diagUnavailable" class="empty" hidden>Diagnostics endpoint not available.</div>
       </div>
       <div id="pager" class="pager"></div>
+      <!-- SEND TO: the payoff of a playlist, where a Winamp playlist window keeps its
+           bottom row of buttons. Shows only while the list on screen is a playlist (a
+           mix, the queue, an opened playlist, an auto-playlist), so it appears the moment
+           there is something worth sending. Each destination is named on its own button
+           and is one click: Plex writes the playlist straight away; USB opens the folder
+           picker, starting at the last folder used, and copies on OK. More holds the
+           file exports (download, save to the playlist folder, path style) and the
+           folder-to-Plex mirror. Added 2026-09-28, docs/GUI-ASSESS-2026-09-28.md. -->
+      <div id="sendBar" class="sendBar" hidden>
+        <span id="sendReadout" class="lcd sendLcd" title="How many songs are in this list and how long they run">0 TRACKS</span>
+        <span class="sendLabel">SEND TO</span>
+        <button id="sendPlex" class="sendBtn" title="Make this list, in this order, a playlist on your Plex server. One click, nothing else to fill in.">⇪ Plex playlist</button>
+        <button id="sendUsb" class="sendBtn" title="Copy these songs, in this order, to a folder or USB stick for the car. Pick the folder, press OK, done.">⇪ USB / car folder</button>
+        <button id="sendMore" title="Download a playlist file, save it to the playlist folder, choose how paths are written, or mirror a folder to Plex">More…</button>
+        <div id="sendProg" class="progressbar" hidden><div id="sendFill" class="fill"></div></div>
+        <span id="sendMsg" class="msg"></span>
+      </div>
     </div>
   </section>
 
