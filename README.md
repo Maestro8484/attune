@@ -26,7 +26,7 @@
 </p>
 
 <p align="center">
-  <img alt="Attune's main window: a mix numbered in play order, with Play, Save as new, Copy to USB and Export above it, and the playing song's cover on the right" src="docs/img/studio-main.png" width="820">
+  <img alt="Attune's main window: a mix numbered in play order, Play and Save as new above it, the SEND TO bar beneath it with Plex playlist and USB / car folder, and the playing song's cover on the right" src="docs/img/studio-main.png" width="820">
 </p>
 
 ---
@@ -145,7 +145,7 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 </p>
 
 <p align="center">
-  <img alt="The export panel: save a playlist file, download it, or send it to Plex" src="docs/img/export.png" width="820">
+  <img alt="The SEND TO bar at the foot of the list, Plex playlist and USB / car folder one click each, with the More panel open above it: save a playlist file, download it, copy the files, mirror a folder to Plex" src="docs/img/export.png" width="820">
 </p>
 
 <p align="center">
