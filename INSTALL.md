@@ -171,7 +171,7 @@ That produces `dist/Attune/`, holding `Attune.exe` and a nested `analyzer/` prog
 **One thing a fresh clone doesn't have.** The build needs `desktop/ffbin/ffmpeg.exe` and
 that folder is deliberately git-ignored, because the binary is about 148 MB and has no
 business in a source tree. So a fresh clone or a git worktree never has it, and
-`desktop/build.py` **refuses to build without it** rather than quietly shipping an app that
+`desktop/build.py` **refuses to build without it** rather than quietly producing an app that
 can't read some of your music. Download an ffmpeg build for Windows, put `ffmpeg.exe` in
 `desktop/ffbin/`, and build again. To build deliberately without it, pass `--no-ffmpeg`, and
 understand that roughly one mp3 in fourteen from a real library then fails to analyse.
