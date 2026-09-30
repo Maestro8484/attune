@@ -347,3 +347,102 @@ def test_delete_removes_the_file(client):
     assert client.post("/api/collection/delete", json={"id": cid}).status_code == 200
     assert cid not in [c["id"] for c in client.get("/api/collection/list").get_json()["collections"]]
     assert client.post("/api/collection/delete", json={"id": cid}).status_code == 404
+
+
+# ------------------------------------------------------------------ round one of the audit, 2026-09-30
+# One test per confirmed finding, so it never needs finding again.
+
+def test_full_list_names_the_next_best_left_out_for_count(eng):
+    """A full list left its 51st song out for COUNT, not for the line; the report
+    names it (Codex: 27 rows with no strongest-left-out)."""
+    rep = {}
+    out = eng.mix(eng.paths[0], size=5, min_fit=0.0, report=rep)
+    assert len(out) == 5 and rep["stopped"] == "size"
+    assert rep["left_for"] == "count" and rep["strongest_left"] is not None
+    j, fit = rep["strongest_left"]
+    assert eng.paths[j] not in out and fit <= rep["weakest_kept"][1]
+
+
+def test_radio_counts_the_fitting_songs_its_coins_passed_over(eng):
+    """The radio coin can pass over songs that fit before the walk meets the line; the
+    report counts them so the window never says 'none fit' when some did (both
+    auditors, round one)."""
+    rep = {}
+    eng.radio_next(eng.paths[0], n=50, variety=9.0, min_fit=0.7, report=rep,
+                   rng=np.random.default_rng(5))
+    assert rep["coin_skipped"] > 0
+    assert rep["coin_skipped"] + len(rep["fit"]) <= 20     # only group A fits at 0.7
+
+
+def test_weakest_kept_is_a_song_actually_delivered(client):
+    """With the near-twin re-pick on, the walk over-fetches 200 and MMR drops songs;
+    the boundary reported must be over the delivered list (cold reader, round one)."""
+    # size 20 is the route's floor; the walk over-fetches 200 down to the line (fit 0,
+    # which the unrelated groups cross), so MMR chooses 20 from more than 20
+    j = client.get("/api/mix?i=0&size=20&max=1&min_fit=0&variety=1").get_json()
+    ids = _ids(j)
+    assert len(ids) == 20 and j["stop"]["reason"] == "size"
+    assert j["stop"]["weakest_kept"]["i"] in ids
+    assert j["stop"]["strongest_left"]["i"] not in ids
+
+
+def test_radio_route_says_when_variety_thinned_the_batch(client):
+    """A radio batch that came back empty because the coin passed over the only
+    fitting songs says 'passed over', never 'none fit'."""
+    seen = set()
+    for r in range(40):
+        j = client.get(f"/api/radio/next?seed={LONER}&n=50&variety=9&rng={r}&max=1&min_fit=0.7").get_json()
+        seen.add(j["stop"]["reason"])
+        if j["stop"]["reason"] == "none_fit":
+            assert j["stop"]["passed_over"] == 0
+        if j["stop"]["reason"] == "thinned":
+            assert j["stop"]["passed_over"] > 0 and "passed over" in j["stop"]["sentence"]
+    # the loner's pool holds no fitting song at all under any coin, so this seed can only
+    # ever be none_fit; a group seed with variety shows the thinned reason
+    j = client.get("/api/radio/next?seed=0&n=50&variety=9&rng=1&max=1&min_fit=0.7").get_json()
+    assert j["stop"]["reason"] in ("fit", "thinned", "exhausted", "size")
+    if j["tracks"] == []:
+        assert j["stop"]["reason"] == "thinned"
+
+
+def test_a_vote_from_outside_the_collection_is_refused(client, coll):
+    r = client.post("/api/refine", json={"i": 0, "size": 20, "liked": [20], "collection": coll})
+    assert r.status_code == 400 and "not in the collection" in r.get_json()["error"]
+
+
+def test_min_fit_must_be_a_number(client):
+    for bad in ("nan", "inf", "abc"):
+        assert client.get(f"/api/mix?i=0&size=20&max=1&min_fit={bad}").status_code == 400, bad
+
+
+def test_export_post_routes_read_the_collection_from_the_body(client, coll):
+    """Save-to-folder builds from the seed alone when no ids are given; a collection
+    in its JSON body must hold (cold reader, round one)."""
+    r = client.post("/api/export/m3u_dir", json={"i": 0, "size": 20, "flavor": "local",
+                                                 "name": "From collection", "new": True,
+                                                 "collection": coll, "max": "1", "min_fit": 0})
+    assert r.status_code == 200, r.get_json()
+    r2 = client.post("/api/export/m3u_dir", json={"i": 20, "size": 20, "flavor": "local",
+                                                  "name": "Outside", "new": True,
+                                                  "collection": coll})
+    assert r2.status_code == 400
+
+
+def test_collection_is_found_again_by_a_fresh_app_on_the_same_settings_folder(client, coll, tmp_path):
+    """Persistence across a restart: a second app instance over the same settings
+    folder and library lists the collection (Codex, round one)."""
+    web_dir = os.path.dirname(APP_PY)
+    added = web_dir not in sys.path
+    if added:
+        sys.path.insert(0, web_dir)
+    try:
+        spec = importlib.util.spec_from_file_location("attune_app_coll_again", APP_PY)
+        appmod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(appmod)
+        again = appmod.create_app(client._db, engine_name="v2", playlist_dir=str(tmp_path))
+    finally:
+        if added and web_dir in sys.path:
+            sys.path.remove(web_dir)
+    again.config["TESTING"] = True
+    j = again.test_client().get("/api/collection/list").get_json()
+    assert coll in [c["id"] for c in j["collections"]]

@@ -202,6 +202,7 @@ def register(app, ctx):
         return jsonify(ok=True, id=cid, size=len(paths))
 
     @bp.post("/api/collection/delete")
+    @locked
     def c_delete():
         body = request.get_json(silent=True) or {}
         cid = str(body.get("id") or "")

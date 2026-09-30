@@ -27,8 +27,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   poor. **The line itself is provisional.** It starts at 0.70 (a song fits when its
   score is at least seven tenths of a perfect twin's) for Create Mix and Radio, and
   at 0.990 (plain sound closeness) for Blend, steering and Adventure. Both are
-  starting values chosen from the shape of the scores, not tuned to anything, and both
-  are yours to move in Mix options; where the line belongs is decided by ear.
+  starting values placed inside the range the scores occupy so the switch does
+  something on day one; neither is tuned to anything, neither is justified by any
+  number, and both are yours to move in Mix options. Where the line belongs is decided
+  by ear. The mix header names the weakest song kept and the strongest left out, and
+  when Radio's variety passed over songs that fit, it says how many.
   Adventure treats it per stop: a stop with no song near enough to the path is left
   out and the path is shorter, the two ends always kept.
 

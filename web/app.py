@@ -578,7 +578,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         raw = src.get("min_fit")
         if raw in (None, ""):
             return default
-        return max(0.0, min(1.0, float(raw)))
+        v = float(raw)
+        if v != v or v in (float("inf"), float("-inf")):
+            raise ValueError("min_fit must be a number between 0 and 1")
+        return max(0.0, min(1.0, v))
 
     def _seed_outside(mask, *seeds):
         """The first seed index that is not in the collection, or None. A seed becomes
@@ -638,7 +641,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         # one, and is judged first.
         if returned >= requested:
             stopped = "size"
-        if returned == 0:
+        thinned = report.get("coin_skipped") or 0
+        out["passed_over"] = thinned
+        if returned == 0 and thinned:
+            # Radio's variety coin passed over songs that DID fit; "none fit" would be
+            # untrue. Say what happened.
+            out["reason"] = "thinned"
+            out["sentence"] = (f"Radio's variety passed over {thinned} song{'s' if thinned != 1 else ''} "
+                               f"that fit in {where} and nothing else fits"
+                               + (f"; the next, {sl['label']}, sits at {sl['fit']:.3f}, below {line}." if sl else "."))
+        elif returned == 0:
             out["reason"] = "none_fit" if stopped == "fit" else "empty"
             if sl:
                 out["sentence"] = (f"No song in {where} fits this seed under the current recipe: "
@@ -647,21 +659,31 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 out["sentence"] = f"Nothing in {where} could be taken for this seed."
         elif stopped == "fit":
             out["reason"] = "fit"
+            # Radio's coins can pass over songs that fit before the walk meets the
+            # line; then the shortfall is the variety, not the line, and the sentence
+            # must say so (raised by both auditors, 2026-09-30).
+            passed = (f" Radio's variety passed over {thinned} more that fit." if thinned else "")
             out["sentence"] = (f"Stopped at {returned} of {requested}: the next-best song in {where}, "
                                f"{sl['label']}, sits at {sl['fit']:.3f}, below {line}."
-                               + (f" Weakest kept: {wk['label']} at {wk['fit']:.3f}." if wk else ""))
+                               + (f" Weakest kept: {wk['label']} at {wk['fit']:.3f}." if wk else "")
+                               + passed)
         elif returned < requested and stopped == "size":
             out["reason"] = "trimmed"
-            out["sentence"] = (f"{returned} of {requested}: enough songs fit, but duplicates, near-twins "
-                               f"or blocked songs were dropped after the walk. From {where}.")
+            out["sentence"] = (f"{returned} of {requested}: the walk took its {report.get('walked', 'full')} "
+                               f"that fit, then duplicates, near-twins or blocked songs were dropped; "
+                               f"more may fit beyond the songs it looked at. From {where}.")
         elif returned < requested:
             out["reason"] = "exhausted"
             out["sentence"] = (f"Only {returned} of {requested}: {where} ran out of songs that could be "
-                               f"taken (artist spacing, songs already used) before any fell below {line}.")
+                               f"taken (artist spacing, songs already used) before any fell below {line}."
+                               + (f" Radio's variety passed over {thinned} that fit." if thinned else ""))
         else:
             out["reason"] = "size"
+            nxt = (f"; next best left out for count, {sl['label']} at {sl['fit']:.3f}"
+                   if sl and report.get("left_for") == "count" else "")
             out["sentence"] = (f"All {requested} asked for, from {where}"
-                               + (f"; the weakest kept, {wk['label']}, sits at {wk['fit']:.3f}, line {min_fit:.2f} (provisional)." if wk else "."))
+                               + (f"; the weakest kept, {wk['label']}, sits at {wk['fit']:.3f}, line {min_fit:.2f} (provisional)" if wk else "")
+                               + nxt + ".")
         return out
 
     def _build_mix(i, size, field=None, variety=False, flow=False, bans=None,
@@ -718,6 +740,15 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             picks = picks[:size]
         if flow:
             picks = eng.order_by_flow(picks)
+        # The walk's "weakest kept" is the last song IT took; dedup, bans and the
+        # near-twin re-pick above can drop that song, so the boundary the listener
+        # gets is recomputed over the songs actually delivered (both auditors, round
+        # one, 2026-09-30). `walked` is how many fitting songs the walk looked at.
+        if report is not None and report.get("fit"):
+            report["walked"] = len(report["fit"])
+            kept = [(eng.idx[p], report["fit"][eng.idx[p]]) for p in picks
+                    if eng.idx.get(p) in report["fit"]]
+            report["weakest_kept"] = min(kept, key=lambda t: t[1]) if kept else None
         return seed, picks
 
     def _active_mix_indices(i, size, field=None, mask=None, min_fit=None, report=None):
@@ -771,8 +802,14 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         m3u/Plex playlist matches the mix on screen regardless of engine. A collection
         and a fit line on the request (?collection=, ?max=1) hold here too, so an export
         built from the seed alone can never reach outside the collection either."""
-        mask, cinfo = _collection_arg()
-        min_fit = _fit_arg()
+        # The two POST export routes (save to folder, copy to USB) carry the seed and
+        # size in a JSON body, so the collection and the flag are read from there
+        # when there is one, and from the query string otherwise (cold reader, round
+        # one, 2026-09-30).
+        body = request.get_json(silent=True) if request.method == "POST" else None
+        src = body if isinstance(body, dict) and body.get("collection") is not None else None
+        mask, cinfo = _collection_arg(src)
+        min_fit = _fit_arg(src)
         if _seed_outside(mask, i) is not None:
             raise ValueError(f"the seed is not in the collection {cinfo['name']!r}")
         picks_i = _active_mix_indices(i, size, field, mask=mask, min_fit=min_fit)
@@ -1162,6 +1199,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error=str(e)), 400
         if _seed_outside(mask, i) is not None:
             return jsonify(error=f"the seed is not in the collection {cinfo['name']!r}"), 400
+        # A liked song is pinned into the list by the window, so a vote from outside
+        # the collection would put an outside song on screen; refuse it here.
+        outside = _seed_outside(mask, *(liked + disliked))
+        if outside is not None:
+            return jsonify(error=f"{labels[outside]} is not in the collection {cinfo['name']!r}"), 400
         report = {}
         try:
             # Artist votes STEER the query vector but are not excluded from the result.
@@ -1178,6 +1220,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 q, size=want, exclude=[i] + liked + disliked + sorted(ban_i),
                 allowed=mask, min_fit=min_fit, report=report)
             picks = _drop_banned(picks, ban_i, ban_art)[:size]
+            if report.get("fit"):        # boundary over the songs delivered, as in _build_mix
+                report["walked"] = len(report["fit"])
+                kept = [(eng.idx[p], report["fit"][eng.idx[p]]) for p in picks]
+                report["weakest_kept"] = min(kept, key=lambda t: t[1]) if kept else None
         except ValueError as e:
             return jsonify(error=str(e)), 400
 

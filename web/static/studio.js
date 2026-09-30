@@ -427,7 +427,13 @@ function paintFromPill() {
 }
 
 function selectCollection(id, { persist = true } = {}) {
+  const was = curCollection;
   curCollection = id && findCollection(id) ? id : '';
+  // Steering votes belong to the pool they were cast in: a liked song is pinned into
+  // the list by refine(), so a vote from one collection carried into another could
+  // put a song from outside it on screen (Codex, round one, 2026-09-30). The server
+  // refuses such a vote too; clearing here keeps the window honest before it asks.
+  if (curCollection !== was) { S.liked = []; S.disliked = []; S.likedArtists = []; S.dislikedArtists = []; }
   $('collSel').value = curCollection;
   if (persist) store.set('collection', curCollection);
   $('btnCollDelete').hidden = !curCollection;
@@ -1541,7 +1547,13 @@ async function showMix(opts = {}) {
   // mix, so a full list says "all 50" and a short one says which song sat below the
   // line; an empty one is the whole view.
   const stopEl = $('mixStop');
-  stopEl.textContent = (S.stop && S.stop.sentence) || '';
+  // The count asked for is the songs picked around the seed; the seed itself (and a
+  // blend's seeds) sit at the top of the list, so the list on screen is longer by
+  // that many. Say so, or "12 of 50" beside "13 tracks" reads as a contradiction.
+  const extra = S.stop && S.mix.length ? S.mix.length - (S.stop.returned || 0) : 0;
+  stopEl.textContent = (S.stop && S.stop.sentence)
+    ? S.stop.sentence + (extra > 0 && S.stop.reason !== 'quota' ? ` Plus the ${extra === 1 ? 'seed' : extra + ' seeds'}, ${S.mix.length} on screen.` : '')
+    : '';
   stopEl.hidden = !stopEl.textContent;
   stopEl.classList.toggle('short', !!(S.stop && ['fit', 'none_fit', 'empty', 'exhausted'].includes(S.stop.reason)));
   if (!S.mix.length) {

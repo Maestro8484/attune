@@ -1007,7 +1007,10 @@ def register(app, ctx):
                 return jsonify(ok=False, error="bad request"), 400
             if not (0 <= i < lib.n):
                 return jsonify(ok=False, error="unknown seed"), 404
-            tracks = ctx["active_mix_tracks"](i, size, body.get("dedup") or None)
+            try:
+                tracks = ctx["active_mix_tracks"](i, size, body.get("dedup") or None)
+            except ValueError as e:        # a seed outside the body's collection
+                return jsonify(ok=False, error=str(e)), 400
             # Default name comes from the shared template expander (contract §G), which
             # reproduces the operator's own 2021 convention (ruling C9) -- "like-<seed>".
             # The expander sanitises harder than the old inline stem did (letters,

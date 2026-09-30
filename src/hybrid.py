@@ -44,16 +44,18 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 #   FIT_LINE_DEFAULT  applies to the weighted walks (mix, radio): fit is the candidate's
 #                     score divided by the seed's own score against itself, so 1.0 is a
 #                     perfect twin under the active weights and the line means the same
-#                     thing under every recipe. Measured 2026-09-30 over the 21,215-track
-#                     library (audit-collections/harness/score_shape.txt): the median seed's
-#                     50th-best song sits at 0.74 and its 500th at 0.64; the pool's 99th
-#                     percentile is 0.68. A line at 0.70 keeps roughly the top 100.
+#                     thing under every recipe. 0.70 is a starting point placed inside
+#                     the range the scores actually occupy (measured 2026-09-30, see
+#                     audit-collections/harness/score_shape.txt), so the switch does
+#                     something on day one. It is NOT justified by that measurement or
+#                     by any rank or retrieval figure: whether 0.70 is where "fits"
+#                     ends is a listening decision, and the listening set is staged.
 #   CLAP_LINE_DEFAULT applies to the CLAP-only walks (blend, steering, adventure), where
-#                     the number is the plain cosine. Same measurement: the CLAP cosines
-#                     of a whole library sit between about 0.88 and 1.00, and a seed's
-#                     best and 500th-best differ by 0.005, so this line has little to bite
-#                     on. That is a finding about the stored vectors, reported in
-#                     ISSUES.md, not something this file changes.
+#                     the number is the plain cosine. Same status: a starting point in
+#                     the occupied range. The CLAP cosines of a whole library sit between
+#                     about 0.88 and 1.00, so this line has little to bite on; that is a
+#                     finding about the stored vectors, reported in ISSUES.md, not
+#                     something this file changes.
 FIT_LINE_DEFAULT = 0.70
 CLAP_LINE_DEFAULT = 0.99
 
@@ -407,7 +409,9 @@ class HybridEngine:
         fit_of = {}
         stopped = "exhausted"
         strongest_left = None
-        for j in order:
+        coin_skipped = 0            # songs that fit but radio's coins passed over
+        pos = None                  # where in `order` the walk stopped
+        for k, j in enumerate(order):
             j = int(j)
             if j in excl:
                 continue
@@ -418,8 +422,10 @@ class HybridEngine:
                 if fit < min_fit:
                     strongest_left = (j, fit)
                     stopped = "fit"
+                    pos = k
                     break
             if coin is not None and not coin(j, len(out)):
+                coin_skipped += 1
                 continue
             a = self.artist[j]
             if a and a in recent[-artist_spacing:]:
@@ -429,8 +435,20 @@ class HybridEngine:
                 fit_of[j] = float(scores[j]) / ceiling
             if len(out) >= size:
                 stopped = "size"
+                pos = k
                 break
         if report is not None:
+            # A full list left out its next-best song for COUNT, not for the line; name
+            # it too, so a reader can see what the 51st would have been. Found by
+            # scanning on from where the walk stopped to the next song it could have
+            # taken; the picks above are already final and this changes nothing.
+            if stopped == "size" and min_fit is not None and pos is not None:
+                for j in order[pos + 1:]:
+                    j = int(j)
+                    if j in excl or (allowed is not None and not allowed[j]):
+                        continue
+                    strongest_left = (j, float(scores[j]) / ceiling)
+                    break
             report.update({
                 "stopped": stopped,
                 "pool": int(allowed.sum()) if allowed is not None else len(self.paths),
@@ -438,6 +456,8 @@ class HybridEngine:
                 "weakest_kept": ((self.idx[out[-1]], fit_of[self.idx[out[-1]]])
                                  if out and min_fit is not None else None),
                 "strongest_left": strongest_left,
+                "left_for": "count" if stopped == "size" else "line",
+                "coin_skipped": coin_skipped,
                 "fit": fit_of,
             })
         return out
