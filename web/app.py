@@ -542,9 +542,137 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return pool_size
         return min(max(pool_size * 3, pool_size + 60), 400)
 
-    def _build_mix(i, size, field=None, variety=False, flow=False, bans=None):
+    # ---- collections and the fit line (2026-09-30) -------------------------------
+    # A collection is a saved subset of the library (web/collections.py), applied to
+    # every walk as a mask over the one full-library pool. The fit line turns the
+    # asked-for count into a MAXIMUM: the walk stops when the next-best song sits
+    # below it. Both are per-request, sent by the window like the dials are; nothing
+    # here is server-side state. With neither sent, every route answers exactly as
+    # it did before, which is what the byte-identical regression gate relies on.
+    coll_holder = {"resolver": None}     # filled when collections.py registers, below
+
+    def _collection_arg(source=None):
+        """(mask, info) from ?collection=<id> (or a POST body's "collection"). No
+        collection means the full library. Raises ValueError on an unknown id."""
+        src = source if source is not None else request.args
+        cid = str(src.get("collection") or "").strip()
+        if not cid:
+            return None, {"id": "", "name": "Full library", "size": len(eng.paths),
+                          "missing": 0}
+        r = coll_holder["resolver"]
+        m, info = r.mask(cid) if r is not None else (None, None)
+        if m is None:
+            raise ValueError(f"no collection called {cid!r}")
+        return m, info
+
+    def _fit_arg(source=None, clap_only=False):
+        """The fit line for this request, or None for today's quota behaviour.
+        max=1 turns the count into a maximum at the PROVISIONAL default line
+        (hybrid.FIT_LINE_DEFAULT, or CLAP_LINE_DEFAULT for the CLAP-only walks);
+        min_fit=<0..1> moves the line. No flag, no line: the regression gate and
+        every older caller send none. Raises ValueError on a bad number."""
+        src = source if source is not None else request.args
+        if str(src.get("max") or "").lower() not in ("1", "true", "on"):
+            return None
+        default = hybrid.CLAP_LINE_DEFAULT if clap_only else hybrid.FIT_LINE_DEFAULT
+        raw = src.get("min_fit")
+        if raw in (None, ""):
+            return default
+        return max(0.0, min(1.0, float(raw)))
+
+    def _seed_outside(mask, *seeds):
+        """The first seed index that is not in the collection, or None. A seed becomes
+        row one of the playlist, so a seed from outside the collection would put a
+        song from outside it into the list."""
+        if mask is None:
+            return None
+        for s in seeds:
+            if not mask[s]:
+                return s
+        return None
+
+    def _stop_info(report, requested, returned, cinfo, min_fit):
+        """Why the list stopped where it did, in one plain sentence plus the numbers
+        behind it. Pool size sits beside every number (LAW 3). `report` is the
+        engine walk's own account (hybrid._walk); None when the engine has no line."""
+        pool, name = cinfo["size"], cinfo["name"]
+        where = f"{name} ({pool:,} songs)"
+
+        def _song(t):
+            if not t:
+                return None
+            j, fit = t
+            return {"i": int(j), "label": labels[int(j)], "fit": round(float(fit), 3)}
+
+        out = {"requested": requested, "returned": returned, "pool": pool,
+               "collection": name, "line": min_fit, "provisional": min_fit is not None,
+               "weakest_kept": None, "strongest_left": None}
+        if min_fit is None:
+            out["reason"] = "quota"
+            out["sentence"] = (f"{returned} of {requested} asked for, from {where}. "
+                               f"Stop when songs stop fitting is off, so the count is a quota.")
+            return out
+        if report is None or "stopped" not in report:
+            out["reason"] = "no_line"
+            out["sentence"] = (f"{returned} of {requested} from {where}. This engine has no "
+                               f"fit line, so the count is a quota.")
+            return out
+        wk, sl = _song(report.get("weakest_kept")), _song(report.get("strongest_left"))
+        out["weakest_kept"], out["strongest_left"] = wk, sl
+        line = f"the provisional fit line of {min_fit:.2f}"
+        stopped = report.get("stopped")
+        skipped = report.get("skipped_stops")
+        if skipped is not None:                      # an adventure path
+            if skipped:
+                out["reason"] = "fit"
+                out["sentence"] = (f"{returned} stops instead of {requested}: {skipped} had no song in "
+                                   f"{where} within {line} of the path"
+                                   + (f"; nearest left out, {sl['label']} at {sl['fit']:.3f}." if sl else "."))
+            else:
+                out["reason"] = "size"
+                out["sentence"] = (f"All {requested} stops, from {where}"
+                                   + (f"; the farthest stop kept sits at {wk['fit']:.3f}, line {min_fit:.2f} (provisional)." if wk else "."))
+            return out
+        # The walk over-fetches for dedup, bans and the near-twin re-pick, so it can
+        # meet the line AFTER it already had enough: that is a full list, not a short
+        # one, and is judged first.
+        if returned >= requested:
+            stopped = "size"
+        if returned == 0:
+            out["reason"] = "none_fit" if stopped == "fit" else "empty"
+            if sl:
+                out["sentence"] = (f"No song in {where} fits this seed under the current recipe: "
+                                   f"the closest, {sl['label']}, sits at {sl['fit']:.3f}, below {line}.")
+            else:
+                out["sentence"] = f"Nothing in {where} could be taken for this seed."
+        elif stopped == "fit":
+            out["reason"] = "fit"
+            out["sentence"] = (f"Stopped at {returned} of {requested}: the next-best song in {where}, "
+                               f"{sl['label']}, sits at {sl['fit']:.3f}, below {line}."
+                               + (f" Weakest kept: {wk['label']} at {wk['fit']:.3f}." if wk else ""))
+        elif returned < requested and stopped == "size":
+            out["reason"] = "trimmed"
+            out["sentence"] = (f"{returned} of {requested}: enough songs fit, but duplicates, near-twins "
+                               f"or blocked songs were dropped after the walk. From {where}.")
+        elif returned < requested:
+            out["reason"] = "exhausted"
+            out["sentence"] = (f"Only {returned} of {requested}: {where} ran out of songs that could be "
+                               f"taken (artist spacing, songs already used) before any fell below {line}.")
+        else:
+            out["reason"] = "size"
+            out["sentence"] = (f"All {requested} asked for, from {where}"
+                               + (f"; the weakest kept, {wk['label']}, sits at {wk['fit']:.3f}, line {min_fit:.2f} (provisional)." if wk else "."))
+        return out
+
+    def _build_mix(i, size, field=None, variety=False, flow=False, bans=None,
+                   mask=None, min_fit=None, report=None):
         """Return (seed_path, picks). With a dedup field, over-fetch then collapse
         same-key tracks (and any that duplicate the seed), so you still get `size`.
+
+        mask / min_fit / report (2026-09-30): the collection mask, the fit line and
+        the walk's own account of why it stopped, handed straight to eng.mix(). With
+        a line, the over-fetch below simply ends at the line, so dedup and MMR only
+        ever choose among songs that fit, and fewer than `size` may come back.
 
         bans=(ban_i, ban_art): tracks/artists the listener removed. Applied to the raw
         candidate list BEFORE dedup/mmr/flow, with extra over-fetch, so a removal is
@@ -572,7 +700,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         else:
             pool_size = size
         pool_size = _banned_headroom(pool_size, ban_i, ban_art)
-        picks = eng.mix(seed, size=pool_size) or []
+        picks = eng.mix(seed, size=pool_size, allowed=mask, min_fit=min_fit,
+                        report=report) or []
         picks = _drop_banned(picks, ban_i, ban_art)
         if field:
             seen, uniq = {_dupkey(seed, field)}, []
@@ -591,14 +720,19 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             picks = eng.order_by_flow(picks)
         return seed, picks
 
-    def _active_mix_indices(i, size, field=None):
+    def _active_mix_indices(i, size, field=None, mask=None, min_fit=None, report=None):
         """Pool indices of the mix picks for seed index `i` via the ACTIVE engine, applying
         the same controls /api/mix parses from the request. Does NOT include the seed.
         Raises ValueError on bad control args (caller returns 400).
 
         This is the single source of truth both /api/mix and the export routes build their
         track list from, so an exported playlist always equals the mix the user is viewing
-        under whichever engine is active (musicip or v2)."""
+        under whichever engine is active (musicip or v2).
+
+        mask / min_fit / report (2026-09-30): the collection and the fit line. Under the
+        MusicIP engine there is no score to hold a line against, so the line is ignored
+        there and `report` stays empty (the window then says the count is a quota); the
+        collection still holds, by dropping anything MusicIP returns from outside it."""
         ban_i, ban_art = _ban_args()
         if is_musicip:
             style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), MUSICIP_STYLE_MAX)
@@ -607,6 +741,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             pool_size = _banned_headroom(pool_size, ban_i, ban_art)
             seed_ref = eng_iface.Ref(pool_i=i, label=labels[i])
             refs = active.similar(seed_ref, size=pool_size, style=style, variety=variety)
+            if mask is not None:
+                refs = [r for r in refs if mask[r.pool_i]]
             if ban_i or ban_art:
                 refs = [r for r in refs if r.pool_i not in ban_i
                         and (eng.artist[r.pool_i] or "").strip().lower() not in ban_art]
@@ -625,14 +761,21 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         flow = (request.args.get("flow") or "").lower() in ("1", "true", "on")
         _seed, picks = _with_weights(
             overrides, lambda: _build_mix(i, size, field, variety, flow,
-                                          bans=(ban_i, ban_art)))
+                                          bans=(ban_i, ban_art), mask=mask,
+                                          min_fit=min_fit, report=report))
         return [eng.idx[p] for p in picks]
 
     def _active_mix_tracks(i, size, field=None):
         """[seed_path] + pick paths, picks chosen by the ACTIVE engine (the same selection
         /api/mix returns). Export routes build their track list from this so the exported
-        m3u/Plex playlist matches the mix on screen regardless of engine."""
-        picks_i = _active_mix_indices(i, size, field)
+        m3u/Plex playlist matches the mix on screen regardless of engine. A collection
+        and a fit line on the request (?collection=, ?max=1) hold here too, so an export
+        built from the seed alone can never reach outside the collection either."""
+        mask, cinfo = _collection_arg()
+        min_fit = _fit_arg()
+        if _seed_outside(mask, i) is not None:
+            raise ValueError(f"the seed is not in the collection {cinfo['name']!r}")
+        picks_i = _active_mix_indices(i, size, field, mask=mask, min_fit=min_fit)
         return [eng.paths[i]] + [eng.paths[pi] for pi in picks_i]
 
     def _dedup_arg():
@@ -744,23 +887,35 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         if not (0 <= i < len(eng.paths)):
             return jsonify(error="unknown seed"), 404
         field = _dedup_arg()
-
         try:
-            picks_i = _active_mix_indices(i, size, field)
+            mask, cinfo = _collection_arg()
+            min_fit = _fit_arg()
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        if _seed_outside(mask, i) is not None:
+            return jsonify(error=f"the seed is not in the collection {cinfo['name']!r}"), 400
+
+        report = {}
+        try:
+            picks_i = _active_mix_indices(i, size, field, mask=mask, min_fit=min_fit,
+                                          report=report)
         except ValueError:
             return jsonify(error="bad request"), 400
         tracks = [{"i": pi, "label": labels[pi]} for pi in picks_i]
         ledger.record("mix", seed=labels[i], seed_i=i, n=len(tracks))
+        stop = _stop_info(report if not is_musicip else None, size, len(tracks), cinfo, min_fit)
 
         if is_musicip:
             style = min(max(int(request.args.get("style", MUSICIP_STYLE_DEFAULT)), 0), MUSICIP_STYLE_MAX)
             variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), MUSICIP_VARIETY_MAX)
             return jsonify(
-                seed=labels[i], seed_i=i, tracks=tracks, style=style, variety=variety)
+                seed=labels[i], seed_i=i, tracks=tracks, style=style, variety=variety,
+                stop=stop, collection=cinfo)
 
         overrides = _weight_overrides()
         effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
-        return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective)
+        return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective,
+                       stop=stop, collection=cinfo)
 
     @app.get("/api/radio/next")
     @_locked
@@ -818,15 +973,28 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             except ValueError:
                 return jsonify(error="bad request"), 400
 
+        # A collection and the fit line. Radio's seed is whatever is playing, which may
+        # sit outside the collection; only the songs it QUEUES must come from inside,
+        # and the mask holds that. Radio shares Create Mix's line: the variety and
+        # energy coins then choose among songs that fit, and when none is left the
+        # batch comes back empty with the reason, which is the radio ending.
+        try:
+            mask, cinfo = _collection_arg()
+            min_fit = _fit_arg()
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        report = {}
         overrides = _weight_overrides()
         try:
             refs = _with_weights(overrides, lambda: active.radio_next(
-                i, n=n, exclude=exclude, variety=variety, arc=arc, pos=pos, rng=rng))
+                i, n=n, exclude=exclude, variety=variety, arc=arc, pos=pos, rng=rng,
+                allowed=mask, min_fit=min_fit, report=report))
         except AttributeError:
             return jsonify(error=f"radio not supported by the '{active.name}' engine"), 501
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
+        stop = _stop_info(report, n, len(tracks), cinfo, min_fit)
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks,
-                       variety=variety, arc=arc, pos=pos)
+                       variety=variety, arc=arc, pos=pos, stop=stop, collection=cinfo)
 
     @app.get("/api/mix/blend")
     @_locked
@@ -850,8 +1018,21 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         for s in seeds:
             if not (0 <= s < len(eng.paths)):
                 return jsonify(error="unknown seed"), 404
+        # Blend is CLAP-only, so its line is the plain cosine to the seeds' centre
+        # (CLAP_LINE_DEFAULT unless min_fit= says otherwise). The seeds head the list
+        # the window shows, so every seed must sit inside the collection.
         try:
-            refs, cohesion = active.mix_multi(seeds, size=size)
+            mask, cinfo = _collection_arg()
+            min_fit = _fit_arg(clap_only=True)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        outside = _seed_outside(mask, *seeds)
+        if outside is not None:
+            return jsonify(error=f"{labels[outside]} is not in the collection {cinfo['name']!r}"), 400
+        report = {}
+        try:
+            refs, cohesion = active.mix_multi(seeds, size=size, allowed=mask,
+                                              min_fit=min_fit, report=report)
         except ValueError as e:
             return jsonify(error=str(e)), 400
         except AttributeError:
@@ -861,8 +1042,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
         ledger.record("blend", seeds=[labels[s] for s in seeds], n=len(tracks),
                       cohesion=round(cohesion, 3))
+        stop = _stop_info(report, size, len(tracks), cinfo, min_fit)
         return jsonify(seeds=[{"i": s, "label": labels[s]} for s in seeds],
-                       tracks=tracks, cohesion=cohesion)
+                       tracks=tracks, cohesion=cohesion, stop=stop, collection=cinfo)
 
     @app.get("/api/mix/adventure")
     @_locked
@@ -880,8 +1062,20 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error="bad request"), 400
         if not (0 <= a < len(eng.paths)) or not (0 <= b < len(eng.paths)):
             return jsonify(error="unknown seed"), 404
+        # Adventure is built to wander, so its line is per STOP (how close the chosen
+        # song sits to its waypoint), never against either end; see hybrid.adventure().
         try:
-            refs = active.adventure(a, b, size=size)
+            mask, cinfo = _collection_arg()
+            min_fit = _fit_arg(clap_only=True)
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        outside = _seed_outside(mask, a, b)
+        if outside is not None:
+            return jsonify(error=f"{labels[outside]} is not in the collection {cinfo['name']!r}"), 400
+        report = {}
+        try:
+            refs = active.adventure(a, b, size=size, allowed=mask, min_fit=min_fit,
+                                    report=report)
         except ValueError as e:
             return jsonify(error=str(e)), 400
         except AttributeError:
@@ -890,8 +1084,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error="unknown seed"), 404
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
         ledger.record("adventure", a=labels[a], b=labels[b], n=len(tracks))
+        # requested/returned count the STOPS between the two ends, which is what the
+        # line acts on; the two ends are always there.
+        stop = _stop_info(report, size - 2, len(tracks) - 2, cinfo, min_fit)
         return jsonify(a={"i": a, "label": labels[a]}, b={"i": b, "label": labels[b]},
-                       tracks=tracks)
+                       tracks=tracks, stop=stop, collection=cinfo)
 
     @app.post("/api/refine")
     @_locked
@@ -955,6 +1152,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         except (TypeError, ValueError) as e:
             return jsonify(error=str(e)), 400
 
+        # Steering is CLAP-only (a re-rank against the nudged vector), so its line is the
+        # plain cosine, like blend's. The body carries collection / max / min_fit the way
+        # the GET routes carry them on the query string.
+        try:
+            mask, cinfo = _collection_arg(data)
+            min_fit = _fit_arg(data, clap_only=True)
+        except (TypeError, ValueError) as e:
+            return jsonify(error=str(e)), 400
+        if _seed_outside(mask, i) is not None:
+            return jsonify(error=f"the seed is not in the collection {cinfo['name']!r}"), 400
+        report = {}
         try:
             # Artist votes STEER the query vector but are not excluded from the result.
             # Per-track votes keep their existing exclude semantics (you already have
@@ -967,15 +1175,18 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             # leaving the mix short (same rule as _banned_headroom on the /api/mix path).
             want = _banned_headroom(size, ban_i, ban_art)
             picks = eng.mix_from_vector(
-                q, size=want, exclude=[i] + liked + disliked + sorted(ban_i))
+                q, size=want, exclude=[i] + liked + disliked + sorted(ban_i),
+                allowed=mask, min_fit=min_fit, report=report)
             picks = _drop_banned(picks, ban_i, ban_art)[:size]
         except ValueError as e:
             return jsonify(error=str(e)), 400
 
+        stop = _stop_info(report, size, len(picks), cinfo, min_fit)
         return jsonify(
             seed=labels[i],
             seed_i=i,
             tracks=[{"i": eng.idx[p], "label": _label(eng, p)} for p in picks],
+            stop=stop, collection=cinfo,
         )
 
     @app.get("/api/explain")
@@ -1621,6 +1832,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     recipes = importlib.util.module_from_spec(rc_spec)
     rc_spec.loader.exec_module(recipes)
     recipes.register(app, {"db_path": db_path, "lib": lib, "cfg": cfgmod, "locked": _locked})
+
+    # ---- collections: a saved subset of the library to draw mixes from
+    # (collection.py). Files under <config_dir>/collections/, never a table in the
+    # library database. The resolver is handed back to the mix routes above through
+    # coll_holder, since they were defined before `lib` existed.
+    cl_spec = importlib.util.spec_from_file_location(
+        "attune_collection", os.path.join(HERE, "collection.py"))
+    collections_mod = importlib.util.module_from_spec(cl_spec)
+    cl_spec.loader.exec_module(collections_mod)
+    coll_holder["resolver"] = collections_mod.register(
+        app, {"cfgmod": cfgmod, "eng": eng, "lib": lib, "locked": _locked})
 
     # ---- structured logging, first slice (applog.py) -- AUDIT_FABLE_2026-07-28.md S2
     # item 9. Loaded here, before scanjob's registration, so the ScanJob instance gets

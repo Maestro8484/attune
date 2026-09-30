@@ -3,6 +3,35 @@
 All notable changes to Attune are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added (2026-09-30)
+
+- **Collections: draw a mix from a smaller set of your own songs.** Mix options now
+  has a **Draw from** choice: the full library, or a named collection you saved. Save
+  one from anything on screen (a search, a filter, a smart view, a playlist, a mix, or
+  the songs you have selected), up to 500 songs, with **Save what's on screen as a
+  collection**. Collections are listed in the side panel, where clicking a name shows
+  its songs and the star beside it makes it the source for the next mix. The pill in
+  the top bar always says which one the next mix draws from. A mix, Blend, Adventure,
+  Radio batch, steering re-rank or export made from a collection never contains a song
+  from outside it, and a song from outside it cannot be the seed. Collections are files
+  in Attune's own settings folder; the library itself is not touched.
+
+- **A mix stops when songs stop fitting.** The count you ask for is now a maximum, not
+  a quota: ask for 50 and you get the songs that fit, 12 if 12 fit, and none at all,
+  with the reason, if none do. The mix header says why it stopped in one sentence and
+  names the weakest song kept and the strongest one left out. The switch **Stop when
+  songs stop fitting** in Mix options is on by default; turn it off to get the old
+  behaviour, where the list is padded to the count with the nearest songs however
+  poor. **The line itself is provisional.** It starts at 0.70 (a song fits when its
+  score is at least seven tenths of a perfect twin's) for Create Mix and Radio, and
+  at 0.990 (plain sound closeness) for Blend, steering and Adventure. Both are
+  starting values chosen from the shape of the scores, not tuned to anything, and both
+  are yours to move in Mix options; where the line belongs is decided by ear.
+  Adventure treats it per stop: a stop with no song near enough to the path is left
+  out and the path is shorter, the two ends always kept.
+
 ## [0.1.2] - 2026-09-28
 
 ### Changed (2026-09-28)

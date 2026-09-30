@@ -27,6 +27,10 @@
     <option value="">Dials (manual)</option>
   </select>
 
+  <!-- Which songs the next mix may draw from. Always visible, so nobody has to remember
+       whether a collection is switched on; click to open Mix options and change it. -->
+  <span id="fromPill" class="pill" title="Which songs the next mix may draw from. Click to change.">from: Full library</span>
+
   <label class="field">
     <input id="mixSize" type="number" min="20" max="150" value="100" step="5" title="Mix length (20–150 tracks, or minutes)">
     <select id="sizeType" title="Mix length units — Minutes trims a 100-track mix to fit">
@@ -151,6 +155,24 @@
   <label class="chk" title="Purely a display filter — missing tracks stay in the
     library and in mixes either way">
     <input id="hideMissing" type="checkbox"> Hide missing files</label>
+
+  <!-- Collections and the fit line (2026-09-30). A collection is a saved subset of the
+       library the next mix may draw from; the fit line turns the asked-for count into a
+       maximum. Both are sent with every mix request like the dials are (mixParams()). -->
+  <div class="expsep">Draw from</div>
+  <label class="row"><span class="k">Collection</span>
+    <select id="collSel" title="Which songs the next mix may draw from: the whole library, or one saved collection">
+      <option value="">Full library</option>
+    </select></label>
+  <div class="btnrow">
+    <button id="btnCollSave" class="chip" title="Save the songs on screen (or the selected ones) as a new named collection, up to 500 songs">Save what's on screen as a collection…</button>
+    <button id="btnCollDelete" class="chip" hidden title="Delete the chosen collection. The songs stay in the library">Delete collection</button>
+  </div>
+  <label class="chk" title="On: a mix stops when the next-best song no longer fits, so asking for 50 can return 12, or none with a reason. Off: the count is a quota and the list is padded with the nearest songs however poor"><input id="fitMax" type="checkbox" checked> Stop when songs stop fitting (count is a maximum)</label>
+  <label class="row"><span class="k">Fit line <span class="tag">provisional</span></span>
+    <input id="fitLine" type="number" min="0" max="1" step="0.01" value="0.70" title="A song fits when its score is at least this fraction of a perfect twin's score under the current recipe. 0.70 is a starting value, not a tuned one; where the line belongs is judged by ear"></label>
+  <label class="row"><span class="k">Sound-alike line <span class="tag">provisional</span></span>
+    <input id="clapLine" type="number" min="0" max="1" step="0.001" value="0.990" title="The same idea for Blend, steering and Adventure, which compare sound alone: the closeness a song needs to its target, 1.000 being identical. 0.990 is a starting value"></label>
 
   <!-- Recipes: named presets for the sliders/toggles above. Hidden entirely under the
        MusicIP engine (recipes are v2-param shaped) -- see initRecipes() in studio.js. -->
@@ -322,6 +344,13 @@
             title="New auto-playlist">＋</span></li>
       </ul>
       <ul id="slList" class="tree pl"></ul>
+      <!-- Saved collections (2026-09-30): a named subset of the library to draw mixes
+           from. Click a name to see its songs; the star beside it makes it the source
+           for the next mix (the same choice as Mix options, Draw from). -->
+      <ul id="treeColl" class="tree">
+        <li class="grouphead" title="Saved subsets of your library that a mix can be drawn from">Collections</li>
+      </ul>
+      <ul id="collList" class="tree pl"></ul>
       <ul id="treeTail" class="tree">
         <li class="grouphead">Playlists <b id="plN">0</b></li>
         <li class="plFilterRow"><input id="plFilter" type="search" placeholder="Find a playlist"
@@ -357,6 +386,9 @@
         <span id="viewLabel">Library</span>
         <span id="viewSub" class="hint"></span>
         <span id="mixRecipeTag" class="pill" hidden></span>
+        <!-- One plain sentence on why the mix stopped where it did, from the server's own
+             account of the walk (2026-09-30). Empty and hidden on any other view. -->
+        <span id="mixStop" class="hint stopline" hidden></span>
         <span id="queueTools" hidden>
           <!-- Blend sits FIRST because it is the reason to open this view rather than
                just letting the queue play: it turns whatever is sitting here into the

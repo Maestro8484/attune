@@ -95,6 +95,7 @@ GUI_DATA = [
     ("web/exportjob.py",       "attune/web"),
     ("web/smartlists.py",      "attune/web"),
     ("web/recipes.py",         "attune/web"),
+    ("web/collection.py",      "attune/web"),   # saved collections, 2026-09-30
     ("web/libreload.py",       "attune/web"),
     ("web/libverify.py",       "attune/web"),
     ("web/applog.py",          "attune/web"),

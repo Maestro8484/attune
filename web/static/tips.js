@@ -23,6 +23,12 @@
     // top bar
     ['.brand', 'Attune: seed one song, get a playlist that sounds like it.'],
     ['#q', 'Search the whole library by title, artist, album or genre. Press / to jump here.'],
+    // Collections and the fit line, 2026-09-30
+    ['#fromPill', 'Which songs the next mix may draw from: the whole library or one saved collection. Click to change it in Mix options.'],
+    ['#mixStop', 'Why this mix stopped where it did: all asked for, stopped short at the fit line, or nothing fit. The line is provisional until it has been judged by ear.'],
+    ['#collList li[data-cid]', 'A saved collection. Click the name to see its songs; click the star to draw the next mix from it.'],
+    ['#collList .cuse', 'Draw the next mix from this collection.'],
+    ['#treeColl .grouphead', 'Saved subsets of your library. Make one from Mix options: Save what is on screen as a collection.'],
     // Mix options panel
     ['#optionsPanel .poptitle', 'How a new mix is picked. These settings apply to the next Create Mix.'],
     ['#optionsPanel .engineRow, #engineName', 'The mixing engine in use. Change it in Preferences, Mixing.'],

@@ -199,7 +199,26 @@ function mixParams() {
   // contain commas ("Earth, Wind & Fire") and the server splits `ban` on commas.
   for (const i of S.ban) p.append('ban', i);
   for (const a of S.banArtists) p.append('ban_artist', a);
+  // The collection the mix may draw from, and the fit line (2026-09-30). `max` on
+  // means the count is a maximum; absent, the server keeps its old quota behaviour,
+  // which is what the regression gate sends.
+  for (const [k, v] of Object.entries(fitParams())) p.set(k, v);
   return p;
+}
+
+/* Collection + fit-line request fields, shared by every mix kind (Create Mix, Blend,
+   Adventure, steering, Radio). clapOnly picks the sound-alike line for the CLAP-only
+   kinds. Returns a plain object so both a querystring and a JSON body can carry it. */
+function fitParams(clapOnly) {
+  const out = {};
+  if (curCollection) out.collection = curCollection;
+  if ($('fitMax').checked) {
+    out.max = '1';
+    const raw = clapOnly ? $('clapLine').value : $('fitLine').value;
+    const v = parseFloat(raw);
+    if (!Number.isNaN(v)) out.min_fit = String(Math.min(1, Math.max(0, v)));
+  }
+  return out;
 }
 function facetQS() {
   const p = new URLSearchParams();
@@ -360,6 +379,163 @@ function bindRecipeEvents() {
   $('btnRecipeRename').onclick = renameRecipe;
   $('btnRecipeDelete').onclick = deleteRecipe;
   $('btnRecipeSetDefault').onclick = setDefaultRecipe;
+}
+
+/* ------------------------------------------------------------------ collections
+   A collection is a saved subset of the library the next mix may draw from
+   (web/collections.py: one JSON file per collection in the app's settings folder,
+   never a table in the library). The chosen collection is remembered in this browser
+   like the recipe is, and sent with every mix request by fitParams(); the server
+   holds no "current collection". The pill in the top bar always says which one feeds
+   the next mix, so nobody has to remember. */
+let COLLECTIONS = [];          // [{id,name,size,missing}] from /api/collection/list
+let curCollection = store.get('collection', '') || '';   // '' = the full library
+const COLLECTION_MAX = 500;    // what "save what's on screen" takes at most
+
+async function loadCollections() {
+  try {
+    const j = await jget('/api/collection/list');
+    COLLECTIONS = j.collections || [];
+  } catch (e) { COLLECTIONS = []; }
+  if (curCollection && !COLLECTIONS.some(c => c.id === curCollection)) curCollection = '';
+  paintCollections();
+}
+
+function findCollection(id) { return COLLECTIONS.find(c => c.id === id); }
+
+function paintCollections() {
+  const sel = $('collSel');
+  sel.innerHTML = '<option value="">Full library</option>' + COLLECTIONS.map(c =>
+    `<option value="${esc(c.id)}">${esc(c.name)} (${fmt(c.size)})</option>`).join('');
+  sel.value = curCollection;
+  $('btnCollDelete').hidden = !curCollection;
+  $('collList').innerHTML = COLLECTIONS.map(c =>
+    `<li data-cid="${esc(c.id)}" class="${c.id === curCollection ? 'src' : ''}" title="${esc(c.name)}: ${fmt(c.size)} songs${c.missing ? ', ' + c.missing + ' no longer in the library' : ''}">
+       <span class="ti">▣</span>${esc(c.name)} <b>${fmt(c.size)}</b>
+       <span class="cuse" data-cid="${esc(c.id)}" title="Draw the next mix from this collection">✦</span></li>`).join('')
+    || '<li class="empty-tree hint">No collections yet</li>';
+  paintFromPill();
+}
+
+function paintFromPill() {
+  const c = curCollection ? findCollection(curCollection) : null;
+  const pool = c ? c.size : ((S.stats && S.stats.songs) || 0);
+  const name = c ? c.name : 'Full library';
+  const el = $('fromPill');
+  el.textContent = `from: ${name} (${fmt(pool)})`;
+  el.classList.toggle('coll', !!c);
+}
+
+function selectCollection(id, { persist = true } = {}) {
+  curCollection = id && findCollection(id) ? id : '';
+  $('collSel').value = curCollection;
+  if (persist) store.set('collection', curCollection);
+  $('btnCollDelete').hidden = !curCollection;
+  document.querySelectorAll('#collList li[data-cid]').forEach(l =>
+    l.classList.toggle('src', l.dataset.cid === curCollection));
+  paintFromPill();
+  const c = findCollection(curCollection);
+  toast(c ? `Next mix draws from ${c.name} (${fmt(c.size)} songs)` : 'Next mix draws from the full library');
+}
+
+/* The songs "on screen", as pool indices: the selection if there is one, else the
+   whole list of the current view. The library and smart views are paged, so those
+   are re-fetched at the collection cap with the same filters the page was built with;
+   a filter with more songs than the cap keeps the first COLLECTION_MAX and says so. */
+async function currentScreenIds() {
+  const sel = selectedIds();
+  if (sel.length) return { ids: sel, total: sel.length, what: `${sel.length} selected songs` };
+  if (S.view === 'mix') return { ids: S.mix.slice(), total: S.mix.length, what: 'this mix' };
+  if (S.view === 'nowplaying') {
+    const q = Player.q.filter(i => i >= 0);
+    return { ids: q, total: q.length, what: 'the queue' };
+  }
+  if (S.view === 'smartlist' && S._slIds) return { ids: S._slIds.slice(), total: S._slIds.length, what: 'this auto-playlist' };
+  if (S.view === 'collection' && S._collIds) return { ids: S._collIds.slice(), total: S._collIds.length, what: 'this collection' };
+  if (S.view === 'playlist' || S.view === 'folder' || S.view === 'failures') {
+    const ids = S.rows.filter(r => r.i >= 0).map(r => r.i);
+    return { ids, total: ids.length, what: 'this list' };
+  }
+  // library / smart view: the same request loadLibrary makes, at the cap
+  const p = facetQS();
+  if (S.smart) p.set('smart', S.smart);
+  applySortParams(p);
+  p.set('offset', 0); p.set('limit', COLLECTION_MAX);
+  const j = await jget('/api/lib/tracks?' + p);
+  const ids = (j.rows || []).filter(r => r.i >= 0).map(r => r.i);
+  return { ids, total: j.total, what: S.smart ? SMART_LABELS[S.smart] : 'the library as filtered' };
+}
+
+async function saveCollectionFromScreen() {
+  let got;
+  try { got = await currentScreenIds(); } catch (e) { return toast(e.message, true); }
+  let ids = [...new Set(got.ids)];
+  if (!ids.length) return toast('Nothing on screen to save', true);
+  let note = '';
+  if (ids.length > COLLECTION_MAX) { note = ` (first ${COLLECTION_MAX} of ${fmt(got.total)})`; ids = ids.slice(0, COLLECTION_MAX); }
+  const name = prompt(`Name for this collection: ${ids.length} songs from ${got.what}${note}`, '');
+  if (name == null || !name.trim()) return;
+  try {
+    const j = await jpost('/api/collection/save', { name: name.trim(), ids });
+    await loadCollections();
+    selectCollection(j.id);
+  } catch (e) { toast(e.message, true); }
+}
+
+async function deleteCollection() {
+  const c = findCollection(curCollection);
+  if (!c) return;
+  if (!confirm(`Delete the collection "${c.name}"? The songs stay in your library.`)) return;
+  try {
+    await jpost('/api/collection/delete', { id: c.id });
+    curCollection = ''; store.set('collection', '');
+    await loadCollections();
+    toast(`Deleted ${c.name}. Next mix draws from the full library`);
+  } catch (e) { toast(e.message, true); }
+}
+
+/* Open a collection as a list, the way an auto-playlist opens. */
+async function openCollection(id) {
+  S.view = 'collection'; S._collId = id; S.smart = ''; S.folder = null;
+  document.querySelectorAll('#tree li, #plList li, #folderTree li, #slList li').forEach(l => l.classList.remove('on'));
+  document.querySelectorAll('#collList li').forEach(l => l.classList.toggle('on', l.dataset.cid === id));
+  $('btnBackLib').hidden = false; $('pager').innerHTML = ''; $('queueTools').hidden = true;
+  try {
+    const j = await jget('/api/collection/open?id=' + encodeURIComponent(id));
+    S._collIds = j.ids || [];
+    renderRows(j.rows);
+    $('viewLabel').textContent = j.name;
+    $('viewSub').textContent = `${fmt(j.total)} songs in this collection` +
+      (j.missing ? ` · ${j.missing} no longer in the library` : '') +
+      (j.total > j.rows.length ? ` · showing first ${j.rows.length}` : '') +
+      (curCollection === id ? ' · feeding the next mix' : '');
+  } catch (e) { toast(e.message, true); }
+}
+
+async function initCollections() {
+  const isMip = S.stats && S.stats.engine === 'musicip';
+  // the fit line needs a score; the MusicIP engine exposes none, so the switch is
+  // hidden there and only the collection choice stays
+  $('fitMax').checked = store.get('fitMax', true) !== false;
+  const fl = store.get('fitLine', null); if (fl != null) $('fitLine').value = fl;
+  const cl = store.get('clapLine', null); if (cl != null) $('clapLine').value = cl;
+  for (const id of ['fitMax', 'fitLine', 'clapLine']) {
+    $(id).closest('label').hidden = !!isMip;
+  }
+  await loadCollections();
+  $('collSel').addEventListener('change', () => selectCollection($('collSel').value));
+  $('btnCollSave').onclick = saveCollectionFromScreen;
+  $('btnCollDelete').onclick = deleteCollection;
+  $('fitMax').addEventListener('change', () => store.set('fitMax', $('fitMax').checked));
+  $('fitLine').addEventListener('change', () => store.set('fitLine', $('fitLine').value));
+  $('clapLine').addEventListener('change', () => store.set('clapLine', $('clapLine').value));
+  $('fromPill').onclick = () => $('btnOptions').click();
+  $('collList').addEventListener('click', e => {
+    const use = e.target.closest('.cuse');
+    if (use) { e.stopPropagation(); selectCollection(use.dataset.cid); return; }
+    const li = e.target.closest('li[data-cid]');
+    if (li) openCollection(li.dataset.cid);
+  });
 }
 
 /* Boot-time recipe setup. Order per spec: a stored selection wins, then the
@@ -541,6 +717,8 @@ function initColResize() {
    grid or the Diagnostics panel (setTableMode()/showDiagnostics(), below) self-heals
    through ANY of those paths, without every caller needing to know grid/Diagnostics exist. */
 function renderRows(rows, opts = {}) {
+  // the "why it stopped" sentence belongs to the mix view only
+  if (S.view !== 'mix') { const st = $('mixStop'); if (st) st.hidden = true; }
   document.querySelector('#tbl').hidden = false;
   $('albumGrid').hidden = true;
   $('tableWrap').classList.remove('gridmode');
@@ -1177,6 +1355,8 @@ async function doMix(seedI, opts) {
     let ids = (j.tracks || []).map(x => x.i).filter(i => i !== seedI);
     S.seed = seedI;
     S.liked = []; S.disliked = [];
+    S.stop = j.stop || null;                 // why it stopped where it did (one sentence)
+    noteStop(j.stop);
     if (byMinutes) {
       const rows = await jget('/api/lib/rows?' + [seedI, ...ids].map(i => `i=${i}`).join('&'));
       const sec = new Map(rows.rows.map(r => [r.i, r.seconds]));
@@ -1191,11 +1371,22 @@ async function doMix(seedI, opts) {
       ids = kept;
       if (!ids.length) toast('No tracks fit that time budget', true);
     }
-    S.mix = [seedI, ...ids];
+    // Nothing fit: an EMPTY playlist and the reason (shown by showMix), not the seed
+    // alone dressed up as a one-song mix.
+    S.mix = ids.length ? [seedI, ...ids] : [];
     $('mixN').textContent = S.mix.length;
     await showMix();
   } catch (e) { toast(e.message, true); }
   finally { $('btnMix').disabled = false; }
+}
+
+/* Say it once, out loud, when a list came back shorter than asked for or empty. The
+   full sentence stays on the mix header (#mixStop) for as long as the mix is open. */
+function noteStop(stop) {
+  if (!stop || !stop.sentence) return;
+  if (['fit', 'none_fit', 'empty', 'exhausted', 'trimmed'].includes(stop.reason)) {
+    toast(stop.sentence, stop.reason === 'none_fit' || stop.reason === 'empty');
+  }
 }
 
 /* Blend: 2+ selected rows -> a mix that sounds like ALL of them (ruling A1, an
@@ -1222,13 +1413,16 @@ async function doBlend(seedIds, sourceLabel) {
   const p = new URLSearchParams();
   seedIds.forEach(i => p.append('i', i));
   p.set('size', Math.max(20, Math.min(150, +$('mixSize').value || 100)));
+  for (const [k, v] of Object.entries(fitParams(true))) p.set(k, v);
   try {
     const j = await jget('/api/mix/blend?' + p);
     S.seed = seedIds[0];
     S.liked = []; S.disliked = [];
+    S.stop = j.stop || null;
     const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
-    S.mix = [...seedIds, ...ids];
+    S.mix = ids.length ? [...seedIds, ...ids] : [];
     $('mixN').textContent = S.mix.length;
+    noteStop(j.stop);
     const c = j.cohesion;
     const from = sourceLabel ? ` from the ${sourceLabel}` : '';
     const cut = dropped ? ` · used the first ${seedIds.length}, ignored ${dropped}` : '';
@@ -1268,13 +1462,16 @@ async function doAdventure(seedIds) {
   S.banLabel = {};
   const p = new URLSearchParams({ a: seedIds[0], b: seedIds[1],
     size: Math.max(3, Math.min(100, +$('mixSize').value || 25)) });
+  for (const [k, v] of Object.entries(fitParams(true))) p.set(k, v);
   try {
     const j = await jget('/api/mix/adventure?' + p);
     S.seed = seedIds[0];
     S.liked = []; S.disliked = [];
+    S.stop = j.stop || null;
     S.mix = (j.tracks || []).map(x => x.i);
     $('mixN').textContent = S.mix.length;
     toast(`Adventure: ${j.a.label} → ${j.b.label}`);
+    noteStop(j.stop);
     await showMix();
   } catch (e) { toast(e.message, true); }
 }
@@ -1340,7 +1537,18 @@ async function showMix(opts = {}) {
   const recipeTag = $('mixRecipeTag');
   if (curRecipe) { recipeTag.textContent = '✦ ' + curRecipe; recipeTag.hidden = false; }
   else recipeTag.hidden = true;
-  if (!S.mix.length) { renderRows([]); return; }
+  // Why the list stopped where it did, in the server's one sentence. Shown on every
+  // mix, so a full list says "all 50" and a short one says which song sat below the
+  // line; an empty one is the whole view.
+  const stopEl = $('mixStop');
+  stopEl.textContent = (S.stop && S.stop.sentence) || '';
+  stopEl.hidden = !stopEl.textContent;
+  stopEl.classList.toggle('short', !!(S.stop && ['fit', 'none_fit', 'empty', 'exhausted'].includes(S.stop.reason)));
+  if (!S.mix.length) {
+    renderRows([]);
+    $('viewSub').textContent = '0 tracks';      // the sentence is on #mixStop beside it
+    return;
+  }
   const j = await jget('/api/lib/rows?' + S.mix.map(i => `i=${i}`).join('&'));
   const byI = new Map(j.rows.map(r => [r.i, r]));
   const rows = S.mix.map(i => byI.get(i)).filter(Boolean);
@@ -2315,8 +2523,12 @@ async function refine(focusI, msg) {
       // reappear the moment you vote on something else
       ban: S.ban, ban_artist: S.banArtists,
       liked_artists: S.likedArtists, disliked_artists: S.dislikedArtists,
+      // the collection and the sound-alike line travel too (steering is CLAP-only)
+      ...fitParams(true),
     });
     const ids = (j.tracks || []).map(x => x.i);
+    S.stop = j.stop || null;
+    noteStop(j.stop);
     // Compose: seed, then the liked ANCHORS pinned in the order they were liked, then
     // the server's re-ranked picks. The server excludes liked/disliked from its list
     // (you already have the liked ones — they are pinned, not re-suggested).
@@ -3071,6 +3283,11 @@ async function initCore() {
   // /api/recipe/list costs the recipe select, never the library or the player.
   try { await initRecipes(); }
   catch (e) { console.error('[core] recipes', e); }
+
+  // Collections and the fit line, isolated the same way: a failed
+  // /api/collection/list costs the chooser, never the library or the player.
+  try { await initCollections(); }
+  catch (e) { console.error('[core] collections', e); }
 
   // #flavor and #copyLayout start from the SAVED settings now (contract F1/F3) --
   // this replaces the localStorage-only flavor restore that used to run inline in

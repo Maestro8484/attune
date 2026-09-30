@@ -196,7 +196,10 @@ const Player = (() => {
       // ride the same mix dials (weights) Auto-DJ/Create Mix use -- never re-parsed here.
       if (typeof mixParams === 'function') {
         const mp = mixParams();
-        for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) {
+        // the dials, plus the collection and the fit line (2026-09-30): radio queues
+        // only from the chosen collection and only songs that fit, and ends when
+        // nothing else does
+        for (const k of ['clap', 'lib', 'genre', 'bpm', 'era', 'collection', 'max', 'min_fit']) {
           if (mp.has(k)) p.set(k, mp.get(k));
         }
       }
@@ -208,6 +211,10 @@ const Player = (() => {
         P.radioPos += fresh.length; store.set('radioPos', P.radioPos);
         paintTransport(); persist();
         if (S.view === 'nowplaying') showNowPlaying();
+      } else if (j.stop && j.stop.sentence && j.stop.sentence !== P._radioSaid) {
+        // say it once per reason, not on every tick of the queue watcher
+        P._radioSaid = j.stop.sentence;
+        toast('Radio has nothing more to add. ' + j.stop.sentence, true);
       }
     } catch { /* engine hiccup — try again on the next tick */ }
     finally { P.djBusy = false; }

@@ -36,6 +36,27 @@ import numpy as np
 # term remains available (set "key">0) now that _key_compat is correct, but ships off.
 DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1, "key": 0.0}
 
+# The fit line: the count becomes a MAXIMUM, not a quota, when a walk is given `min_fit`.
+# Both values are PROVISIONAL starting points (LAW 1: where "fits" ends is judged by ear,
+# never by a retrieval number). They are NOT tuned. They are applied on top of the scores
+# above, which are computed exactly as before.
+#
+#   FIT_LINE_DEFAULT  applies to the weighted walks (mix, radio): fit is the candidate's
+#                     score divided by the seed's own score against itself, so 1.0 is a
+#                     perfect twin under the active weights and the line means the same
+#                     thing under every recipe. Measured 2026-09-30 over the 21,215-track
+#                     library (audit-collections/harness/score_shape.txt): the median seed's
+#                     50th-best song sits at 0.74 and its 500th at 0.64; the pool's 99th
+#                     percentile is 0.68. A line at 0.70 keeps roughly the top 100.
+#   CLAP_LINE_DEFAULT applies to the CLAP-only walks (blend, steering, adventure), where
+#                     the number is the plain cosine. Same measurement: the CLAP cosines
+#                     of a whole library sit between about 0.88 and 1.00, and a seed's
+#                     best and 500th-best differ by 0.005, so this line has little to bite
+#                     on. That is a finding about the stored vectors, reported in
+#                     ISSUES.md, not something this file changes.
+FIT_LINE_DEFAULT = 0.70
+CLAP_LINE_DEFAULT = 0.99
+
 # Krumhansl-Schmuckler key profiles (major / minor) for key estimation from chroma.
 _KRUM_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
 _KRUM_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
@@ -351,30 +372,94 @@ class HybridEngine:
         hits = [p for p in self.paths if os.path.basename(p).lower() == base]
         return hits[0] if len(hits) == 1 else None
 
-    def mix(self, seed, size=25, artist_spacing=3):
-        # GOTCHA (do not "fix" without a human ear test first -- shipped behavior):
-        # a candidate skipped below for violating artist_spacing is dropped for good,
-        # not deferred/retried later in this single pass -- see eval/harness.py's
-        # mix_rank_array() for a fuller writeup of the consequence.
-        canon = self.resolve(seed)
-        if canon is None:
-            return None
-        si = self.idx[canon]
-        order = np.argsort(-self._score(si))
+    def _walk(self, order, scores, size, artist_spacing, excl, allowed=None, min_fit=None,
+              ceiling=1.0, report=None, coin=None):
+        """The one best-first walk every list in this engine is built by.
+
+        `order` is pool indices best-first, `scores` the number each was ranked by.
+        Candidates in `excl` are skipped. With `allowed` (a boolean array over the pool,
+        the collection mask), a candidate outside it is skipped and the pool the walk
+        reports is the mask's size, not the library's (LAW 3). A candidate whose fit
+        (score / ceiling) is below `min_fit` ENDS the walk: the order is best-first, so
+        everything after it is below the line too. That is what makes the count a
+        maximum instead of a quota. Without `min_fit` the walk is exactly the loop
+        mix() has always run, and the byte-identical regression gate holds it there.
+
+        `coin(j)`, when given, is radio's variety and energy-corridor thinning: it says
+        whether to keep candidate j, and runs AFTER the line check so the coins only
+        ever choose among songs that fit.
+
+        GOTCHA (do not "fix" without a human ear test first -- shipped behavior): a
+        candidate skipped for violating artist_spacing is dropped for good, not
+        deferred/retried later in this single pass -- see eval/harness.py's
+        mix_rank_array() for a fuller writeup of the consequence.
+
+        `report`, an optional dict, is filled with why the walk stopped and what sat on
+        each side of the line, for the window to say in one sentence:
+          stopped:        'size' (asked-for count reached), 'fit' (the next-best song sat
+                          below the line), 'exhausted' (the pool ran out)
+          pool:           how many songs the walk could choose from
+          weakest_kept:   (pool index, fit) of the last song taken
+          strongest_left: (pool index, fit) of the best song the line kept out
+          fit:            {pool index: fit} for every song taken
+        """
         out, recent = [], []
+        fit_of = {}
+        stopped = "exhausted"
+        strongest_left = None
         for j in order:
-            if j == si:
+            j = int(j)
+            if j in excl:
+                continue
+            if allowed is not None and not allowed[j]:
+                continue
+            if min_fit is not None:
+                fit = float(scores[j]) / ceiling
+                if fit < min_fit:
+                    strongest_left = (j, fit)
+                    stopped = "fit"
+                    break
+            if coin is not None and not coin(j, len(out)):
                 continue
             a = self.artist[j]
             if a and a in recent[-artist_spacing:]:
                 continue
             out.append(self.paths[j]); recent.append(a)
+            if min_fit is not None:
+                fit_of[j] = float(scores[j]) / ceiling
             if len(out) >= size:
+                stopped = "size"
                 break
+        if report is not None:
+            report.update({
+                "stopped": stopped,
+                "pool": int(allowed.sum()) if allowed is not None else len(self.paths),
+                "line": min_fit, "ceiling": float(ceiling),
+                "weakest_kept": ((self.idx[out[-1]], fit_of[self.idx[out[-1]]])
+                                 if out and min_fit is not None else None),
+                "strongest_left": strongest_left,
+                "fit": fit_of,
+            })
         return out
 
+    def mix(self, seed, size=25, artist_spacing=3, allowed=None, min_fit=None, report=None):
+        """Best-first playlist for one seed. See _walk() for `allowed` (a collection
+        mask), `min_fit` (the count becomes a maximum) and `report` (why it stopped).
+        With neither, this is the walk that has shipped since V2, unchanged."""
+        canon = self.resolve(seed)
+        if canon is None:
+            return None
+        si = self.idx[canon]
+        s = self._score(si)
+        order = np.argsort(-s)
+        # The seed's own score against itself is the best any song could do under the
+        # active weights, so fit = score / that is 1.0 for a perfect twin.
+        ceiling = float(s[si]) if min_fit is not None and s[si] > 1e-9 else 1.0
+        return self._walk(order, s, size, artist_spacing, {si}, allowed=allowed,
+                          min_fit=min_fit, ceiling=ceiling, report=report)
+
     def radio_next(self, seed, n=20, exclude=None, variety=0.0, artist_spacing=3,
-                   arc="flat", pos=0, rng=None):
+                   arc="flat", pos=0, rng=None, allowed=None, min_fit=None, report=None):
         """Journey/Radio mode: one batch of the next `n` tracks for an infinite queue,
         stateless (caller tracks `exclude` + `pos` across calls).
 
@@ -412,7 +497,8 @@ class HybridEngine:
         if canon is None:
             return None
         si = self.idx[canon]
-        order = np.argsort(-self._score(si))
+        s = self._score(si)
+        order = np.argsort(-s)
         rng = rng if rng is not None else np.random.default_rng()
 
         excl = {si}
@@ -440,28 +526,26 @@ class HybridEngine:
             # hold at the seed's own energy, or the corridor midpoint if unknown.
             return seed_energy if not np.isnan(seed_energy) else mid
 
-        out, recent = [], []
-        for j in order:
-            j = int(j)
-            if j in excl:
-                continue
-            if variety > 0:
-                if rng.random() >= p_variety:
-                    continue                      # variety coin: permanent skip, no lookback
-                ej = self.energy[j]
-                if not np.isnan(ej):
-                    target = _target(pos + len(out))
-                    z = (ej - target) / self.ARC_SIGMA
-                    accept_prob = float(np.exp(-0.5 * z * z))
-                    if rng.random() >= accept_prob:
-                        continue                  # corridor coin: also a permanent skip
-            a = self.artist[j]
-            if a and a in recent[-artist_spacing:]:
-                continue
-            out.append(self.paths[j]); recent.append(a)
-            if len(out) >= n:
-                break
-        return out
+        # The two coins, as a keep/skip test the shared walk runs per candidate. `taken`
+        # is how many this call has accepted so far, handed in by the walk, so the arc
+        # phases exactly as the inline loop did with len(out).
+        def coin(j, taken):
+            if variety <= 0:
+                return True
+            if rng.random() >= p_variety:
+                return False                      # variety coin: permanent skip, no lookback
+            ej = self.energy[j]
+            if not np.isnan(ej):
+                target = _target(pos + taken)
+                z = (ej - target) / self.ARC_SIGMA
+                accept_prob = float(np.exp(-0.5 * z * z))
+                if rng.random() >= accept_prob:
+                    return False                  # corridor coin: also a permanent skip
+            return True
+
+        ceiling = float(s[si]) if min_fit is not None and s[si] > 1e-9 else 1.0
+        return self._walk(order, s, n, artist_spacing, excl, allowed=allowed,
+                          min_fit=min_fit, ceiling=ceiling, report=report, coin=coin)
 
     # ------------------------------------------------------------------
     # Relevance-feedback / re-ranking helpers (additive; V2's mix()/_score()
@@ -488,11 +572,14 @@ class HybridEngine:
         n = np.linalg.norm(v)
         return v / n if n > 1e-9 else v
 
-    def mix_from_vector(self, q, size=25, artist_spacing=3, exclude=None):
+    def mix_from_vector(self, q, size=25, artist_spacing=3, exclude=None, allowed=None,
+                        min_fit=None, report=None):
         """Rank the pool by cosine similarity to an arbitrary CLAP-space query vector
         `q` (e.g. a Rocchio-refined vector from refine()), instead of a library seed.
         Same top-K + artist-spacing behaviour as mix(). `exclude` is an optional
-        iterable of paths/indices to drop from the results (e.g. tracks already shown)."""
+        iterable of paths/indices to drop from the results (e.g. tracks already shown).
+        `allowed`, `min_fit`, `report`: see _walk(). Here fit is the plain cosine (the
+        query is a unit vector, so a perfect twin scores 1.0)."""
         qn = self._unit(q)
         if np.linalg.norm(qn) < 1e-9:
             raise ValueError("zero query vector")
@@ -503,18 +590,8 @@ class HybridEngine:
             ei = self._as_index(e)
             if ei is not None:
                 excl.add(ei)
-        out, recent = [], []
-        for j in order:
-            j = int(j)
-            if j in excl:
-                continue
-            a = self.artist[j]
-            if a and a in recent[-artist_spacing:]:
-                continue
-            out.append(self.paths[j]); recent.append(a)
-            if len(out) >= size:
-                break
-        return out
+        return self._walk(order, s, size, artist_spacing, excl, allowed=allowed,
+                          min_fit=min_fit, ceiling=1.0, report=report)
 
     def refine(self, seed_or_vec, liked_idx=None, disliked_idx=None, alpha=1.0, beta=0.75):
         """Rocchio relevance feedback: q' = alpha*q0 + beta*mean(liked) - beta*mean(disliked),
@@ -545,7 +622,8 @@ class HybridEngine:
             q = q - beta * self.X[disliked].mean(axis=0)
         return self._unit(q)
 
-    def mix_multi(self, seeds, size=25, artist_spacing=3):
+    def mix_multi(self, seeds, size=25, artist_spacing=3, allowed=None, min_fit=None,
+                  report=None):
         """Blend mix: rank the pool against the unit-mean of 2+ seeds' CLAP rows --
         refine()'s liked-centroid math with no starting seed -- via the same
         mix_from_vector() walk. Returns (paths, cohesion). `cohesion` is the seeds'
@@ -567,17 +645,27 @@ class HybridEngine:
         n = len(idxs)
         cohesion = float((sims.sum() - np.trace(sims)) / (n * (n - 1)))
         picks = self.mix_from_vector(V.mean(axis=0), size=size,
-                                     artist_spacing=artist_spacing, exclude=idxs)
+                                     artist_spacing=artist_spacing, exclude=idxs,
+                                     allowed=allowed, min_fit=min_fit, report=report)
         return picks, cohesion
 
-    def adventure(self, a, b, size=25, artist_spacing=3):
+    def adventure(self, a, b, size=25, artist_spacing=3, allowed=None, min_fit=None,
+                  report=None):
         """Ordered path FROM a TO b: normalized-lerp waypoints along the CLAP-space
         segment between the two seeds, each snapped to the nearest not-yet-used
         track (mix_from_vector over a shortlist). Returns the full ordered path
         INCLUDING both endpoints; monotone because the waypoints are. Deterministic
         for (a, b, size). Artist spacing cannot ride mix_from_vector's own walk
         across separate size=1 calls (each call starts a fresh `recent`), so it is
-        enforced here over the accumulating path instead."""
+        enforced here over the accumulating path instead.
+
+        Adventure is built to wander: the middle songs are MEANT to be unlike both
+        ends, so a fit line against either seed would be the wrong shape. What can
+        fit or not fit is each STOP: how close the snapped song sits to its waypoint
+        (cosine, 1.0 = exactly on the line between the two). With `min_fit` a stop
+        whose nearest song is below the line is left out and the path has one fewer
+        stop, instead of being padded with whatever was nearest however far. The two
+        endpoints are always kept. `allowed` restricts the middle to a collection."""
         ia, ib = self._as_index(a), self._as_index(b)
         if ia is None or ib is None:
             return None
@@ -588,9 +676,11 @@ class HybridEngine:
         vb = self.X[ib].astype(np.float64)
         used, middle = [ia, ib], []
         recent = [self.artist[ia]]
+        skipped, strongest_left, fit_of = 0, None, {}
         for t in np.linspace(0.0, 1.0, size)[1:-1]:
-            cands = self.mix_from_vector((1.0 - t) * va + t * vb,
-                                         size=artist_spacing + 1, exclude=used)
+            wp = (1.0 - t) * va + t * vb
+            cands = self.mix_from_vector(wp, size=artist_spacing + 1, exclude=used,
+                                         allowed=allowed)
             pick = None
             for p in cands:
                 pa = self.artist[self.idx[p]]
@@ -601,9 +691,27 @@ class HybridEngine:
                 if not cands:
                     break
                 pick = cands[0]
+            if min_fit is not None:
+                fit = float(self.X[self.idx[pick]] @ self._unit(wp))
+                if fit < min_fit:
+                    skipped += 1
+                    if strongest_left is None or fit > strongest_left[1]:
+                        strongest_left = (self.idx[pick], fit)
+                    continue                       # this stop has no song near enough
+                fit_of[self.idx[pick]] = fit
             middle.append(pick)
             used.append(self.idx[pick])
             recent.append(self.artist[self.idx[pick]])
+        if report is not None:
+            weakest = min(fit_of.items(), key=lambda kv: kv[1]) if fit_of else None
+            report.update({
+                "stopped": "fit" if skipped else "size",
+                "pool": int(allowed.sum()) if allowed is not None else len(self.paths),
+                "line": min_fit, "ceiling": 1.0,
+                "skipped_stops": skipped,
+                "weakest_kept": weakest, "strongest_left": strongest_left,
+                "fit": fit_of,
+            })
         return [self.paths[ia]] + middle + [self.paths[ib]]
 
     def mmr(self, candidates, k=None, lambda_=0.5, query=None):

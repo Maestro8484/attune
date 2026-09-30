@@ -206,6 +206,19 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 .poptitle { font-weight:600; display:flex; justify-content:space-between; align-items:center; }
 .pill { background:var(--panel2); border:1px solid var(--line); border-radius:99px;
   padding:1px 8px; font-size:11px; color:var(--muted); }
+/* collections and the fit line, 2026-09-30 */
+#fromPill { cursor:pointer; white-space:nowrap; }
+#fromPill.coll { color:var(--fg); border-color:var(--accent); }
+#mixStop.stopline { max-width:560px; white-space:normal; }
+#mixStop.short { color:var(--accent); }
+#collList li { color:var(--muted); font-size:12px; justify-content:space-between; }
+#collList li.on { color:var(--fg); background:var(--sel); }
+#collList li.src { color:var(--fg); }
+#collList li .ti { color:var(--accent); }
+#collList li b { color:var(--dim); font-weight:normal; margin-left:auto; padding-right:4px; }
+#collList li .cuse { color:var(--dim); opacity:0; padding:0 4px; }
+#collList li:hover .cuse, #collList li.src .cuse { opacity:1; }
+#collList li.src .cuse, #collList li .cuse:hover { color:var(--accent); }
 .slider { display:flex; flex-direction:column; gap:3px; }
 .slider .k { display:flex; justify-content:space-between; color:var(--muted); font-size:12px; }
 .slider .k em { font-style:normal; color:var(--fg); font-variant-numeric:tabular-nums; }
