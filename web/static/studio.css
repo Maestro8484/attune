@@ -209,7 +209,10 @@ b { font-weight:600; color:var(--muted); font-size:11px; }
 /* collections and the fit line, 2026-09-30 */
 #fromPill { cursor:pointer; white-space:nowrap; }
 #fromPill.coll { color:var(--fg); border-color:var(--accent); }
-#mixStop.stopline { max-width:560px; white-space:normal; }
+/* the reason sentence takes its own row under the view bar, so the view title and the
+   buttons keep their width (Codex, round two: the title was squeezed to one letter) */
+.viewBar { flex-wrap:wrap; }
+#mixStop.stopline { flex-basis:100%; order:99; white-space:normal; padding-top:2px; }
 #mixStop.short { color:var(--accent); }
 #collList li { color:var(--muted); font-size:12px; justify-content:space-between; }
 #collList li.on { color:var(--fg); background:var(--sel); }

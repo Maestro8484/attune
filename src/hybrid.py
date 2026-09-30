@@ -410,6 +410,7 @@ class HybridEngine:
         stopped = "exhausted"
         strongest_left = None
         coin_skipped = 0            # songs that fit but radio's coins passed over
+        coin_left = None            # the best of those, (index, fit)
         pos = None                  # where in `order` the walk stopped
         for k, j in enumerate(order):
             j = int(j)
@@ -426,6 +427,8 @@ class HybridEngine:
                     break
             if coin is not None and not coin(j, len(out)):
                 coin_skipped += 1
+                if coin_left is None and min_fit is not None:
+                    coin_left = (j, float(scores[j]) / ceiling)   # best song the coins passed over
                 continue
             a = self.artist[j]
             if a and a in recent[-artist_spacing:]:
@@ -442,12 +445,17 @@ class HybridEngine:
             # it too, so a reader can see what the 51st would have been. Found by
             # scanning on from where the walk stopped to the next song it could have
             # taken; the picks above are already final and this changes nothing.
+            left_for = "count" if stopped == "size" else "line"
             if stopped == "size" and min_fit is not None and pos is not None:
                 for j in order[pos + 1:]:
                     j = int(j)
                     if j in excl or (allowed is not None and not allowed[j]):
                         continue
                     strongest_left = (j, float(scores[j]) / ceiling)
+                    # exactly `size` songs fit: the next one was left out by the line,
+                    # not by the count (cold reader, round two)
+                    if strongest_left[1] < min_fit:
+                        left_for = "line"
                     break
             report.update({
                 "stopped": stopped,
@@ -456,8 +464,9 @@ class HybridEngine:
                 "weakest_kept": ((self.idx[out[-1]], fit_of[self.idx[out[-1]]])
                                  if out and min_fit is not None else None),
                 "strongest_left": strongest_left,
-                "left_for": "count" if stopped == "size" else "line",
+                "left_for": left_for,
                 "coin_skipped": coin_skipped,
+                "coin_left": coin_left,
                 "fit": fit_of,
             })
         return out
@@ -697,10 +706,28 @@ class HybridEngine:
         used, middle = [ia, ib], []
         recent = [self.artist[ia]]
         skipped, strongest_left, fit_of = 0, None, {}
+        ran_out = False
         for t in np.linspace(0.0, 1.0, size)[1:-1]:
             wp = (1.0 - t) * va + t * vb
             cands = self.mix_from_vector(wp, size=artist_spacing + 1, exclude=used,
                                          allowed=allowed)
+            if not cands:
+                ran_out = True                     # the pool has no unused song left
+                break
+            if min_fit is not None:
+                # The line is judged on the candidates BEFORE artist spacing chooses
+                # among them, so a stop whose nearest song fits is never dropped just
+                # because spacing preferred a farther one (cold reader, round two).
+                wpu = self._unit(wp)
+                fits = {p: float(self.X[self.idx[p]] @ wpu) for p in cands}
+                ok = [p for p in cands if fits[p] >= min_fit]
+                if not ok:
+                    skipped += 1
+                    best = cands[0]
+                    if strongest_left is None or fits[best] > strongest_left[1]:
+                        strongest_left = (self.idx[best], fits[best])
+                    continue                       # this stop has no song near enough
+                cands = ok
             pick = None
             for p in cands:
                 pa = self.artist[self.idx[p]]
@@ -708,27 +735,20 @@ class HybridEngine:
                     pick = p
                     break
             if pick is None:
-                if not cands:
-                    break
                 pick = cands[0]
             if min_fit is not None:
-                fit = float(self.X[self.idx[pick]] @ self._unit(wp))
-                if fit < min_fit:
-                    skipped += 1
-                    if strongest_left is None or fit > strongest_left[1]:
-                        strongest_left = (self.idx[pick], fit)
-                    continue                       # this stop has no song near enough
-                fit_of[self.idx[pick]] = fit
+                fit_of[self.idx[pick]] = fits[pick]
             middle.append(pick)
             used.append(self.idx[pick])
             recent.append(self.artist[self.idx[pick]])
         if report is not None:
             weakest = min(fit_of.items(), key=lambda kv: kv[1]) if fit_of else None
             report.update({
-                "stopped": "fit" if skipped else "size",
+                "stopped": "fit" if skipped else ("exhausted" if ran_out else "size"),
                 "pool": int(allowed.sum()) if allowed is not None else len(self.paths),
                 "line": min_fit, "ceiling": 1.0,
                 "skipped_stops": skipped,
+                "ran_out": ran_out,
                 "weakest_kept": weakest, "strongest_left": strongest_left,
                 "fit": fit_of,
             })

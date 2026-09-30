@@ -446,3 +446,70 @@ def test_collection_is_found_again_by_a_fresh_app_on_the_same_settings_folder(cl
     again.config["TESTING"] = True
     j = again.test_client().get("/api/collection/list").get_json()
     assert coll in [c["id"] for c in j["collections"]]
+
+
+def test_radio_names_the_best_song_its_variety_passed_over(client):
+    """When the coins passed over songs that fit, the strongest song left out is the best
+    of those, not the first song below the line (Codex, round two)."""
+    for r in range(30):
+        j = client.get(f"/api/radio/next?seed=0&n=50&variety=9&rng={r}&max=1&min_fit=0.7").get_json()
+        st = j["stop"]
+        if st["passed_over"]:
+            assert st["strongest_left"] is not None
+            assert st["strongest_left"]["fit"] >= 0.7 and st["strongest_left"].get("passed_over") is True
+            assert st["strongest_left"]["i"] not in _ids(j)
+            return
+    raise AssertionError("30 rng seeds at variety 9 never passed over a fitting song")
+
+
+# ------------------------------------------------------------------ round two of the audit, 2026-09-30
+
+def test_strongest_left_out_on_the_near_twin_recipe_is_the_best_fitting_song_dropped(client):
+    """With the near-twin re-pick on, the walk takes every fitting song up to 200 and
+    MMR keeps 20; the strongest left out must be the best of the dropped fitting songs,
+    not the song past the over-fetch boundary (cold reader, round two)."""
+    j = client.get("/api/mix?i=0&size=20&max=1&min_fit=0&variety=1").get_json()
+    ids = set(_ids(j))
+    sl = j["stop"]["strongest_left"]
+    self_total = client.get("/api/explain?seed=0&cand=0").get_json()["total"]
+    fits = {}
+    for c in range(40):
+        if c == 0 or c in ids:
+            continue
+        f = client.get(f"/api/explain?seed=0&cand={c}").get_json()["total"] / self_total
+        if f >= 0:
+            fits[c] = f
+    best = max(fits, key=fits.get)
+    assert sl["i"] == best and sl["fit"] == pytest.approx(round(fits[best], 3), abs=1e-3)
+
+
+def test_adventure_judges_the_line_before_artist_spacing(tmp_path):
+    """A stop whose nearest song fits is kept even when artist spacing would have
+    preferred a farther song below the line (cold reader, round two)."""
+    e = hybrid.HybridEngine(build_db(str(tmp_path)))
+    mask = np.zeros(len(e.paths), dtype=bool)
+    mask[[0, 1, 2, 3, 16]] = True                 # two A ends, two A mates, one B
+    e.artist[2] = e.artist[3] = e.artist[0]       # the mates share the start's artist
+    path = e.adventure(0, 1, size=3, allowed=mask, min_fit=0.9)
+    assert len(path) == 3                          # one stop, kept
+    assert e.idx[path[1]] in (2, 3)                # the fitting mate, not the B song
+
+
+def test_adventure_says_when_the_collection_ran_out(client):
+    r = client.post("/api/collection/save", json={"name": "Tiny", "ids": [0, 1, 2]})
+    cid = r.get_json()["id"]
+    j = client.get(f"/api/mix/adventure?a=0&b=1&size=10&collection={cid}&max=1&min_fit=0").get_json()
+    assert len(j["tracks"]) == 3                   # both ends and the one song left
+    assert j["stop"]["reason"] == "exhausted"
+    assert j["stop"]["sentence"].startswith("Only 1 stop of 8")
+    client.post("/api/collection/delete", json={"id": cid})
+
+
+def test_exactly_size_fitting_songs_is_left_out_for_the_line(eng):
+    """Group C has 9 songs, so a C seed has exactly 8 mates above the line: a request
+    for 8 is full, and the next song was left out by the line, not the count."""
+    seed = GROUPS["A"] + GROUPS["B"]               # first C song
+    rep = {}
+    out = eng.mix(eng.paths[seed], size=8, min_fit=0.7, report=rep)
+    assert len(out) == 8 and rep["stopped"] == "size"
+    assert rep["left_for"] == "line" and rep["strongest_left"][1] < 0.7

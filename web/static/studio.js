@@ -393,11 +393,18 @@ let curCollection = store.get('collection', '') || '';   // '' = the full librar
 const COLLECTION_MAX = 500;    // what "save what's on screen" takes at most
 
 async function loadCollections() {
+  let listed = true;
   try {
     const j = await jget('/api/collection/list');
     COLLECTIONS = j.collections || [];
-  } catch (e) { COLLECTIONS = []; }
-  if (curCollection && !COLLECTIONS.some(c => c.id === curCollection)) curCollection = '';
+  } catch (e) { COLLECTIONS = []; listed = false; }
+  // A collection that is gone (deleted from another window) is forgotten. A list that
+  // could not be READ is not the same thing: the chosen collection is kept, so a
+  // passing failure never widens the next mix to the full library on its own; a mix
+  // then fails loudly with "no collection called ..." if it really is gone (Codex,
+  // round two).
+  if (listed && curCollection && !COLLECTIONS.some(c => c.id === curCollection)) curCollection = '';
+  if (!listed && curCollection) COLLECTIONS = [{ id: curCollection, name: curCollection + ' (list unavailable)', size: 0, missing: 0 }];
   paintCollections();
 }
 

@@ -621,16 +621,29 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                                f"fit line, so the count is a quota.")
             return out
         wk, sl = _song(report.get("weakest_kept")), _song(report.get("strongest_left"))
+        # When Radio's coins passed over songs that fit, the strongest song left out is
+        # the best of THOSE, not the first song below the line (Codex, round two).
+        if report.get("coin_skipped") and report.get("coin_left"):
+            sl = _song(report["coin_left"])
+            sl["passed_over"] = True
         out["weakest_kept"], out["strongest_left"] = wk, sl
         line = f"the provisional fit line of {min_fit:.2f}"
         stopped = report.get("stopped")
         skipped = report.get("skipped_stops")
         if skipped is not None:                      # an adventure path
+            ran_out = report.get("ran_out")
             if skipped:
                 out["reason"] = "fit"
                 out["sentence"] = (f"{returned} stops instead of {requested}: {skipped} had no song in "
                                    f"{where} within {line} of the path"
-                                   + (f"; nearest left out, {sl['label']} at {sl['fit']:.3f}." if sl else "."))
+                                   + (f"; nearest left out, {sl['label']} at {sl['fit']:.3f}" if sl else "")
+                                   + (f", and {where} then ran out of unused songs." if ran_out else "."))
+            elif ran_out:
+                # the pool had fewer unused songs than stops asked for (cold reader,
+                # round two: this used to read "All N stops")
+                out["reason"] = "exhausted"
+                out["sentence"] = (f"Only {returned} stop{'s' if returned != 1 else ''} of {requested}: {where} ran out of unused songs "
+                                   f"before the path reached its end.")
             else:
                 out["reason"] = "size"
                 out["sentence"] = (f"All {requested} stops, from {where}"
@@ -643,13 +656,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             stopped = "size"
         thinned = report.get("coin_skipped") or 0
         out["passed_over"] = thinned
+        bl = _song(report.get("strongest_left"))      # the first song below the line
         if returned == 0 and thinned:
             # Radio's variety coin passed over songs that DID fit; "none fit" would be
             # untrue. Say what happened.
             out["reason"] = "thinned"
             out["sentence"] = (f"Radio's variety passed over {thinned} song{'s' if thinned != 1 else ''} "
-                               f"that fit in {where} and nothing else fits"
-                               + (f"; the next, {sl['label']}, sits at {sl['fit']:.3f}, below {line}." if sl else "."))
+                               f"that fit in {where}"
+                               + (f", the best being {sl['label']} at {sl['fit']:.3f}," if sl else ",")
+                               + " and nothing else fits"
+                               + (f"; the next, {bl['label']}, sits at {bl['fit']:.3f}, below {line}." if bl else "."))
         elif returned == 0:
             out["reason"] = "none_fit" if stopped == "fit" else "empty"
             if sl:
@@ -662,11 +678,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             # Radio's coins can pass over songs that fit before the walk meets the
             # line; then the shortfall is the variety, not the line, and the sentence
             # must say so (raised by both auditors, 2026-09-30).
-            passed = (f" Radio's variety passed over {thinned} more that fit." if thinned else "")
-            out["sentence"] = (f"Stopped at {returned} of {requested}: the next-best song in {where}, "
-                               f"{sl['label']}, sits at {sl['fit']:.3f}, below {line}."
-                               + (f" Weakest kept: {wk['label']} at {wk['fit']:.3f}." if wk else "")
-                               + passed)
+            if thinned:
+                out["sentence"] = (f"Stopped at {returned} of {requested}: Radio's variety passed over {thinned} "
+                                   f"songs in {where} that fit"
+                                   + (f", the best being {sl['label']} at {sl['fit']:.3f}," if sl else ",")
+                                   + (f" and the next song, {bl['label']}, sits at {bl['fit']:.3f}, below {line}." if bl else " and nothing else fits.")
+                                   + (f" Weakest kept: {wk['label']} at {wk['fit']:.3f}." if wk else ""))
+            else:
+                out["sentence"] = (f"Stopped at {returned} of {requested}: the next-best song in {where}, "
+                                   f"{sl['label']}, sits at {sl['fit']:.3f}, below {line}."
+                                   + (f" Weakest kept: {wk['label']} at {wk['fit']:.3f}." if wk else ""))
         elif returned < requested and stopped == "size":
             out["reason"] = "trimmed"
             out["sentence"] = (f"{returned} of {requested}: the walk took its {report.get('walked', 'full')} "
@@ -749,6 +770,20 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             kept = [(eng.idx[p], report["fit"][eng.idx[p]]) for p in picks
                     if eng.idx.get(p) in report["fit"]]
             report["weakest_kept"] = min(kept, key=lambda t: t[1]) if kept else None
+            # The strongest song left out is the best FITTING song the walk took and
+            # the list then dropped (the near-twin re-pick keeps 50 of up to 200), not
+            # the song past the over-fetch boundary (cold reader, round two). Songs the
+            # listener banned, and duplicates of a song already in the list, are not
+            # "left out" in that sense and are not named.
+            delivered = {eng.idx[p] for p in picks}
+            keys = {_dupkey(p, field) for p in picks} | {_dupkey(seed, field)} if field else set()
+            dropped = [(j, f) for j, f in report["fit"].items()
+                       if j not in delivered and j not in ban_i
+                       and not (ban_art and (eng.artist[j] or "").strip().lower() in ban_art)
+                       and not (field and _dupkey(eng.paths[j], field) in keys)]
+            if dropped:
+                report["strongest_left"] = max(dropped, key=lambda t: t[1])
+                report["left_for"] = "count"
         return seed, picks
 
     def _active_mix_indices(i, size, field=None, mask=None, min_fit=None, report=None):
