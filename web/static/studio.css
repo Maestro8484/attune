@@ -541,6 +541,7 @@ thead th.c-title { width:22%; }   /* on the header only: a cell width would outv
    arbitrarily long, so it gets a floor rather than a fixed width and is allowed to
    take the slack -- the table already scrolls horizontally in its own wrapper. */
 .c-bpm { width:52px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
+.c-feel { width:64px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
 .c-bitr { width:88px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
 .c-fmt { width:56px; color:var(--muted); }
 .c-size { width:72px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }

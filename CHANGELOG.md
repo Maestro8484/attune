@@ -18,6 +18,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   new mix. The history lasts while the window is open and is not kept across restarts.
   Not undoable: playing a song, sending songs to a folder, Locate file, and Remove from
   library, which still asks first.
+- **Feel scores as song-list columns, ready for when they exist.** When the engine has
+  a feel file, the five scores (Danceable, Happy, Intense, Instrumental, Acoustic) can be
+  turned on from the right-click menu on the column headers, each shown as 0 to 100 for
+  where the song sits in your library, and sorted like BPM. They are off by default.
+  The download carries no feel file yet, so for now no such column is offered.
 - **Right-click the song that is playing.** The display in the bottom bar, the Track
   Info panel and the mini player now open the same right-click menu as a song in a list.
 - **Three scoring switches in the engine, all off.** Nothing about a mix changes: with
