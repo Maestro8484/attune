@@ -23,6 +23,9 @@ import copy
 
 FUSED_CLAP_WEIGHT = 0.3
 FEEL_WEIGHT = 0.4
+# Provisional, like the two above: the genre ingredient's own weight, so listener-based
+# artist closeness starts level with tag-based genre closeness.
+ARTIST_WEIGHT = 0.3
 
 _FUSED = {"fusion": "rank", "clap_space": "centered"}
 
@@ -40,6 +43,11 @@ VARIANTS = {
     # instead of the shipped one; for trying a different set of scores without shipping it
     "v2-feel-file": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "feel": FEEL_WEIGHT},
                      "feel_file": True},
+    # The catalog test (2026-10-01). "v2" reads the catalog tables when a library has them;
+    # this is the engine as it was before them: no catalog, "covers" counted as a genre.
+    "v2-before-catalog": {"catalog": False},
+    # v2 plus how often listeners play the two artists together
+    "v2-catalog-artist": {"weights": {"artist": ARTIST_WEIGHT}},
 }
 
 
@@ -51,7 +59,7 @@ def variant_engine(base, name, feel_file=None, **override):
     weights = dict(spec.get("weights", {}))
     weights.update(override.pop("weights", {}))
     spec.update(override)
-    e = copy.copy(base)
+    e = base.without_catalog() if spec.get("catalog") is False else copy.copy(base)
     e.w = dict(base.w)
     e.w.update(weights)
     e.fusion = spec.get("fusion", "raw")

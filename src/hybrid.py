@@ -26,7 +26,7 @@ features (scan.py analyze); with lib active the pool is the clap∩librosa inter
 If CLAP is absent, use the librosa engine in mixer.py.
 """
 from __future__ import annotations
-import os, json, sqlite3, pathlib
+import copy, os, json, sqlite3, pathlib
 import numpy as np
 
 # V2 — the recipe that came out ahead in the partly blind listening test (human_ratings.md,
@@ -127,6 +127,38 @@ def _tags(g):
     return {t.strip().lower() for part in g.split(";") for t in part.split(",") if t.strip()}
 
 
+# Values a tagger writes into GENRE that say what a song IS, not what it sounds like. "Punk; Covers"
+# is a punk song that happens to be a cover; counting "covers" in the overlap halves its genre credit
+# against every other punk song and pulls it toward covers of any genre. Owner ruling 2026-10-01.
+THEME_TAGS = frozenset({"covers", "cover"})
+
+
+def _genre_tags(genre, style=None):
+    """The genre term's tag set: GENRE, plus STYLE when the catalog supplies one, minus themes."""
+    return (_tags(genre) | _tags(style)) - THEME_TAGS
+
+
+def _load_catalog(conn):
+    """The two additive tables src/enrich.py writes (tools/import_catalog.py), read here because
+    the app loads this file by path and it imports nothing from src/. Returns (ids, similar):
+    ids maps path to (recording_mbid, [artist_mbids], original_year, style); similar maps an
+    artist mbid to {other artist mbid: best score across sources}, read both ways. Both empty
+    when the tables are absent, which is every library that never imported anything."""
+    have = {n for (n,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    ids, similar = {}, {}
+    if "catalog_ids" in have:
+        for p, rec, arts, year, style in conn.execute(
+                "SELECT path, recording_mbid, artist_mbids, original_year, style FROM catalog_ids"):
+            ids[p] = (rec, [a.strip() for a in (arts or "").split(";") if a.strip()], year, style)
+    if "artist_similarity" in have:
+        for a, b, score in conn.execute("SELECT artist_mbid, similar_mbid, score FROM artist_similarity"):
+            for x, y in ((a, b), (b, a)):
+                d = similar.setdefault(x, {})
+                if score > d.get(y, 0.0):
+                    d[y] = score
+    return ids, similar
+
+
 def _key_from_chroma(chroma12):
     """(tonic 0-11, is_major) by profile correlation, or None."""
     if chroma12 is None or chroma12.std() < 1e-9:
@@ -219,7 +251,12 @@ class HybridEngine:
     ARC_PERIOD = 20         # tracks per full rise/fall/wave cycle
     ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
 
-    def __init__(self, db_path, weights=None, fusion=None, clap_space=None, feel_file=None):
+    def __init__(self, db_path, weights=None, fusion=None, clap_space=None, feel_file=None,
+                 catalog=True):
+        """`catalog=False` ignores the catalog tables (src/enrich.py) even when present: the
+        A side of an ear test. The optional `artist` weight (not in DEFAULT_WEIGHTS, so 0
+        unless engine_v2.json or the caller sets it) adds how often listeners play the two
+        artists together, 0 to 1, from the artist_similarity table."""
         self.w = dict(DEFAULT_WEIGHTS)
         self.fusion, self.clap_space = "raw", "raw"
         cfg = os.path.join(os.path.dirname(db_path), "engine_v2.json")
@@ -293,6 +330,7 @@ class HybridEngine:
                 v = np.frombuffer(blob, np.float32)
                 if v.shape[0] == dim:
                     clap[p] = v
+        cat_ids, cat_similar = _load_catalog(conn) if catalog else ({}, {})
         conn.close()   # all reads done at load; don't leak the handle / WAL reader
 
         # z-score + L2-normalize the librosa matrix over ALL analyzed tracks, exactly as the
@@ -361,8 +399,17 @@ class HybridEngine:
                       else np.zeros((0, self.LIB_DIM), np.float64))
         self.idx = {p: i for i, p in enumerate(paths)}
         self.artist = [meta.get(p, (None,)*5)[0] for p in paths]
-        self.genre_tags = [_tags(meta.get(p, (None,)*5)[3]) for p in paths]
-        self.year = np.array([meta.get(p, (None,)*5)[4] or 0 for p in paths], float)
+        # Catalog fields per pool track (None where the library has no catalog row): STYLE joins
+        # the genre tags, the original release year replaces the file's year in the era term,
+        # and the recording id stops a walk taking one recording twice.
+        cat = [cat_ids.get(p) for p in paths]
+        self.genre_tags = [_genre_tags(meta.get(p, (None,)*5)[3], c[3] if c else None)
+                           for p, c in zip(paths, cat)]
+        self.year = np.array([(c[2] if c and c[2] else None) or meta.get(p, (None,)*5)[4] or 0
+                              for p, c in zip(paths, cat)], float)
+        self.recording = [c[0] if c else None for c in cat]
+        self.artist_ids = [c[1] if c else [] for c in cat]
+        self.similar = cat_similar
         self.bpm = np.array([tempo.get(p, 0) or 0 for p in paths], float)
         self.key = _keys_from_chroma_batch([chroma.get(p) for p in paths])
         self.meta = {p: {"artist": meta[p][0], "album": meta[p][1], "title": meta[p][2],
@@ -496,6 +543,8 @@ class HybridEngine:
             sy = self.year[si]
             out.append(("era", w["era"],
                         -np.where((self.year > 0) & (sy > 0), np.abs(self.year - sy) / 25.0, 0.5)))
+        if w.get("artist") and self.artist_ids[si]:
+            out.append(("artist", w["artist"], self._artist_affinity(si)))
         if w.get("feel") and self.feel is not None:
             # mean gap across the five scores, each already 0..1
             out.append(("feel", w["feel"],
@@ -547,7 +596,34 @@ class HybridEngine:
             sy = self.year[si]
             dera = np.where((self.year > 0) & (sy > 0), np.abs(self.year - sy) / 25.0, 0.5)
             s = s - w["era"] * dera
+        # artist adjacency (off unless the `artist` weight is set): how often listeners play
+        # the candidate's artist with the seed's, 0 to 1; the same artist counts as 1.
+        if w.get("artist") and self.artist_ids[si]:
+            s = s + w["artist"] * self._artist_affinity(si)
         return s
+
+    def without_catalog(self):
+        """A copy sharing this library's loaded vectors that scores as the engine did before
+        the catalog tables existed: genre tags from GENRE alone with "covers" counted, the
+        file's own year, no recording or artist ids. The A side of the catalog ear test."""
+        e = copy.copy(self)
+        e.genre_tags = [_tags(self.meta.get(p, {}).get("genre")) for p in self.paths]
+        e.year = np.array([self.meta.get(p, {}).get("year") or 0 for p in self.paths], float)
+        e.recording = [None] * len(self.paths)
+        e.artist_ids = [[] for _ in self.paths]
+        e.similar = {}
+        return e
+
+    def _artist_affinity(self, si):
+        seed = self.artist_ids[si]
+        near = {}
+        for a in seed:
+            near[a] = 1.0
+            for b, sc in self.similar.get(a, {}).items():
+                if sc > near.get(b, 0.0):
+                    near[b] = sc
+        return np.array([max((near.get(a, 0.0) for a in ids), default=0.0)
+                         for ids in self.artist_ids])
 
     def resolve(self, seed):
         if seed in self.idx:
@@ -592,6 +668,9 @@ class HybridEngine:
           fit:            {pool index: fit} for every song taken
         """
         out, recent = [], []
+        # one recording once: the seed, anything excluded, and every pick block their own
+        # recording id (only libraries with a catalog_ids table have any)
+        recs = {self.recording[j] for j in excl if 0 <= int(j) < len(self.recording)} - {None}
         fit_of = {}
         stopped = "exhausted"
         strongest_left = None
@@ -619,6 +698,11 @@ class HybridEngine:
             a = self.artist[j]
             if a and a in recent[-artist_spacing:]:
                 continue
+            rec = self.recording[j]
+            if rec and rec in recs:
+                continue
+            if rec:
+                recs.add(rec)
             out.append(self.paths[j]); recent.append(a)
             if min_fit is not None:
                 fit_of[j] = float(scores[j]) / ceiling
@@ -1093,7 +1177,11 @@ class HybridEngine:
             dera = abs(cy - sy) / 25.0 if (sy > 0 and cy > 0) else 0.5
             comp["era"] = float(-w["era"] * dera)
 
-        comp["total"] = comp["clap"] + comp["lib"] + comp["genre"] + comp["bpm"] + comp["key"] + comp["era"]
+        if w.get("artist") and self.artist_ids[si]:
+            comp["artist"] = float(w["artist"] * self._artist_affinity(si)[ci])
+
+        comp["total"] = (comp["clap"] + comp["lib"] + comp["genre"] + comp["bpm"] + comp["key"]
+                         + comp["era"] + comp.get("artist", 0.0))
         return comp
 
 

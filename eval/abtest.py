@@ -126,18 +126,27 @@ def build_engines(names, db_path, musicip_url, feel_file=None, db_alt=None):
 # Seed selection: genre-diverse, deterministic, inside EVERY engine's coverage
 # ---------------------------------------------------------------------------
 
-def pick_seeds(eng, engines, n_seeds, k, rng):
+def pick_seeds(eng, engines, n_seeds, k, rng, seed_paths=None):
     """Shuffle the shared pool deterministically, then take the first seed of each
     primary genre whose similar() probe yields a full k-track mix from EVERY
-    requested engine. The probe result is kept so the mix isn't computed twice."""
-    order = list(range(len(eng.paths)))
-    rng.shuffle(order)
+    requested engine. The probe result is kept so the mix isn't computed twice.
+    `seed_paths`, when given, are the seeds instead, in that order (a test aimed at
+    the songs a change touches); each must still give a full mix from every engine."""
+    if seed_paths:
+        missing = [p for p in seed_paths if p not in eng.idx]
+        if missing:
+            raise SystemExit(f"seed not in the mixable pool: {missing}")
+        order = [eng.idx[p] for p in seed_paths]
+        n_seeds = len(order)
+    else:
+        order = list(range(len(eng.paths)))
+        rng.shuffle(order)
     seeds, used_genres = [], set()
     for i in order:
         p = eng.paths[i]
         g = (eng.meta.get(p, {}).get("genre") or "?")
         g0 = g.split(",")[0].split(";")[0].strip().lower() or "?"
-        if g0 in used_genres:
+        if g0 in used_genres and not seed_paths:
             continue
         mixes = {}
         for name, (obj, _pool) in engines.items():
@@ -221,7 +230,11 @@ def run_generate(args):
         db_alt[label] = path
     eng, engines = build_engines(names, db, musicip_url, feel_file=args.feel_file,
                                  db_alt=db_alt)
-    seeds = pick_seeds(eng, engines, args.n_seeds, args.k, rng)
+    seed_paths = None
+    if args.seeds:
+        with open(args.seeds, encoding="utf-8-sig") as fh:
+            seed_paths = [ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")]
+    seeds = pick_seeds(eng, engines, args.n_seeds, args.k, rng, seed_paths)
     print(f"seeds: {[_label_for_seed(eng, p, f'seed{i}') for i, p, _ in seeds]}")
 
     os.makedirs(out_dir, exist_ok=True)
@@ -356,6 +369,8 @@ def main():
                     help="seed for seed-pick + letter blinding (deterministic reruns)")
     ap.add_argument("--out", default=None,
                     help="playlist output dir (default: <settings playlist_dir>/ABTest)")
+    ap.add_argument("--seeds", default=None,
+                    help="text file of seed paths, one per line, used instead of random seeds")
     ap.add_argument("--score", action="store_true",
                     help="rank the sets from the latest (or --key) sealed key file")
     ap.add_argument("--key", default=None, help="key file to score (default: newest)")

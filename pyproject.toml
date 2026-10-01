@@ -101,7 +101,7 @@ package-dir = { "" = "src" }
 # src/ means adding it here. Checked with:
 #   python -c "import glob,os;print(sorted(os.path.basename(p)[:-3] for p in glob.glob('src/*.py')))"
 py-modules = [
-    "config", "db", "embed", "embed_onnx", "engine", "exp_run", "export",
+    "config", "db", "embed", "embed_onnx", "engine", "enrich", "exp_run", "export",
     "features", "features_exp", "genre_cluster", "hybrid", "make_validation_set",
     "mixer", "musicip_engine", "plexmatch", "plexsync", "scan", "textsearch",
     "tune", "validate",

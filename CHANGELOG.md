@@ -5,6 +5,24 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-01, catalog enrichment)
+
+- **What a tagger knows about each song can inform a mix.** `tools/import_catalog.py`
+  loads two files into the library database (backing it up first): each song's
+  MusicBrainz recording and artist ids, original release year and style, and which
+  artists listeners play together (Last.fm and ListenBrainz). With them loaded, a mix
+  uses the year the song first came out rather than the year of the compilation it
+  sits on, gives partial genre credit for a shared style, and never plays the same
+  recording twice even when it is in the library as two files. An optional `artist`
+  weight (off unless set in `engine_v2.json`) adds how often listeners play the two
+  artists together. A library without these tables mixes exactly as before.
+
+### Changed (2026-10-01, catalog enrichment)
+
+- **"Covers" is not a genre.** A song tagged "Punk; Covers" now gets full genre credit
+  against other punk songs, instead of half, and is no longer pulled toward covers of
+  every other genre.
+
 ### Added (2026-10-01)
 
 - **Undo and Redo.** Every change you make while building and refining a mix can be
