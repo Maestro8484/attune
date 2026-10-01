@@ -21,7 +21,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 - **"Covers" is not a genre.** A song tagged "Punk; Covers" now gets full genre credit
   against other punk songs, instead of half, and is no longer pulled toward covers of
-  every other genre.
+  every other genre. This applies to a library that has loaded the tagger's files; a
+  library without them keeps today's genre scoring until the listening test rules.
 
 ### Added (2026-10-01)
 

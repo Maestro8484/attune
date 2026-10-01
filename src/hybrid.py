@@ -130,12 +130,14 @@ def _tags(g):
 # Values a tagger writes into GENRE that say what a song IS, not what it sounds like. "Punk; Covers"
 # is a punk song that happens to be a cover; counting "covers" in the overlap halves its genre credit
 # against every other punk song and pulls it toward covers of any genre. Owner ruling 2026-10-01.
+# Applied only to a library that has imported the catalog tables, so a plain library scores
+# exactly as V2 was eared (the regression gate) until the listening test rules on it.
 THEME_TAGS = frozenset({"covers", "cover"})
 
 
-def _genre_tags(genre, style=None):
+def _genre_tags(genre, style=None, themes=THEME_TAGS):
     """The genre term's tag set: GENRE, plus STYLE when the catalog supplies one, minus themes."""
-    return (_tags(genre) | _tags(style)) - THEME_TAGS
+    return (_tags(genre) | _tags(style)) - themes
 
 
 def _load_catalog(conn):
@@ -401,9 +403,11 @@ class HybridEngine:
         self.artist = [meta.get(p, (None,)*5)[0] for p in paths]
         # Catalog fields per pool track (None where the library has no catalog row): STYLE joins
         # the genre tags, the original release year replaces the file's year in the era term,
-        # and the recording id stops a walk taking one recording twice.
+        # and the recording id stops a walk taking one recording twice. "covers" leaves the
+        # genre tags only when the catalog is loaded (see THEME_TAGS).
         cat = [cat_ids.get(p) for p in paths]
-        self.genre_tags = [_genre_tags(meta.get(p, (None,)*5)[3], c[3] if c else None)
+        themes = THEME_TAGS if cat_ids else frozenset()
+        self.genre_tags = [_genre_tags(meta.get(p, (None,)*5)[3], c[3] if c else None, themes)
                            for p, c in zip(paths, cat)]
         self.year = np.array([(c[2] if c and c[2] else None) or meta.get(p, (None,)*5)[4] or 0
                               for p, c in zip(paths, cat)], float)

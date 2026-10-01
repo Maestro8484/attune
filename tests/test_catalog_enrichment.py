@@ -3,11 +3,14 @@ imported from an outside tagger (src/enrich.py) and read by the V2 engine (hybri
 
 Locks in:
   1. no tables, no change: a library that never imported anything scores and mixes exactly as before;
-  2. "covers" is a theme, not a genre: it never counts in the genre overlap;
+  2. "covers" is a theme, not a genre: it leaves the genre overlap once the catalog is loaded,
+     and a plain library keeps it, so V2 as eared (the regression gate) is unchanged;
   3. STYLE joins the genre tags, so a shared style earns partial credit;
   4. the original release year replaces the file's year in the era term;
   5. one recording once: two files of the same recording never both appear, nor the seed's twin;
-  6. the artist weight is off by default, and explain() still adds up to _score() when it is on.
+  6. the artist weight is off by default, and explain() still adds up to _score() when it is on;
+  7. the artist weight and the graded genre both survive the scoring switches;
+  8. the catalog versions take the listening harness's @label form beside the switch versions.
 
 Synthetic library: twelve tracks, CLAP vectors close enough that every track is a candidate.
 """
@@ -101,10 +104,16 @@ def test_no_tables_no_change(lib):
 
 
 def test_covers_is_not_a_genre(lib):
-    eng = lib["off"]
+    eng = lib["on"]
     assert eng.genre_tags[0] == {"punk"} == eng.genre_tags[1]
     assert eng.explain(0, 1)["genre"] == pytest.approx(eng.w["genre"])   # full credit, not half
     assert eng.explain(0, 3)["genre"] == 0.0                              # Punk cover vs Pop cover
+
+
+def test_a_plain_library_keeps_covers(lib):
+    # no catalog tables, or the catalog switched off: the genre term as V2 was eared
+    assert lib["plain"].genre_tags[0] == {"punk", "covers"} == lib["off"].genre_tags[0]
+    assert lib["plain"].genre_tags == lib["off"].genre_tags
 
 
 def test_style_joins_the_genre_tags(lib):
@@ -141,8 +150,9 @@ def test_artist_weight_is_off_by_default_and_explain_adds_up(lib):
 
 def test_before_version_is_the_engine_without_the_catalog(lib):
     before = lib["on"].without_catalog()
-    plain = lib["plain"]                        # loaded before any import: the old engine, but covers out
+    plain = lib["plain"]                        # loaded before any import: the old engine
     assert before.genre_tags[0] == {"punk", "covers"}     # covers counted, as before
+    assert before.genre_tags == plain.genre_tags
     assert all(before.year == plain.year)
     for si in (1, 4, 9):                        # seeds whose tags carry no covers
         assert before.mix(before.paths[si], size=N) is not None
@@ -155,3 +165,40 @@ def test_artist_weight_survives_the_scoring_switches(lib):
     assert "artist" in [name for name, _w, _g in eng._terms(0)]
     comp = eng.explain(0, 11)
     assert comp["total"] == pytest.approx(float(eng._score(0)[11]))
+
+
+def test_style_grades_the_genre_under_the_scoring_switches(lib):
+    on = hybrid.HybridEngine(lib["db"], fusion="rank", clap_space="centered")
+    off = hybrid.HybridEngine(lib["db"], fusion="rank", clap_space="centered", catalog=False)
+    g_on = {n: g for n, _w, g in on._terms(9)}["genre"]
+    g_off = {n: g for n, _w, g in off._terms(9)}["genre"]
+    assert g_on[10] == 1.0 and g_on[11] == 0.5            # a shared style earns more than genre alone
+    assert g_off[10] == g_off[11] == 1.0
+    assert on.explain(9, 10)["genre"] > on.explain(9, 11)["genre"]
+    assert on.explain(9, 10)["total"] == pytest.approx(float(on._score(9)[10]))
+
+
+def test_catalog_versions_take_the_label_form(tmp_path):
+    import shutil
+    sys.path.insert(0, os.path.join(os.path.dirname(HERE), "eval"))
+    import abtest
+    import variants
+    d = str(tmp_path)
+    dbp, paths = build_db(d)                    # plain library, as today
+    cat = os.path.join(d, "cat.db")
+    shutil.copyfile(dbp, cat)
+    ids, sim = write_csvs(d, paths)
+    conn = sqlite3.connect(cat)
+    enrich.import_csvs(conn, ids, sim)
+    conn.close()
+    names = ["v2", "v2-before-catalog@cat", "v2@cat", "v2-fused@cat", "v2-catalog-artist@cat"]
+    eng, engines = abtest.build_engines(names, dbp, "http://localhost:1", db_alt={"cat": cat})
+    h = {n: obj.eng for n, (obj, _pool) in engines.items()}
+    assert h["v2"] is eng and h["v2"].genre_tags[0] == {"punk", "covers"}
+    assert h["v2-before-catalog@cat"].genre_tags[0] == {"punk", "covers"}
+    assert h["v2-before-catalog@cat"].recording == [None] * N
+    assert h["v2@cat"].genre_tags[0] == {"punk"} and h["v2@cat"].fusion == "raw"
+    assert h["v2-fused@cat"].fusion == "rank" and "big beat" in h["v2-fused@cat"].genre_tags[9]
+    assert h["v2-catalog-artist@cat"].w["artist"] == variants.ARTIST_WEIGHT
+    sc = {n: abtest._scoring_of(obj) for n, (obj, _pool) in engines.items()}
+    assert [sc[n]["catalog"] for n in names] == [False, False, True, True, True]

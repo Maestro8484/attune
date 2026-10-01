@@ -206,7 +206,8 @@ def _scoring_of(obj):
     if h is None or not hasattr(h, "fusion") or not hasattr(obj, "set_weights"):
         return None
     return {"fusion": h.fusion, "clap_space": h.clap_space,
-            "weights": {k: v for k, v in h.w.items() if v}}
+            "weights": {k: v for k, v in h.w.items() if v},
+            "catalog": any(r is not None for r in getattr(h, "recording", []))}
 
 
 def run_generate(args):
