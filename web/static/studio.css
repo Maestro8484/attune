@@ -648,6 +648,10 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 .ctxmenu li { padding:6px 10px; border-radius:6px; cursor:pointer; display:flex;
   justify-content:space-between; gap:16px; align-items:center; }
 .ctxmenu li:hover { background:var(--sel); }
+/* Undo / Redo with nothing to do: shown, greyed, inert (history.js paints the state) */
+.ctxmenu li.off { color:var(--dim); cursor:default; }
+.ctxmenu li.off:hover { background:none; }
+.ctxmenu li .hlbl { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:300px; }
 .ctxmenu li.sep { height:1px; padding:0; margin:4px 6px; background:var(--line);
   cursor:default; pointer-events:none; }
 .ctxmenu kbd { color:var(--dim); font-size:10px; }

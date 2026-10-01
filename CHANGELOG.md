@@ -5,6 +5,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-01)
+
+- **Undo and Redo.** Every change you make while building and refining a mix can be
+  taken back and put back: a new mix, Blend or Adventure, More or Less Like This (song
+  or artist), Remove from Mix, Block This Artist, dropping a filter chip, Clear all, a
+  sort or a drag of the mix, Play Next, Add to Queue, removing, clearing, shuffling or
+  re-ordering the queue, a rating, Love, a tag edit, and Select Artist / Album / Genre.
+  Press **Ctrl+Z** and **Ctrl+Y** (or Ctrl+Shift+Z), the **Undo** and **Redo** buttons
+  in the top bar, or the two lines at the top of the right-click menu; each names the
+  step it would take back. Undo puts back the exact list you had, it does not ask for a
+  new mix. The history lasts while the window is open and is not kept across restarts.
+  Not undoable: playing a song, sending songs to a folder, Locate file, and Remove from
+  library, which still asks first.
+- **Right-click the song that is playing.** The display in the bottom bar, the Track
+  Info panel and the mini player now open the same right-click menu as a song in a list.
+
+### Changed (2026-10-01)
+
+- **Seed songs stay in their mix.** The songs a mix was built from are never removed
+  by refining it. Remove from Mix and Less Like This refuse them and say so, and every
+  re-mix keeps them at the head of the list; an Adventure's destination stays at the
+  end. Before this only the first seed was held, so steering a Blend dropped its other
+  seeds and steering an Adventure dropped its destination. All of a Blend's seeds are
+  now marked as seeds in the list.
+
 ### Added (2026-09-30)
 
 - **Collections: draw a mix from a smaller set of your own songs.** Mix options now

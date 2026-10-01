@@ -15,6 +15,7 @@ const Prefs = (() => {
   let serverSettings = null;
   let scanTimer = 0;
   let tagI = null;
+  let tagOld = null;     // the tags as read when the editor opened: what Undo writes back
   // Plex connection (CONTRACT_CONNECT_2026-09-20 §E, §H, §I). The key field is always
   // blank when the modal opens -- GET /api/settings never returns it -- so `dirty`
   // is the only way save() can tell "typed a new key" apart from "left it alone",
@@ -885,7 +886,7 @@ const Prefs = (() => {
     tgComment: 'comment' };
 
   async function openTagEditor(i) {
-    tagI = i;
+    tagI = i; tagOld = null;
     $('tagWrap').hidden = false;
     $('tagMsg').textContent = '';
     for (const id of Object.keys(TAGMAP)) $(id).value = '';
@@ -893,6 +894,7 @@ const Prefs = (() => {
     try {
       const j = await jget('/api/track/tags?i=' + i);
       for (const [id, tag] of Object.entries(TAGMAP)) $(id).value = j.tags[tag] || '';
+      tagOld = Object.fromEntries(Object.values(TAGMAP).map(t => [t, j.tags[t] || '']));
       $('tagFile').textContent = j.file;
       const inf = j.info || {};
       $('tagTech').textContent =
@@ -904,25 +906,39 @@ const Prefs = (() => {
       $('tagMsg').className = 'msg err'; $('tagMsg').textContent = e.message;
     }
   }
+  /* Write tags to the file and refresh the row wherever it shows. Shared by Save and by
+     Undo / Redo of a save (history.js), which write the before / after tags back. */
+  async function writeTags(i, tags) {
+    const j = await jpost('/api/track/tags', { i, tags });
+    for (const r of S.rows) if (r.i === i) Object.assign(r, j.row);
+    const c = Player.cachedRow(i); if (c) Object.assign(c, j.row);
+    renderRows(S.rows, { seed: S.seed });
+    if (Player.currentPool() === i) {
+      $('lcdTrack').textContent = `${j.row.artist || '?'} - ${j.row.title}`;
+      $('npArtistSmall').textContent = j.row.album || '';
+    }
+    return j.row;
+  }
   async function saveTags() {
     if (tagI == null) return;
+    const i = tagI, before = tagOld;
     const tags = {};
     for (const [id, tag] of Object.entries(TAGMAP)) tags[tag] = $(id).value;
     $('tagMsg').className = 'msg'; $('tagMsg').textContent = 'Writing…';
-    try {
-      const j = await jpost('/api/track/tags', { i: tagI, tags });
-      // refresh the row wherever it currently shows
-      for (const r of S.rows) if (r.i === tagI) Object.assign(r, j.row);
-      renderRows(S.rows, { seed: S.seed });
-      if (Player.currentPool() === tagI) {
-        $('lcdTrack').textContent = `${j.row.artist || '?'} - ${j.row.title}`;
-        $('npArtistSmall').textContent = j.row.album || '';
+    const undoable = w => async () => { try { await writeTags(i, w); return true; }
+                                        catch (e) { toast(e.message, true); return false; } };
+    await History.act(`Edit the tags of ${songLabel(i)}`, async () => {
+      try {
+        await writeTags(i, tags);
+        $('tagMsg').className = 'msg ok'; $('tagMsg').textContent = 'Saved to file.';
+        setTimeout(() => { $('tagWrap').hidden = true; }, 600);
+        // undoable only when the tags were read before the edit
+        return before ? { undo: undoable(before), redo: undoable(tags) } : null;
+      } catch (e) {
+        $('tagMsg').className = 'msg err'; $('tagMsg').textContent = e.message;
+        return null;
       }
-      $('tagMsg').className = 'msg ok'; $('tagMsg').textContent = 'Saved to file.';
-      setTimeout(() => { $('tagWrap').hidden = true; }, 600);
-    } catch (e) {
-      $('tagMsg').className = 'msg err'; $('tagMsg').textContent = e.message;
-    }
+    });
   }
 
   /* ---------------------------------------------------------------- mini mode */

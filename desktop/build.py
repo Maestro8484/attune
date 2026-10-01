@@ -112,6 +112,7 @@ GUI_DATA = [
     ("web/static/smartlist.js","attune/web/static"),
     ("web/static/boot.js",     "attune/web/static"),
     ("web/static/tips.js",     "attune/web/static"),   # hover help, 2026-09-22
+    ("web/static/history.js",  "attune/web/static"),   # undo and redo, 2026-10-01
     ("src/hybrid.py",          "attune/src"),
     ("src/engine.py",          "attune/src"),
     ("src/musicip_engine.py",  "attune/src"),

@@ -34,7 +34,9 @@ const S = {
   desc: false,
   sel: new Set(),      // selected pool indices
   anchor: null,
-  seed: null,          // seed of the current mix
+  seed: null,          // seed of the current mix (the first of S.seeds)
+  seeds: [],           // every song the mix was built FROM, in order: head of the list
+  seedTail: [],        // an Adventure's destination: always the last song
   mix: [],
   ban: [],             // pool indices thrown out of the mix (live, undoable)
   banLabel: {},        // pool index -> label, captured at removal time (see dropTracks)
@@ -758,7 +760,7 @@ function renderRows(rows, opts = {}) {
   // view clears it right here, so a deliberate "back to Library" before quitting is
   // honoured on the next launch instead of being overridden. See restoreLastMix() below.
   store.set('lastMix', (S.view === 'mix' && S.seed != null && S.mix.length) ?
-    { seed: S.seed, mix: S.mix } : null);
+    { seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, mix: S.mix } : null);
   // mix view shows the inline More/Less Like This (tune) buttons; every other view hides them
   document.querySelector('#tbl').classList.toggle('mixview', S.view === 'mix');
   const tb = $('tbody');
@@ -807,13 +809,15 @@ function rowsHtml(rows, opts = {}) {
     const cls = [];
     if (S.sel.has(r.i)) cls.push('sel');
     if (r.i === playing && r.i >= 0) cls.push('playing');
-    if (seed !== null && r.i === seed) cls.push('seed');
+    // every seed song of a mix is marked, not just the first (a Blend's, an Adventure's ends)
+    const seedRow = (seed !== null && r.i === seed) || (S.view === 'mix' && isSeed(r.i));
+    if (seedRow) cls.push('seed');
     // "More Like This" anchors: pinned under the seed with the green edge + badge
-    if (S.view === 'mix' && r.i !== seed && S.liked.includes(r.i)) cls.push('pinned');
+    if (S.view === 'mix' && !seedRow && S.liked.includes(r.i)) cls.push('pinned');
     if (r.missing) cls.push('missing');
     if (r.unmixable) cls.push('unmixable');
     const tune = S.view === 'mix' && S.stats.engine === 'v2' &&
-                 r.i >= 0 && r.i !== seed;
+                 r.i >= 0 && !seedRow;
     const tds = cols.map(c => {
       // Three states, two of them worth colouring: Pending is amber (wait) and
       // Unanalyzable is red (this one needs you). Analyzed stays the ordinary muted
@@ -1052,7 +1056,13 @@ async function saveInPlace() {
    opened playlist only changes on screen until Save. */
 function moveRow(from, to) {
   if (from === to || from < 0 || to < 0) return;
-  if (S.view === 'nowplaying') { Player.moveInQueue(from, to); showNowPlaying(); return; }
+  if (S.view === 'nowplaying') {
+    return queueStep('Move a song in the queue', () => { Player.moveInQueue(from, to); showNowPlaying(); });
+  }
+  if (S.view === 'mix') return mixStep('Move a song in the mix', () => moveRowNow(from, to));
+  moveRowNow(from, to);
+}
+function moveRowNow(from, to) {
   const rows = S.rows.slice();
   const [r] = rows.splice(from, 1);
   rows.splice(to, 0, r);
@@ -1341,7 +1351,90 @@ async function loadFacets() {
   paint('fAlbum', j.albums, 'album', 'bN');
 }
 
-async function doMix(seedI, opts) {
+/* ------------------------------------------------------------------ seed songs
+   The songs a mix was built from stay in it whatever refining follows: More or Less
+   Like This, Remove, Block This Artist, a chip undone, a re-mix (Joe, 2026-10-01). They
+   head the list in the order they were given; an Adventure's destination ends it. Before
+   this only the first seed was held, so steering a Blend dropped every other seed and
+   steering an Adventure dropped its destination. */
+function seedSet() { return new Set([...S.seeds, ...S.seedTail]); }
+function isSeed(i) { return S.seeds.includes(i) || S.seedTail.includes(i); }
+function pinSeeds(ids) {
+  const s = seedSet();
+  return [...S.seeds, ...ids.filter(i => !s.has(i)), ...S.seedTail];
+}
+
+/* ------------------------------------------------------------------ undo for the mix
+   Every step that changes the mix goes through mixStep(), which records the mix before
+   and after it (history.js). Undo puts the recorded list back exactly; it never asks the
+   engine to pick again. */
+function mixSnap() {
+  return JSON.parse(JSON.stringify({
+    seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, mix: S.mix, stop: S.stop || null,
+    ban: S.ban, banLabel: S.banLabel, banArtists: S.banArtists,
+    likedArtists: S.likedArtists, dislikedArtists: S.dislikedArtists,
+    liked: S.liked, disliked: S.disliked,
+  }));
+}
+async function mixRestore(snap) {
+  const c = JSON.parse(JSON.stringify(snap));
+  Object.assign(S, c);
+  $('mixN').textContent = S.mix.length;
+  // Back to no mix at all: the mix view would be an empty page, so go to the library.
+  if (!S.mix.length && S.seed == null) {
+    renderFilterBar();
+    if (S.view === 'mix') await loadLibrary(false);
+    return true;
+  }
+  await showMix({ animate: S.view === 'mix' });
+  renderFilterBar();
+  return true;
+}
+function mixStep(label, fn) { return History.snapStep(label, mixSnap, mixRestore, fn); }
+
+/* The play queue: Play Next, Add to Queue, Remove, Clear, Shuffle, a drag in Now Playing.
+   Undo keeps the song that is playing now playing; see Player.restoreQueue. */
+function queueSnap() { return { q: Player.q.slice(), pos: Player.pos }; }
+function queueRestore(snap) {
+  const ok = Player.restoreQueue(snap.q, snap.pos);
+  if (S.view === 'nowplaying') showNowPlaying();
+  if (!ok) toast('The song playing now is not in that queue, so it was left as it is', true);
+  return ok;
+}
+function queueStep(label, fn) { return History.snapStep(label, queueSnap, queueRestore, fn); }
+
+/* What the list is showing: the genre/artist/album choice, search, smart view, folder,
+   which view. Select Artist / Album / Genre in the right-click menu change it. */
+function viewSnap() {
+  return { view: S.view, playlist: S.playlist, smart: S.smart, folder: S.folder, q: S.q,
+           facets: { genre: [...S.facets.genre], artist: [...S.facets.artist], album: [...S.facets.album] } };
+}
+async function viewRestore(v) {
+  S.smart = v.smart; S.folder = v.folder; S.q = v.q; $('q').value = v.q || '';
+  for (const k of ['genre', 'artist', 'album']) S.facets[k] = new Set(v.facets[k]);
+  if (v.view === 'mix') await showMix();
+  else if (v.view === 'nowplaying') await showNowPlaying();
+  else if (v.view === 'playlist' && v.playlist) await showPlaylist(v.playlist);
+  else await loadLibrary(true);
+  return true;
+}
+function viewStep(label, fn) { return History.snapStep(label, viewSnap, viewRestore, fn); }
+
+/* A row as the window knows it, from the list on screen or the player's own cache. */
+function knownRow(i) {
+  return S.rows.find(r => r.i === i) || (typeof Player !== 'undefined' && Player.cachedRow(i)) || null;
+}
+function songLabel(i, row) {
+  const r = row || S.rows.find(x => x.i === i) || (typeof Player !== 'undefined' && Player.cachedRow(i));
+  return r ? (r.artist ? `${r.artist} - ${r.title}` : r.title) : 'that song';
+}
+
+function doMix(seedI, opts) {
+  const what = opts && opts.keepFilters ? 'Re-mix' : `New mix from ${songLabel(seedI)}`;
+  return mixStep(what, () => mixFrom(seedI, opts));
+}
+
+async function mixFrom(seedI, opts) {
   // Nothing to mix FROM and nothing to mix WITH are different problems. "Select a track
   // first" is true either way and useless on an empty library, where there is no track
   // to select and the fix is somewhere else entirely.
@@ -1365,7 +1458,11 @@ async function doMix(seedI, opts) {
   $('btnMix').disabled = true;
   try {
     const j = await jget('/api/mix?' + p);
-    let ids = (j.tracks || []).map(x => x.i).filter(i => i !== seedI);
+    // A re-mix keeps the seed songs it was built from (a Blend's, an Adventure's ends);
+    // a new mix has just the one.
+    if (!(opts && opts.keepFilters) || !isSeed(seedI)) { S.seeds = [seedI]; S.seedTail = []; }
+    const seeds = seedSet();
+    let ids = (j.tracks || []).map(x => x.i).filter(i => !seeds.has(i));
     S.seed = seedI;
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;                 // why it stopped where it did (one sentence)
@@ -1384,9 +1481,10 @@ async function doMix(seedI, opts) {
       ids = kept;
       if (!ids.length) toast('No tracks fit that time budget', true);
     }
-    // Nothing fit: an EMPTY playlist and the reason (shown by showMix), not the seed
-    // alone dressed up as a one-song mix.
-    S.mix = ids.length ? [seedI, ...ids] : [];
+    // Nothing fit a NEW mix: an EMPTY playlist and the reason (shown by showMix), not the
+    // seed alone dressed up as a one-song mix. A re-mix of an existing one keeps its
+    // seed songs even then.
+    S.mix = (ids.length || (opts && opts.keepFilters)) ? pinSeeds(ids) : [];
     $('mixN').textContent = S.mix.length;
     await showMix();
   } catch (e) { toast(e.message, true); }
@@ -1414,7 +1512,10 @@ function noteStop(stop) {
    bites the toast SAYS so rather than quietly dropping tracks. */
 const MAX_BLEND_SEEDS = 25;
 
-async function doBlend(seedIds, sourceLabel) {
+function doBlend(seedIds, sourceLabel) {
+  return mixStep(`Blend of ${(seedIds || []).length} songs`, () => blendFrom(seedIds, sourceLabel));
+}
+async function blendFrom(seedIds, sourceLabel) {
   if (!seedIds || seedIds.length < 2) return toast('Pick two or more tracks first', true);
   let dropped = 0;
   if (seedIds.length > MAX_BLEND_SEEDS) {
@@ -1430,10 +1531,11 @@ async function doBlend(seedIds, sourceLabel) {
   try {
     const j = await jget('/api/mix/blend?' + p);
     S.seed = seedIds[0];
+    S.seeds = seedIds.slice(); S.seedTail = [];
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
     const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
-    S.mix = ids.length ? [...seedIds, ...ids] : [];
+    S.mix = ids.length ? pinSeeds(ids) : [];
     $('mixN').textContent = S.mix.length;
     noteStop(j.stop);
     const c = j.cohesion;
@@ -1469,7 +1571,10 @@ function blendFromQueue() {
 /* Adventure: exactly two selected rows -> an ordered walk FROM the first TO the
    last (row order), endpoints included (ruling A1; the Sonic Adventure shape on
    our own vectors). */
-async function doAdventure(seedIds) {
+function doAdventure(seedIds) {
+  return mixStep('Adventure', () => adventureFrom(seedIds));
+}
+async function adventureFrom(seedIds) {
   if (!seedIds || seedIds.length !== 2) return toast('Select exactly two tracks (start and destination)', true);
   S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
   S.banLabel = {};
@@ -1479,9 +1584,10 @@ async function doAdventure(seedIds) {
   try {
     const j = await jget('/api/mix/adventure?' + p);
     S.seed = seedIds[0];
+    S.seeds = [seedIds[0]]; S.seedTail = [seedIds[1]];
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
-    S.mix = (j.tracks || []).map(x => x.i);
+    S.mix = pinSeeds((j.tracks || []).map(x => x.i));
     $('mixN').textContent = S.mix.length;
     toast(`Adventure: ${j.a.label} → ${j.b.label}`);
     noteStop(j.stop);
@@ -1607,6 +1713,9 @@ async function restoreLastMix(saved) {
     const survived = saved.mix.filter(i => byI.has(i));
     if (!byI.has(saved.seed) || survived.length < 2) return;
     S.seed = saved.seed;
+    // a mix saved before 2026-10-01 carries only its first seed
+    S.seeds = (Array.isArray(saved.seeds) ? saved.seeds : [saved.seed]).filter(i => byI.has(i));
+    S.seedTail = (Array.isArray(saved.seedTail) ? saved.seedTail : []).filter(i => byI.has(i));
     S.mix = survived;
     $('mixN').textContent = S.mix.length;
     await showMix();
@@ -1942,7 +2051,20 @@ function selectedIds() {
 }
 
 /* ------------------------------------------------------------------ ratings */
-async function rateTrack(i, rating) {
+/* Rating and love are undoable: the step writes the old value back through the same call. */
+function rateTrack(i, rating) {
+  const old = (knownRow(i) || {}).rating || 0;
+  if (old === rating) return;
+  return History.act(rating ? `Rate ${songLabel(i)} ${rating} stars` : `Clear the rating of ${songLabel(i)}`,
+    async () => (await setRating(i, rating))
+      ? { undo: () => setRating(i, old), redo: () => setRating(i, rating) } : null);
+}
+function loveTrack(i, loved) {
+  return History.act(`${loved ? 'Love' : 'Un-love'} ${songLabel(i)}`,
+    async () => (await setLoved(i, loved))
+      ? { undo: () => setLoved(i, !loved), redo: () => setLoved(i, loved) } : null);
+}
+async function setRating(i, rating) {
   try {
     await jpost('/api/track/rate', { i, rating });
     for (const r of S.rows) if (r.i === i) r.rating = rating;
@@ -1951,15 +2073,19 @@ async function rateTrack(i, rating) {
       el.outerHTML = starsHtml({ i, rating });
     });
     if (Player.currentPool() === i) Player.paintNowPlayingMeta({ rating });
-  } catch (e) { toast(e.message, true); }
+    const c = Player.cachedRow(i); if (c) c.rating = rating;
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
 }
-async function loveTrack(i, loved) {
+async function setLoved(i, loved) {
   try {
     await jpost('/api/track/loved', { i, loved });
     for (const r of S.rows) if (r.i === i) r.loved = loved;
     if (Player.currentPool() === i) Player.paintNowPlayingMeta({ loved });
+    const c = Player.cachedRow(i); if (c) c.loved = loved;
     toast(loved ? '♥ Loved' : 'Un-loved');
-  } catch (e) { toast(e.message, true); }
+    return true;
+  } catch (e) { toast(e.message, true); return false; }
 }
 
 /* -- the file check behind the Missing Files view.
@@ -2426,29 +2552,39 @@ async function remixWithFilters(msg) {
       S.likedArtists.length || S.dislikedArtists.length) {
     await refine(undefined, msg);
   } else {
-    await doMix(S.seed, { keepFilters: true, msg });
+    await mixFrom(S.seed, { keepFilters: true, msg });
   }
   renderFilterBar();
 }
 
-function dropTracks(ids) {
-  const add = ids.filter(i => i !== S.seed && !S.ban.includes(i));
-  if (!add.length) return toast('Nothing to remove (the seed stays)', true);
-  // Remember the label NOW: once the track leaves the mix it is gone from S.rows,
-  // and the chip would otherwise read "track 1849" instead of the song name.
-  for (const i of add) {
-    const r = S.rows.find(x => x.i === i);
-    if (r) S.banLabel[i] = r.artist ? `${r.artist} — ${r.title}` : r.title;
-  }
-  S.ban.push(...add);
-  remixWithFilters(`Removed ${add.length} track${add.length > 1 ? 's' : ''}`);
+function dropTracks(ids, row) {
+  if (S.seed == null) return toast('Create a mix first', true);
+  const seedHit = ids.some(isSeed);
+  const add = ids.filter(i => !isSeed(i) && !S.ban.includes(i));
+  if (!add.length) return toast(seedHit ? 'Seed songs stay in the mix' : 'Nothing to remove', true);
+  const label = add.length === 1 ? `Remove ${songLabel(add[0], row)}` : `Remove ${add.length} songs`;
+  return mixStep(label, () => {
+    // Remember the label NOW: once the track leaves the mix it is gone from S.rows,
+    // and the chip would otherwise read "track 1849" instead of the song name.
+    for (const i of add) {
+      const r = S.rows.find(x => x.i === i) || (row && row.i === i ? row : null);
+      if (r) S.banLabel[i] = r.artist ? `${r.artist} — ${r.title}` : r.title;
+    }
+    S.ban.push(...add);
+    return remixWithFilters(`Removed ${add.length} track${add.length > 1 ? 's' : ''}`
+      + (seedHit ? ' (seed songs stay)' : ''));
+  });
 }
 
 function dropArtists(names) {
+  if (S.seed == null) return toast('Create a mix first', true);
   const add = names.filter(a => a && !S.banArtists.includes(a));
   if (!add.length) return;
-  S.banArtists.push(...add);
-  remixWithFilters(`Blocked ${add.join(', ')}`);
+  return mixStep(`Block ${add.join(', ')}`, () => {
+    S.banArtists.push(...add);
+    // Blocking the artist of a seed song blocks their other songs; the seed itself stays.
+    return remixWithFilters(`Blocked ${add.join(', ')}`);
+  });
 }
 
 function tuneArtist(names, dir) {
@@ -2456,23 +2592,28 @@ function tuneArtist(names, dir) {
   // drop/dropartist. Each name toggles independently; ONE re-mix at the end.
   names = [...new Set((Array.isArray(names) ? names : [names]).filter(Boolean))];
   if (!names.length) return toast('No artist on that track', true);
-  const add = dir === 'more' ? S.likedArtists : S.dislikedArtists;
-  const other = dir === 'more' ? S.dislikedArtists : S.likedArtists;
-  for (const name of names) {
-    const at = add.indexOf(name);
-    if (at >= 0) { add.splice(at, 1); continue; }
-    add.push(name);
-    const o = other.indexOf(name);
-    if (o >= 0) other.splice(o, 1);
-  }
+  if (S.seed == null) return toast('Create a mix first', true);
   const label = names.join(', ');
-  remixWithFilters(dir === 'more' ? `More like ${label}` : `Less like ${label}`);
+  return mixStep(dir === 'more' ? `More like ${label}` : `Less like ${label}`, () => {
+    const add = dir === 'more' ? S.likedArtists : S.dislikedArtists;
+    const other = dir === 'more' ? S.dislikedArtists : S.likedArtists;
+    for (const name of names) {
+      const at = add.indexOf(name);
+      if (at >= 0) { add.splice(at, 1); continue; }
+      add.push(name);
+      const o = other.indexOf(name);
+      if (o >= 0) other.splice(o, 1);
+    }
+    return remixWithFilters(dir === 'more' ? `More like ${label}` : `Less like ${label}`);
+  });
 }
 
 function clearFilters() {
-  S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
-  S.liked = []; S.disliked = []; S.banLabel = {};
-  remixWithFilters('Filters cleared');
+  return mixStep('Clear all filters', () => {
+    S.ban = []; S.banArtists = []; S.likedArtists = []; S.dislikedArtists = [];
+    S.liked = []; S.disliked = []; S.banLabel = {};
+    return remixWithFilters('Filters cleared');
+  });
 }
 
 function renderFilterBar() {
@@ -2494,15 +2635,27 @@ function renderFilterBar() {
 }
 
 function undoFilter(kind, key) {
-  const drop = (arr, v) => { const at = arr.indexOf(v); if (at >= 0) arr.splice(at, 1); };
-  if (kind === 'track') drop(S.ban, +key);
-  else if (kind === 'artist') drop(S.banArtists, key);
-  else if (kind === 'more') drop(S.likedArtists, key);
-  else if (kind === 'less') drop(S.dislikedArtists, key);
-  remixWithFilters('Filter removed');
+  const name = { track: 'removal', artist: 'block', more: 'more-like', less: 'less-like' }[kind] || 'filter';
+  return mixStep(`Drop the ${name} chip`, () => {
+    const drop = (arr, v) => { const at = arr.indexOf(v); if (at >= 0) arr.splice(at, 1); };
+    if (kind === 'track') drop(S.ban, +key);
+    else if (kind === 'artist') drop(S.banArtists, key);
+    else if (kind === 'more') drop(S.likedArtists, key);
+    else if (kind === 'less') drop(S.dislikedArtists, key);
+    return remixWithFilters('Filter removed');
+  });
 }
 
-async function tuneTrack(i, dir) {
+function tuneTrack(i, dir, row) {
+  if (S.seed == null) return toast('Create a mix first', true);
+  // A seed song is what the mix is built from: voting it down would throw it out.
+  if (dir === 'less' && isSeed(i)) return toast('Seed songs stay in the mix', true);
+  const on = (dir === 'more' ? S.liked : S.disliked).includes(i);
+  const verb = on ? 'Withdraw' : (dir === 'more' ? 'More like' : 'Less like');
+  return mixStep(`${verb} ${on ? 'vote on ' : ''}${songLabel(i, row)}`, () => tuneTrackNow(i, dir));
+}
+
+async function tuneTrackNow(i, dir) {
   // toggle semantics: clicking the same vote again withdraws it; More and Less
   // are mutually exclusive per track. Then re-rank through the same refine() path.
   const add = dir === 'more' ? S.liked : S.disliked;
@@ -2528,7 +2681,7 @@ async function tuneTrack(i, dir) {
   }
   // follow a fresh "more" vote to its pinned position; a withdrawn vote or a removal
   // doesn't need the camera move.
-  refine(dir === 'more' && S.liked.includes(i) ? i : undefined);
+  return refine(dir === 'more' && S.liked.includes(i) ? i : undefined);
 }
 
 async function refine(focusI, msg) {
@@ -2551,9 +2704,10 @@ async function refine(focusI, msg) {
     // Compose: seed, then the liked ANCHORS pinned in the order they were liked, then
     // the server's re-ranked picks. The server excludes liked/disliked from its list
     // (you already have the liked ones — they are pinned, not re-suggested).
-    const anchors = S.liked.filter(i => i !== S.seed);
-    S.mix = [S.seed, ...anchors,
-             ...ids.filter(i => i !== S.seed && !anchors.includes(i))];
+    // Every seed song is held (pinSeeds), not just the first: before 2026-10-01 a steered
+    // Blend lost all its other seeds here, and a steered Adventure its destination.
+    const anchors = S.liked.filter(i => !isSeed(i));
+    S.mix = pinSeeds([...anchors, ...ids.filter(i => !anchors.includes(i))]);
     $('mixN').textContent = S.mix.length;
     await showMix({ animate: true });
     renderFilterBar();
@@ -2675,14 +2829,19 @@ function bindEvents() {
         rating: r => r.rating || 0, plays: r => r.plays || 0,
         status: r => r.status }[s];
       if (!keyf) return;
-      const rows = S.rows.slice().sort((a, b) =>
-        keyf(a) < keyf(b) ? -1 : keyf(a) > keyf(b) ? 1 : 0);
-      if (S.desc) rows.reverse();
-      // keep S.mix in step with what's on screen -- currentExportIds() reads S.mix in the
-      // mix view, so a stale S.mix would export a different order than the user is looking at
-      if (S.view === 'mix') S.mix = rows.map(r => r.i);
-      if (S.view === 'playlist') S.plDirty = true;   // a re-sort is a re-order to save
-      renderRows(rows, { seed: S.seed }); setHeaderSort();
+      const sortNow = () => {
+        const rows = S.rows.slice().sort((a, b) =>
+          keyf(a) < keyf(b) ? -1 : keyf(a) > keyf(b) ? 1 : 0);
+        if (S.desc) rows.reverse();
+        // keep S.mix in step with what's on screen -- currentExportIds() reads S.mix in the
+        // mix view, so a stale S.mix would export a different order than the user is looking at
+        if (S.view === 'mix') S.mix = rows.map(r => r.i);
+        if (S.view === 'playlist') S.plDirty = true;   // a re-sort is a re-order to save
+        renderRows(rows, { seed: S.seed }); setHeaderSort();
+      };
+      // a sort of the mix is a change to the mix, so it can be undone like one
+      if (S.view === 'mix') mixStep(`Sort the mix by ${th.textContent.trim() || s}`, sortNow);
+      else sortNow();
     }
   });
   $('thead-row').addEventListener('contextmenu', e => {
@@ -2851,10 +3010,10 @@ function bindEvents() {
     const li = e.target.closest('li[data-k]'); if (!li) return;
     if (e.target.closest('.qx')) {
       const i = Player.q[+li.dataset.k];
-      if (i != null) {
+      if (i != null) queueStep(`Remove ${songLabel(i)} from the queue`, () => {
         Player.removeFromQueue([i]);
         if (S.view === 'nowplaying') showNowPlaying();
-      }
+      });
       return;
     }
     $('upNext').querySelectorAll('li.sel').forEach(x => x.classList.remove('sel'));
@@ -2874,8 +3033,8 @@ function bindEvents() {
     if (ids.length < 2) return toast('Not enough tracks left in the queue to build from', true);
     doBlend(ids, 'queue');
   };
-  $('qClear').onclick = () => { Player.clearQueue(); showNowPlaying(); };
-  $('qShuffle').onclick = () => { Player.shuffleQueue(); showNowPlaying(); };
+  $('qClear').onclick = () => queueStep('Clear the queue', () => { Player.clearQueue(); showNowPlaying(); });
+  $('qShuffle').onclick = () => queueStep('Shuffle the queue', () => { Player.shuffleQueue(); showNowPlaying(); });
   $('qSave').onclick = () => {
     if (!Player.q.length) return toast('Queue is empty', true);
     $('exportPanel').hidden = false;
@@ -2972,6 +3131,10 @@ function bindEvents() {
     if (S.view === 'mix') S.mix = rows.map(r => r.i);
     renderRows(rows, { seed: S.seed });
   };
+  // Undo and Redo: the toolbar pair and the two lines at the top of the right-click menu
+  $('btnUndo').onclick = () => History.undo();
+  $('btnRedo').onclick = () => History.redo();
+  History.paint();
   const pop = (btn, panel) => $(btn).onclick = () => {
     const p = $(panel); const other = panel === 'optionsPanel' ? 'exportPanel' : 'optionsPanel';
     $(other).hidden = true; p.hidden = !p.hidden;
@@ -3099,27 +3262,49 @@ function bindEvents() {
   });
 
   // context menu
+  /* One right-click menu for a song, wherever the song is: a row in any list, or the song
+     playing now in the bottom bar's display or the Track Info panel (2026-10-01, "the same
+     as anywhere else"). `ctxOn` is what the menu acts on: the song clicked, its row, and
+     the songs a selection-wide item applies to. From a list that is the selection; from
+     the playing song it is that one song. */
   const ctx = $('ctx');
+  let ctxOn = { i: -1, row: {}, ids: [] };
+  const openCtx = (i, row, ids, x, y) => {
+    ctxOn = { i, row: row || {}, ids };
+    ctx.dataset.i = i;
+    // live rate + love state inside the menu
+    $('ctxStars').dataset.i = i;
+    const rt = ctxOn.row.rating || 0;
+    $('ctxStars').innerHTML = [1, 2, 3, 4, 5].map(n =>
+      `<i data-s="${n}" class="${n <= rt ? 'on' : ''}">${n <= rt ? '★' : '☆'}</i>`).join('');
+    ctx.querySelector('[data-act="love"] span').textContent =
+      ctxOn.row.loved ? '♥ Un-love' : '♥ Love';
+    History.paint();
+    placeFloating(ctx, x, y);
+  };
   $('tbody').addEventListener('contextmenu', e => {
     const tr = e.target.closest('tr'); if (!tr) return;
     e.preventDefault();
     const i = +tr.dataset.i; if (i < 0) return;
     if (!S.sel.has(i)) { S.sel.clear(); S.sel.add(i); S.anchor = i; repaintRowState(); }
-    ctx.dataset.i = i;
-    const row = S.rows.find(r => r.i === i) || {};
-    // live rate + love state inside the menu
-    $('ctxStars').dataset.i = i;
-    $('ctxStars').innerHTML = [1, 2, 3, 4, 5].map(n =>
-      `<i data-s="${n}" class="${n <= (row.rating || 0) ? 'on' : ''}">${n <= (row.rating || 0) ? '★' : '☆'}</i>`).join('');
-    ctx.querySelector('[data-act="love"] span').textContent =
-      row.loved ? '♥ Un-love' : '♥ Love';
-    placeFloating(ctx, e.clientX, e.clientY);
+    const sel = selectedIds();
+    openCtx(i, S.rows.find(r => r.i === i), sel.length ? sel : [i], e.clientX, e.clientY);
   });
+  const ctxPlaying = async e => {
+    e.preventDefault();
+    const i = Player.currentPool();
+    if (i < 0) return toast('Nothing is playing', true);
+    const row = await Player.rowOf(i);
+    openCtx(i, row, [i], e.clientX, e.clientY);
+  };
+  for (const id of ['lcd', 'railInfo', 'miniBar']) {
+    const el = $(id); if (el) el.addEventListener('contextmenu', ctxPlaying);
+  }
   ctx.addEventListener('click', async e => {
     const star = e.target.closest('#ctxStars i');
     const li = e.target.closest('li[data-act]'); if (!li) return;
-    const i = +ctx.dataset.i;
-    const row = S.rows.find(r => r.i === i) || {};
+    if (li.classList.contains('off')) return;   // Undo / Redo with nothing to do
+    const { i, row, ids } = ctxOn;
     if (star) {
       const n = +star.dataset.s;
       rateTrack(i, n === (row.rating || 0) ? 0 : n);
@@ -3128,51 +3313,62 @@ function bindEvents() {
     }
     if (li.dataset.act === 'rate') return;      // only the stars inside act
     ctx.hidden = true;
+    const artistsOf = list => [...new Set(list.map(x => artistOf(x) || (x === i ? row.artist : ''))
+      .filter(Boolean))];
     switch (li.dataset.act) {
+      case 'undo': History.undo(); break;
+      case 'redo': History.redo(); break;
       case 'mix': doMix(i); break;
-      case 'blend': doBlend(selectedIds()); break;
-      case 'adventure': { const s = selectedIds(); doAdventure(s); break; }
+      case 'blend': doBlend(ids); break;
+      case 'adventure': doAdventure(ids); break;
       case 'play': Player.playTrack(i); break;
-      case 'playnext': Player.queueAdd(selectedIds().length ? selectedIds() : [i], { next: true });
-        if (S.view === 'nowplaying') showNowPlaying();
-        toast('Playing next'); break;
-      case 'queue': Player.queueAdd(selectedIds().length ? selectedIds() : [i]);
-        if (S.view === 'nowplaying') showNowPlaying();
-        toast('Queued'); break;
+      case 'playnext': queueStep(ids.length > 1 ? `Play ${ids.length} songs next` : `Play ${songLabel(i, row)} next`, () => {
+          Player.queueAdd(ids, { next: true });
+          if (S.view === 'nowplaying') showNowPlaying();
+          toast('Playing next');
+        }); break;
+      case 'queue': queueStep(ids.length > 1 ? `Queue ${ids.length} songs` : `Queue ${songLabel(i, row)}`, () => {
+          Player.queueAdd(ids);
+          if (S.view === 'nowplaying') showNowPlaying();
+          toast('Queued');
+        }); break;
       case 'love': loveTrack(i, !row.loved); break;
       case 'tags': Prefs.openTagEditor(i); break;
-      case 'more': tuneTrack(i, 'more'); break;
-      case 'less': tuneTrack(i, 'less'); break;
+      case 'more': tuneTrack(i, 'more', row); break;
+      case 'less': tuneTrack(i, 'less', row); break;
       case 'moreartist':
       case 'lessartist': {
-        const names = (selectedIds().length ? selectedIds() : [i])
-          .map(artistOf).filter(Boolean);
+        const names = artistsOf(ids);
         tuneArtist(names.length ? names : [row.artist],
                    li.dataset.act === 'moreartist' ? 'more' : 'less');
         break;
       }
       // filters act on the whole selection when there is one, so you can throw out
       // a block of tracks in one go
-      case 'drop': dropTracks(selectedIds().length ? selectedIds() : [i]); break;
-      case 'dropartist': {
-        const names = (selectedIds().length ? selectedIds() : [i])
-          .map(artistOf).filter(Boolean);
-        dropArtists([...new Set(names)]);
+      case 'drop': dropTracks(ids, row); break;
+      case 'dropartist': dropArtists(artistsOf(ids)); break;
+      case 'artist': viewStep(`Show the artist ${row.artist || ''}`, () => {
+          S.facets.artist = new Set([row.artist]); return loadLibrary(true);
+        }); break;
+      case 'album': viewStep(`Show the album ${row.album || ''}`, () => {
+          S.facets.album = new Set([row.album]); return loadLibrary(true);
+        }); break;
+      case 'genre': {
+        const g = (row.genre || '').split(/[;,]/)[0].trim();
+        viewStep(`Show the genre ${g}`, () => {
+          S.facets.genre = new Set([g]); return loadLibrary(true);
+        });
         break;
       }
-      case 'artist': S.facets.artist = new Set([row.artist]); loadLibrary(true); break;
-      case 'album': S.facets.album = new Set([row.album]); loadLibrary(true); break;
-      case 'genre': S.facets.genre = new Set([(row.genre || '').split(/[;,]/)[0].trim()]);
-        loadLibrary(true); break;
       case 'why': showWhy(i, e.clientX, e.clientY); break;
       case 'copy': navigator.clipboard.writeText(`${row.artist} — ${row.title}`)
         .then(() => toast('Copied')); break;
       case 'reveal': jpost('/api/reveal', { i }).catch(err => toast(err.message, true)); break;
       case 'locate': locateFile(i); break;
-      case 'delete': deleteTracks(selectedIds().length ? selectedIds() : [i]); break;
+      case 'delete': deleteTracks(ids); break;
       // "Send to Folder", both scopes (P0 operator request #1). Appended here rather
       // than interleaved above so this stays a clean, separately-mergeable addition.
-      case 'sendsel': sendToFolder(selectedIds().length ? selectedIds() : [i]); break;
+      case 'sendsel': sendToFolder(ids); break;
       case 'sendmix':
         if (!S.mix.length) { toast('Create a mix first', true); break; }
         sendToFolder(S.mix);
@@ -3206,7 +3402,10 @@ function bindEvents() {
       return;
     }
     const k = e.key.toLowerCase();
-    if ((e.ctrlKey || e.metaKey) && k === 'm' && !e.shiftKey) { e.preventDefault(); doMix(firstSelected()); }
+    // Undo / Redo first: plain Z is Previous, so Ctrl+Z must be caught before it
+    if ((e.ctrlKey || e.metaKey) && ((k === 'z' && e.shiftKey) || k === 'y')) { e.preventDefault(); History.redo(); }
+    else if ((e.ctrlKey || e.metaKey) && k === 'z') { e.preventDefault(); History.undo(); }
+    else if ((e.ctrlKey || e.metaKey) && k === 'm' && !e.shiftKey) { e.preventDefault(); doMix(firstSelected()); }
     else if ((e.ctrlKey || e.metaKey) && k === 'g' && !e.shiftKey) { e.preventDefault(); geniusMix(); }
     else if ((e.ctrlKey || e.metaKey) && e.shiftKey && k === 'm') { e.preventDefault(); Prefs.toggleMini(); }
     else if ((e.ctrlKey || e.metaKey) && k === ',') { e.preventDefault(); Prefs.open(); }
@@ -3219,11 +3418,11 @@ function bindEvents() {
     else if (e.key === ' ') { e.preventDefault(); Player.togglePlay(); }
     else if (k === 'q') {
       const ids = selectedIds();
-      if (ids.length) {
+      if (ids.length) queueStep(ids.length > 1 ? `Queue ${ids.length} songs` : `Queue ${songLabel(ids[0])}`, () => {
         Player.queueAdd(ids);
         if (S.view === 'nowplaying') showNowPlaying();
         toast(`Queued ${ids.length}`);
-      }
+      });
     }
     else if (k === 'z') Player.prev();
     else if (k === 'v') Player.stop();
@@ -3236,7 +3435,8 @@ function bindEvents() {
     else if (e.key === 'F2') { const i = firstSelected(); if (i != null) Prefs.openTagEditor(i); }
     else if (e.key === 'Delete' && S.view === 'nowplaying') {
       const ids = selectedIds();
-      if (ids.length) { Player.removeFromQueue(ids); showNowPlaying(); }
+      if (ids.length) queueStep(ids.length > 1 ? `Remove ${ids.length} songs from the queue` : `Remove ${songLabel(ids[0])} from the queue`,
+        () => { Player.removeFromQueue(ids); showNowPlaying(); });
     }
     // Del in the mix view throws the selection out of the mix (undoable via the chips)
     else if (e.key === 'Delete' && S.view === 'mix') {

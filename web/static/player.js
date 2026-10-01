@@ -420,6 +420,25 @@ const Player = (() => {
     P.pos -= removedBeforePos;
     paintTransport(); persist();
   }
+  /* Undo for a queue change (history.js): put a recorded queue back WITHOUT interrupting
+     the song that is playing. The recorded queue is re-anchored on that song; if it is not
+     in the recorded queue at all the queue is left alone and this says so (false). An
+     empty recorded queue means the step started playback from nothing, so undo stops. */
+  function restoreQueue(q, pos) {
+    const cur = currentPool();
+    if (!q.length) {
+      if (cur >= 0) stop();
+      P.q = []; P.pos = -1;
+    } else if (cur >= 0) {
+      const at = q[pos] === cur ? pos : q.indexOf(cur);
+      if (at < 0) return false;
+      P.q = q.slice(); P.pos = at;
+    } else {
+      P.q = q.slice(); P.pos = Math.min(Math.max(pos, -1), P.q.length - 1);
+    }
+    paintTransport(); persist(); queueDirty();
+    return true;
+  }
   function clearQueue() {
     const curI = currentPool();
     P.q = curI >= 0 ? [curI] : [];
@@ -952,6 +971,9 @@ const Player = (() => {
     playAt, playList, playTrack, queueAdd, removeFromQueue, clearQueue,
     moveInQueue, shuffleQueue, toggleShuffle, cycleRepeat,
     togglePlay, stop, next, prev, toggleEqPanel, toggleAutoDj, toggleRadio,
-    paintNowPlayingMeta,
+    paintNowPlayingMeta, restoreQueue,
+    // the row behind a pool index, for the right-click menu on the playing song
+    rowOf: rowFor,
+    cachedRow: i => P.rowCache.get(i) || null,
   };
 })();

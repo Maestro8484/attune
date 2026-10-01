@@ -23,6 +23,11 @@
     <span class="ico">✦</span> Genius
   </button>
 
+  <!-- Undo and Redo for every change to a mix, the queue, a rating, love or tags
+       (2026-10-01). Their hover text names the step they would undo. -->
+  <button id="btnUndo" class="iconbtn" title="Undo (Ctrl+Z)" disabled>↶ Undo</button>
+  <button id="btnRedo" class="iconbtn" title="Redo (Ctrl+Y)" disabled>↷ Redo</button>
+
   <select id="recipeSel" title="Recipe — apply a saved preset to the mix dials below">
     <option value="">Dials (manual)</option>
   </select>
@@ -267,6 +272,9 @@
 
 <!-- context menu -->
 <ul id="ctx" class="ctxmenu" hidden>
+  <li data-act="undo" id="ctxUndo" class="off"><span class="hlbl">Undo</span><kbd>Ctrl+Z</kbd></li>
+  <li data-act="redo" id="ctxRedo" class="off"><span class="hlbl">Redo</span><kbd>Ctrl+Y</kbd></li>
+  <li class="sep"></li>
   <li data-act="mix"><b>Create Mix</b><kbd>Ctrl+M</kbd></li>
   <li data-act="blend">Blend Selected (2+)</li>
   <li data-act="adventure">Adventure: First → Last</li>
@@ -1079,6 +1087,7 @@
 <script src="/static/player.js"></script>
 <script src="/static/prefs.js"></script>
 <script src="/static/smartlist.js"></script>
+<script src="/static/history.js"></script>
 <script src="/static/boot.js"></script>
 <script src="/static/tips.js"></script>
 </body>
