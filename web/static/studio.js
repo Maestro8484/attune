@@ -2558,7 +2558,10 @@ async function remixWithFilters(msg) {
   if (S.seed == null) return toast('Create a mix first', true);
   // Voting (More/Less) owns the refine path; plain filters re-run the mix path.
   // A Blend and an Adventure always go through refine(), which rebuilds them as what
-  // they are; only a plain mix with no votes re-runs the ordinary mix.
+  // they are; only a plain mix with no votes re-runs the ordinary mix. Steering is V2
+  // only, so a Blend or Adventure reopened under another engine is filtered as a plain
+  // mix rather than not at all (cold reader, 2026-10-01).
+  if (S.kind !== 'mix' && S.stats && S.stats.engine !== 'v2') S.kind = 'mix';
   if (S.kind !== 'mix' || S.liked.length || S.disliked.length ||
       S.likedArtists.length || S.dislikedArtists.length) {
     await refine(undefined, msg);

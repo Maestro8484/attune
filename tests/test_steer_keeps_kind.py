@@ -90,6 +90,8 @@ def test_steered_adventure_comes_back_as_a_walk(client):
         "adventure": {"a": 0, "b": 15, "size": 8}}).get_json()
     w2 = _ids(j)
     assert w2[0] == 0 and w2[-1] == 15 and gone not in w2 and 33 in w2
+    # the liked song rides on top of the stops; the "N of M" line counts stops only
+    assert j["stop"]["returned"] == len(w2) - 2 - 1 <= j["stop"]["requested"]
 
 
 def test_adventure_refine_refuses_bad_ends(client):

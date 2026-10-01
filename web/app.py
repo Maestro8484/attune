@@ -1266,12 +1266,13 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 excl |= {pi for pi, ar in enumerate(eng.artist)
                          if (ar or "").strip().lower() in ban_art}
             excl -= {adv_a, adv_b}
+            kept = [x for x in liked if x not in excl and x not in (adv_a, adv_b)]
             try:
                 refs = active.adventure(
                     adv_a, adv_b, size=adv_size, allowed=mask, min_fit=min_fit,
                     report=report, liked=liked + liked_art,
                     disliked=disliked + disliked_art,
-                    keep=[x for x in liked if x not in excl], exclude=sorted(excl))
+                    keep=kept, exclude=sorted(excl))
             except ValueError as e:
                 return jsonify(error=str(e)), 400
             except AttributeError:
@@ -1279,7 +1280,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             if refs is None:
                 return jsonify(error="unknown seed"), 404
             tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
-            stop = _stop_info(report, adv_size - 2, len(tracks) - 2, cinfo, min_fit)
+            # liked songs ride on top of the stops, the way a steered mix pins them on
+            # top of its count, so the "N of M" sentence counts stops only
+            on_path = sum(1 for t in tracks if t["i"] in set(kept))
+            stop = _stop_info(report, adv_size - 2, len(tracks) - 2 - on_path, cinfo, min_fit)
             return jsonify(seed=labels[adv_a], seed_i=adv_a, kind="adventure",
                            tracks=tracks, stop=stop, collection=cinfo)
         try:
