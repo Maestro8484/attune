@@ -20,6 +20,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   library, which still asks first.
 - **Right-click the song that is playing.** The display in the bottom bar, the Track
   Info panel and the mini player now open the same right-click menu as a song in a list.
+- **Three scoring switches in the engine, all off.** Nothing about a mix changes: with
+  the switches off the score is computed exactly as before, and the regression check
+  confirms the same 16 playlists byte for byte. The switches exist so different ways of
+  scoring can be compared in a blind listening test before any of them is turned on.
+  *Fusion* puts every ingredient of the score (sound fingerprint, sound descriptors,
+  genre tags, tempo, year) on one scale before its weight applies, so a weight means a
+  share of say. *Fingerprint space* compares fingerprints with the library's average
+  removed. *Feel* adds closeness in a set of per-song scores read from a small file,
+  when one is present; none ships yet. `eval/influence.py` reports how much say each
+  ingredient has under each version, and `eval/abtest.py` can now export any version
+  as a blinded playlist and record rankings given outside its own prompt.
 
 ### Changed (2026-10-01)
 

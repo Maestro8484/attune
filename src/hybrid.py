@@ -34,7 +34,36 @@ import numpy as np
 # CLAP ears + librosa 'lib' timbre + genre + linear tempo + era. NO key term by default:
 # the key idea was sound but lost by ear (and its code was reversed until fixed). The key
 # term remains available (set "key">0) now that _key_compat is correct, but ships off.
-DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1, "key": 0.0}
+DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1, "key": 0.0,
+                   "feel": 0.0}
+
+# Scoring switches (2026-10-01). ALL OFF BY DEFAULT: with fusion "raw", clap_space "raw"
+# and the feel weight at 0, _score() runs the V2 code it always ran and the byte-identical
+# regression gate holds it there. None of them becomes a default on a number (LAW 1); each
+# waits on a blind listening test.
+#
+#   fusion      how the ingredients are put on one scale before their weights apply.
+#               "raw"  add the raw numbers (V2 as eared).
+#               "z"    each ingredient as distance from its own library average, in units
+#                      of its own spread, for this seed.
+#               "rank" each ingredient as its percentile in the library for this seed, so a
+#                      weight is a share of say rather than a multiplier on whatever range
+#                      the raw number happens to have. This is the search-engine practice
+#                      of normalizing scores before combining them (CombSUM score fusion).
+#   clap_space  which form of the stored fingerprint the clap term compares.
+#               "raw"       the stored vectors.
+#               "centered"  the library's average fingerprint subtracted, length 1 again.
+#               "abtt1..3"  centered, then the 1 to 3 strongest shared directions removed
+#                           ("all-but-the-top", Mu and Viswanath 2018).
+#               Computed in memory at load from the stored vectors; nothing is written.
+#   feel        weight of the feel-closeness ingredient: how near a candidate's five feel
+#               scores (danceable, happy, intense, instrumental, acoustic) sit to the
+#               seed's. The scores come from the stored fingerprints and a small file of
+#               text directions, models/feel_prompts.json; see _load_feel().
+FUSIONS = ("raw", "z", "rank")
+CLAP_SPACES = ("raw", "centered", "abtt1", "abtt2", "abtt3")
+FEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
+                         "feel_prompts.json")
 
 # The fit line: the count becomes a MAXIMUM, not a quota, when a walk is given `min_fit`.
 # Both values are PROVISIONAL starting points (LAW 1: where "fits" ends is judged by ear,
@@ -77,6 +106,19 @@ def _connect_readonly(db_path, timeout=30):
     except ValueError:
         # not representable as a URI for some reason -- fall back rather than fail
         return sqlite3.connect(db_path, timeout=timeout)
+
+
+def _pct(x):
+    """Each value's place in x as 0..1 (0 = lowest, 1 = highest); tied values share the
+    average of the places they cover, so a column that is all one value reads 0.5
+    throughout and has no say in an order."""
+    x = np.asarray(x, np.float64)
+    n = x.shape[0]
+    if n < 2:
+        return np.full(n, 0.5)
+    _, inv, cnt = np.unique(x, return_inverse=True, return_counts=True)
+    avg = np.cumsum(cnt) - (cnt + 1) / 2.0      # 0-based average place of each tied group
+    return (avg / (n - 1))[inv]
 
 
 def _tags(g):
@@ -177,16 +219,33 @@ class HybridEngine:
     ARC_PERIOD = 20         # tracks per full rise/fall/wave cycle
     ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
 
-    def __init__(self, db_path, weights=None):
+    def __init__(self, db_path, weights=None, fusion=None, clap_space=None, feel_file=None):
         self.w = dict(DEFAULT_WEIGHTS)
+        self.fusion, self.clap_space = "raw", "raw"
         cfg = os.path.join(os.path.dirname(db_path), "engine_v2.json")
         if os.path.exists(cfg):
             try:
-                self.w.update(json.load(open(cfg)).get("best_weights", {}))
+                saved = json.load(open(cfg))
+                self.w.update(saved.get("best_weights", {}))
+                # the scoring switches ride the same file as the weights; a value this
+                # engine does not know is ignored rather than trusted
+                sc = saved.get("scoring", {})
+                if sc.get("fusion") in FUSIONS:
+                    self.fusion = sc["fusion"]
+                if sc.get("clap_space") in CLAP_SPACES:
+                    self.clap_space = sc["clap_space"]
             except Exception:
                 pass
         if weights:
             self.w.update(weights)
+        if fusion is not None:
+            self.fusion = fusion
+        if clap_space is not None:
+            self.clap_space = clap_space
+        if self.fusion not in FUSIONS:
+            raise ValueError(f"fusion must be one of {FUSIONS}, not {self.fusion!r}")
+        if self.clap_space not in CLAP_SPACES:
+            raise ValueError(f"clap_space must be one of {CLAP_SPACES}, not {self.clap_space!r}")
 
         conn = _connect_readonly(db_path, timeout=30)
         conn.execute("PRAGMA busy_timeout=15000")
@@ -333,7 +392,134 @@ class HybridEngine:
             self.energy = np.full(len(paths), np.nan)
             self._energy_lo, self._energy_hi = -1.0, 1.0   # unreachable: no energy data
 
+        # The other forms of the fingerprint, built on first use and kept; and the five
+        # feel scores, one 0..1 percentile per song, or None when the file is absent.
+        self._spaces = {}
+        self.feel, self.feel_names, self.feel_labels = None, [], []
+        self._load_feel(feel_file)
+
+    def _clap_matrix(self, name):
+        """The fingerprint matrix in the named space (see CLAP_SPACES): unit rows, same
+        row order as self.X. self.X itself is never changed, so every walk that reads it
+        directly (blend, steering, adventure, flow) is exactly as it was."""
+        if name == "raw" or self.X.shape[0] < 2:
+            return self.X
+        M = self._spaces.get(name)
+        if M is None:
+            Xc = self.X.astype(np.float64)
+            Xc = Xc - Xc.mean(0)
+            d = CLAP_SPACES.index(name) - 1          # centered 0, abtt1 1, abtt2 2, abtt3 3
+            if d > 0 and Xc.shape[0] > d:
+                # the d strongest shared directions of what centering left: the top
+                # eigenvectors of the 512x512 covariance (eigh returns them ascending)
+                _, vecs = np.linalg.eigh(Xc.T @ Xc)
+                U = vecs[:, -d:]
+                Xc = Xc - (Xc @ U) @ U.T
+            nrm = np.linalg.norm(Xc, axis=1, keepdims=True); nrm[nrm < 1e-9] = 1e-9
+            M = (Xc / nrm).astype(np.float32)
+            self._spaces[name] = M
+        return M
+
+    def _load_feel(self, path=None):
+        """Five listener-meaningful scores per song, from the stored fingerprints alone.
+
+        The fingerprint model was trained on sound and text together, so a description
+        such as "dance beat, steady tempo" has a direction in the same space as the
+        audio. A song's score is how much nearer its fingerprint sits to the positive
+        description than to the negative one, turned into its percentile in this library
+        (0 = least, 1 = most). The approach and the starting prompt pairs are Music
+        Assistant's Sonic Analysis provider (Apache-2.0; see NOTICE.md).
+
+        The file holds the directions already computed, so no text model is ever loaded
+        or shipped. Each score carries either "pos"/"neg" (lists of text embeddings,
+        averaged per side) or a ready direction "w"; "space" names the form of the
+        fingerprint they are compared with. A missing or unreadable file means no feel
+        scores, which is not an error: the feel weight then has nothing to act on."""
+        path = path or FEEL_FILE
+        try:
+            with open(path, encoding="utf-8") as fh:
+                spec = json.load(fh)
+        except (OSError, ValueError):
+            return
+        if not self.paths:
+            return
+        space = spec.get("space", "raw")
+        if space not in CLAP_SPACES:
+            return
+        M = self._clap_matrix(space).astype(np.float64)
+        names, labels, cols = [], [], []
+        for sc in spec.get("scores", []):
+            if "w" in sc:
+                wv = np.asarray(sc["w"], np.float64)
+            else:
+                wv = (np.asarray(sc["pos"], np.float64).reshape(-1, M.shape[1]).mean(0)
+                      - np.asarray(sc["neg"], np.float64).reshape(-1, M.shape[1]).mean(0))
+            if wv.shape != (M.shape[1],):
+                continue
+            names.append(sc["name"]); labels.append(sc.get("label", sc["name"]))
+            cols.append(_pct(M @ wv))
+        if cols:
+            self.feel = np.column_stack(cols).astype(np.float32)
+            self.feel_names, self.feel_labels = names, labels
+        if space != self.clap_space:
+            self._spaces.pop(space, None)     # only needed for this pass; do not hold it
+
+    def _switched(self):
+        """True when any scoring switch is on, i.e. when _score() leaves the V2 path."""
+        return (self.fusion != "raw" or self.clap_space != "raw"
+                or bool(self.w.get("feel") and self.feel is not None))
+
+    def _terms(self, si):
+        """The active ingredients of a switched score, in the order they are added: each
+        as (name, weight, an array over the pool where BIGGER IS BETTER). The gaps (tempo,
+        year, feel) are therefore negated here, which under "raw" fusion gives exactly the
+        subtraction V2 writes."""
+        w, out = self.w, []
+        if w.get("clap"):
+            M = self._clap_matrix(self.clap_space)
+            out.append(("clap", w["clap"], (M @ M[si]).astype(np.float64)))
+        if self.use_lib and w.get("lib"):
+            out.append(("lib", w["lib"], self.L @ self.L[si]))
+        if w.get("genre"):
+            st = self.genre_tags[si]
+            out.append(("genre", w["genre"],
+                        np.array([len(st & g) / len(st | g) if st and g else 0.0
+                                  for g in self.genre_tags])))
+        if w.get("bpm"):
+            sb = self.bpm[si]
+            out.append(("bpm", w["bpm"],
+                        -np.where((self.bpm > 0) & (sb > 0), np.abs(self.bpm - sb) / 40.0, 0.5)))
+        if w.get("key") and self.key[si]:
+            out.append(("key", w["key"],
+                        np.array([_key_compat(self.key[si], kj) for kj in self.key])))
+        if w.get("era"):
+            sy = self.year[si]
+            out.append(("era", w["era"],
+                        -np.where((self.year > 0) & (sy > 0), np.abs(self.year - sy) / 25.0, 0.5)))
+        if w.get("feel") and self.feel is not None:
+            # mean gap across the five scores, each already 0..1
+            out.append(("feel", w["feel"],
+                        -np.abs(self.feel - self.feel[si]).mean(axis=1).astype(np.float64)))
+        return out
+
+    def _fuse(self, g):
+        """Put one ingredient on the common scale the fusion mode names."""
+        if self.fusion == "rank":
+            return _pct(g)
+        if self.fusion == "z":
+            sd = g.std()
+            return (g - g.mean()) / sd if sd > 1e-12 else np.zeros_like(g)
+        return g
+
+    def _score_switched(self, si):
+        s = np.zeros(len(self.paths))
+        for _name, wk, g in self._terms(si):
+            s = s + wk * self._fuse(g)
+        return s
+
     def _score(self, si):
+        if self._switched():
+            return self._score_switched(si)
         w = self.w
         s = w["clap"] * (self.X @ self.X[si])
         # librosa timbre cosine (the V2 'lib' term)
@@ -873,6 +1059,16 @@ class HybridEngine:
             raise ValueError("seed/cand not found/not embedded")
         w = self.w
         comp = {"clap": 0.0, "lib": 0.0, "genre": 0.0, "bpm": 0.0, "key": 0.0, "era": 0.0}
+        if self._switched():
+            # same ingredients, same order, same adds as _score_switched(), so the total
+            # here is that score to the last bit
+            comp["feel"] = 0.0
+            total = 0.0
+            for name, wk, g in self._terms(si):
+                comp[name] = float(wk * self._fuse(g)[ci])
+                total = total + comp[name]
+            comp["total"] = total
+            return comp
 
         comp["clap"] = float(w["clap"] * (self.X[ci] @ self.X[si]))
 

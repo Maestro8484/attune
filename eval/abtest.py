@@ -20,9 +20,17 @@ LAW 3: every key file records each engine's candidate-pool size next to it.
 This script only READS the db (HybridEngine opens it read-only). It writes
 only under attune/eval/ and the playlist output folder.
 
+Engines: v2, musicip, learned, and the scoring versions in eval/variants.py (v2-fused,
+v2-feel, v2-noclap, v2-feel-file). A name may end in @<label> to run that version over a
+second copy of the library named with --db-alt label=path (same songs, different stored
+fingerprints), so two analyses of one library can be heard side by side.
+
 Usage:
     python attune/eval/abtest.py --engines v2,learned --n-seeds 5 --k 15
-    python attune/eval/abtest.py --score            # rank the latest key file
+    python attune/eval/abtest.py --engines v2,v2-fused,v2-noclap --n-seeds 3 --k 20
+    python attune/eval/abtest.py --score            # rank the latest key file, typed in
+    python attune/eval/abtest.py --score --rank "Test1=B>A=C" --rank "Test2=A>B>C"
+                                                    # the same, with the rankings given
 """
 from __future__ import annotations
 
@@ -39,7 +47,11 @@ _SRC = os.path.normpath(os.path.join(_HERE, "..", "src"))
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
+
 import config as cfgmod   # noqa: E402  (path shimmed above)
+import variants as variantmod   # noqa: E402
 
 # Default export folder when neither --out nor settings.json names one. Repo-local
 # on purpose: an eval script should never write into somebody's real library.
@@ -62,10 +74,12 @@ def _load_engine_iface():
 # Engine construction
 # ---------------------------------------------------------------------------
 
-def build_engines(names, db_path, musicip_url):
+def build_engines(names, db_path, musicip_url, feel_file=None, db_alt=None):
     """Build each requested engine over ONE shared HybridEngine pool (the db load is
     the expensive part; every Engine subclass resolves results to this pool anyway).
-    Returns (hybrid_eng, {name: (engine_obj, pool_size)})."""
+    A name ending in @<label> is built over the library copy `db_alt[label]` instead,
+    loaded once per label. Returns (hybrid_eng, {name: (engine_obj, pool_size)});
+    engine_obj.eng is the HybridEngine whose pool that engine's results index."""
     eiface = _load_engine_iface()
     import importlib.util
     spec = importlib.util.spec_from_file_location("hybrid", os.path.join(_SRC, "hybrid.py"))
@@ -75,10 +89,24 @@ def build_engines(names, db_path, musicip_url):
     eng = hy.HybridEngine(db_path)
 
     out = {}
+    alt_engines = {}
     for name in names:
-        if name == "v2":
-            obj = eiface.V2Engine(hybrid_engine=eng)
-            pool = len(eng.paths)
+        kind, _, label = name.partition("@")
+        base = eng
+        if label:
+            if label not in (db_alt or {}):
+                raise SystemExit(f"engine '{name}' needs --db-alt {label}=<path>")
+            if label not in alt_engines:
+                print(f"loading library copy '{label}': {db_alt[label]}")
+                alt_engines[label] = hy.HybridEngine(db_alt[label])
+            base = alt_engines[label]
+        if kind in variantmod.VARIANTS:
+            hv = base if (kind == "v2" and not label) else variantmod.variant_engine(
+                base, kind, feel_file=feel_file)
+            obj = eiface.V2Engine(hybrid_engine=hv)
+            pool = len(hv.paths)
+        elif label:
+            raise SystemExit(f"only the v2 scoring versions can take @{label}, not '{kind}'")
         elif name == "musicip":
             obj = eiface.MusicIPAdapter(eng.paths, url=musicip_url, log=print)
             obj.attach_meta(eng.meta)
@@ -87,7 +115,8 @@ def build_engines(names, db_path, musicip_url):
             obj = eiface.LearnedEngine(db_path, hybrid_engine=eng, log=print)
             pool = obj.pool_size
         else:
-            raise SystemExit(f"unknown engine '{name}' (known: v2, musicip, learned)")
+            raise SystemExit(f"unknown engine '{name}' (known: musicip, learned, "
+                             f"{', '.join(variantmod.VARIANTS)})")
         out[name] = (obj, pool)
         print(f"engine '{name}' ready, candidate pool = {pool} tracks")
     return eng, out
@@ -112,15 +141,19 @@ def pick_seeds(eng, engines, n_seeds, k, rng):
             continue
         mixes = {}
         for name, (obj, _pool) in engines.items():
+            # an engine over a library copy has its own pool order: go by path. The
+            # MusicIP adapter has no .eng and indexes the shared pool.
+            own = getattr(obj, "eng", eng)
+            oi = i if own.paths is eng.paths else own.idx.get(p)
             try:
-                refs = obj.similar(i, size=k)
+                refs = obj.similar(oi, size=k) if oi is not None else []
             except Exception as e:
                 print(f"  probe {name} failed on pool_i={i}: {e}")
                 refs = []
             if not refs or len(refs) < k:
                 mixes = None
                 break
-            mixes[name] = [eng.paths[r.pool_i] for r in refs[:k]]
+            mixes[name] = [own.paths[r.pool_i] for r in refs[:k]]
         if not mixes:
             continue
         used_genres.add(g0)
@@ -157,6 +190,16 @@ def _label_for_seed(eng, path, fallback):
     return "".join(c for c in name if c.isalnum() or c in " -")[:30].strip() or fallback
 
 
+def _scoring_of(obj):
+    """The scoring switches an engine ran with, for the key file; None for an engine
+    that is not a V2 scoring version."""
+    h = getattr(obj, "eng", None)
+    if h is None or not hasattr(h, "fusion") or not hasattr(obj, "set_weights"):
+        return None
+    return {"fusion": h.fusion, "clap_space": h.clap_space,
+            "weights": {k: v for k, v in h.w.items() if v}}
+
+
 def run_generate(args):
     names = [s.strip().lower() for s in args.engines.split(",") if s.strip()]
     if len(names) != len(set(names)):
@@ -170,7 +213,14 @@ def run_generate(args):
     musicip_url = settings.get("musicip_url") or "http://localhost:10002"
 
     rng = random.Random(args.rng_seed)
-    eng, engines = build_engines(names, db, musicip_url)
+    db_alt = {}
+    for spec in (args.db_alt or []):
+        label, _, path = spec.partition("=")
+        if not label or not os.path.exists(path):
+            raise SystemExit(f"--db-alt wants label=<existing path>, got {spec!r}")
+        db_alt[label] = path
+    eng, engines = build_engines(names, db, musicip_url, feel_file=args.feel_file,
+                                 db_alt=db_alt)
     seeds = pick_seeds(eng, engines, args.n_seeds, args.k, rng)
     print(f"seeds: {[_label_for_seed(eng, p, f'seed{i}') for i, p, _ in seeds]}")
 
@@ -185,7 +235,9 @@ def run_generate(args):
         "k": args.k,
         # LAW 3: pool size stamped per engine, plus a version id when one is exposed
         "engines": {n: {"pool_size": pool,
-                        "version": getattr(obj, "version", None)}
+                        "version": getattr(obj, "version", None),
+                        "scoring": _scoring_of(obj),
+                        "db": db_alt.get(n.partition("@")[2], db)}
                     for n, (obj, pool) in engines.items()},
         "tests": {},
     }
@@ -244,6 +296,23 @@ def run_score(args):
           f"({len(key['tests'])} tests, engines: {', '.join(key['engines'])})")
     print("rank the blinded sets per test, best first: e.g.  B>A   or  B=A  (tie)\n")
 
+    # Rankings handed in on the command line (--rank "Test1=B>A=C"), for when the
+    # listener answers somewhere other than this prompt. Every test must be covered.
+    given = {}
+    for spec in (args.rank or []):
+        tname, _, ranking = spec.partition("=")
+        given[tname.strip()] = ranking.strip()
+    if given:
+        unknown = sorted(set(given) - set(key["tests"]))
+        missing = sorted(set(key["tests"]) - set(given))
+        if unknown or missing:
+            raise SystemExit(f"--rank must name every test once: unknown {unknown}, "
+                             f"missing {missing}")
+        for tname, t in key["tests"].items():
+            if not _parse_ranking(given[tname], sorted(t["letter_to_engine"])):
+                raise SystemExit(f"{tname}: use each of {sorted(t['letter_to_engine'])} "
+                                 f"exactly once, e.g. B>A=C; got {given[tname]!r}")
+
     record = {
         "ts": datetime.datetime.now().isoformat(timespec="seconds"),
         "key_file": os.path.basename(key_path),
@@ -253,7 +322,8 @@ def run_score(args):
     for tname, t in key["tests"].items():
         letters = sorted(t["letter_to_engine"])
         while True:
-            raw = input(f"{tname} [{t['label']}]  ({'/'.join(letters)}): ").strip()
+            raw = given[tname] if given else input(
+                f"{tname} [{t['label']}]  ({'/'.join(letters)}): ").strip()
             groups = _parse_ranking(raw, letters)
             if groups:
                 break
@@ -276,7 +346,8 @@ def run_score(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--engines", default="v2",
-                    help="comma list of engines to blind-test (v2, musicip, learned)")
+                    help="comma list of engines to blind-test: v2, musicip, learned, or a "
+                         "scoring version from eval/variants.py")
     ap.add_argument("--n-seeds", type=int, default=5)
     ap.add_argument("--k", type=int, default=15,
                     help="tracks per playlist -- long enough to judge, short enough to listen")
@@ -288,6 +359,12 @@ def main():
     ap.add_argument("--score", action="store_true",
                     help="rank the sets from the latest (or --key) sealed key file")
     ap.add_argument("--key", default=None, help="key file to score (default: newest)")
+    ap.add_argument("--rank", action="append", default=None, metavar="TestN=B>A=C",
+                    help="with --score: one test's ranking, best first; repeat per test")
+    ap.add_argument("--feel-file", default=None,
+                    help="feel scores file for the v2-feel-file version")
+    ap.add_argument("--db-alt", action="append", default=None, metavar="LABEL=PATH",
+                    help="a second copy of the library for engines named <version>@LABEL")
     args = ap.parse_args()
     if args.score:
         run_score(args)
