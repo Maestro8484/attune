@@ -182,10 +182,14 @@ class V2Engine(Engine):
         return [self._ref(self.eng.idx[p]) for p in picks], cohesion
 
     def adventure(self, a_ref, b_ref, size=25, artist_spacing=3, allowed=None, min_fit=None,
-                  report=None):
+                  report=None, liked=(), disliked=(), keep=(), exclude=()):
         path = self.eng.adventure(_as_pool_i(a_ref), _as_pool_i(b_ref), size=size,
                                   artist_spacing=artist_spacing, allowed=allowed,
-                                  min_fit=min_fit, report=report)
+                                  min_fit=min_fit, report=report,
+                                  liked=[_as_pool_i(r) for r in liked],
+                                  disliked=[_as_pool_i(r) for r in disliked],
+                                  keep=[_as_pool_i(r) for r in keep],
+                                  exclude=[_as_pool_i(r) for r in exclude])
         if path is None:
             return None
         return [self._ref(self.eng.idx[p]) for p in path]

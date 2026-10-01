@@ -37,6 +37,8 @@ const S = {
   seed: null,          // seed of the current mix (the first of S.seeds)
   seeds: [],           // every song the mix was built FROM, in order: head of the list
   seedTail: [],        // an Adventure's destination: always the last song
+  kind: 'mix',         // what the open list is: mix | blend | adventure; steering keeps it
+  advSize: 25,         // an Adventure's length, so steering rebuilds the same walk
   mix: [],
   ban: [],             // pool indices thrown out of the mix (live, undoable)
   banLabel: {},        // pool index -> label, captured at removal time (see dropTracks)
@@ -760,7 +762,8 @@ function renderRows(rows, opts = {}) {
   // view clears it right here, so a deliberate "back to Library" before quitting is
   // honoured on the next launch instead of being overridden. See restoreLastMix() below.
   store.set('lastMix', (S.view === 'mix' && S.seed != null && S.mix.length) ?
-    { seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, mix: S.mix } : null);
+    { seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, kind: S.kind, advSize: S.advSize,
+      mix: S.mix } : null);
   // mix view shows the inline More/Less Like This (tune) buttons; every other view hides them
   document.querySelector('#tbl').classList.toggle('mixview', S.view === 'mix');
   const tb = $('tbody');
@@ -1370,7 +1373,8 @@ function pinSeeds(ids) {
    engine to pick again. */
 function mixSnap() {
   return JSON.parse(JSON.stringify({
-    seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, mix: S.mix, stop: S.stop || null,
+    seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, kind: S.kind, advSize: S.advSize,
+    mix: S.mix, stop: S.stop || null,
     ban: S.ban, banLabel: S.banLabel, banArtists: S.banArtists,
     likedArtists: S.likedArtists, dislikedArtists: S.dislikedArtists,
     liked: S.liked, disliked: S.disliked,
@@ -1460,7 +1464,7 @@ async function mixFrom(seedI, opts) {
     const j = await jget('/api/mix?' + p);
     // A re-mix keeps the seed songs it was built from (a Blend's, an Adventure's ends);
     // a new mix has just the one.
-    if (!(opts && opts.keepFilters) || !isSeed(seedI)) { S.seeds = [seedI]; S.seedTail = []; }
+    if (!(opts && opts.keepFilters) || !isSeed(seedI)) { S.seeds = [seedI]; S.seedTail = []; S.kind = 'mix'; }
     const seeds = seedSet();
     let ids = (j.tracks || []).map(x => x.i).filter(i => !seeds.has(i));
     S.seed = seedI;
@@ -1531,7 +1535,7 @@ async function blendFrom(seedIds, sourceLabel) {
   try {
     const j = await jget('/api/mix/blend?' + p);
     S.seed = seedIds[0];
-    S.seeds = seedIds.slice(); S.seedTail = [];
+    S.seeds = seedIds.slice(); S.seedTail = []; S.kind = 'blend';
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
     const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
@@ -1584,7 +1588,8 @@ async function adventureFrom(seedIds) {
   try {
     const j = await jget('/api/mix/adventure?' + p);
     S.seed = seedIds[0];
-    S.seeds = [seedIds[0]]; S.seedTail = [seedIds[1]];
+    S.seeds = [seedIds[0]]; S.seedTail = [seedIds[1]]; S.kind = 'adventure';
+    S.advSize = +p.get('size');
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
     S.mix = pinSeeds((j.tracks || []).map(x => x.i));
@@ -1716,6 +1721,10 @@ async function restoreLastMix(saved) {
     // a mix saved before 2026-10-01 carries only its first seed
     S.seeds = (Array.isArray(saved.seeds) ? saved.seeds : [saved.seed]).filter(i => byI.has(i));
     S.seedTail = (Array.isArray(saved.seedTail) ? saved.seedTail : []).filter(i => byI.has(i));
+    S.kind = saved.kind || 'mix';
+    S.advSize = saved.advSize || 25;
+    // a Blend or Adventure that lost a seed song since cannot be steered as one any more
+    if ((S.kind === 'blend' && S.seeds.length < 2) || (S.kind === 'adventure' && !S.seedTail.length)) S.kind = 'mix';
     S.mix = survived;
     $('mixN').textContent = S.mix.length;
     await showMix();
@@ -2548,7 +2557,9 @@ function artistOf(i) {
 async function remixWithFilters(msg) {
   if (S.seed == null) return toast('Create a mix first', true);
   // Voting (More/Less) owns the refine path; plain filters re-run the mix path.
-  if (S.liked.length || S.disliked.length ||
+  // A Blend and an Adventure always go through refine(), which rebuilds them as what
+  // they are; only a plain mix with no votes re-runs the ordinary mix.
+  if (S.kind !== 'mix' || S.liked.length || S.disliked.length ||
       S.likedArtists.length || S.dislikedArtists.length) {
     await refine(undefined, msg);
   } else {
@@ -2697,6 +2708,10 @@ async function refine(focusI, msg) {
       liked_artists: S.likedArtists, disliked_artists: S.dislikedArtists,
       // the collection and the sound-alike line travel too (steering is CLAP-only)
       ...fitParams(true),
+      // a Blend steers from the centre of all its seeds, an Adventure rebuilds its walk
+      ...(S.kind === 'blend' ? { seeds: S.seeds } : {}),
+      ...(S.kind === 'adventure' && S.seedTail.length
+          ? { adventure: { a: S.seeds[0], b: S.seedTail[0], size: S.advSize } } : {}),
     });
     const ids = (j.tracks || []).map(x => x.i);
     S.stop = j.stop || null;
@@ -2707,7 +2722,10 @@ async function refine(focusI, msg) {
     // Every seed song is held (pinSeeds), not just the first: before 2026-10-01 a steered
     // Blend lost all its other seeds here, and a steered Adventure its destination.
     const anchors = S.liked.filter(i => !isSeed(i));
-    S.mix = pinSeeds([...anchors, ...ids.filter(i => !anchors.includes(i))]);
+    // An Adventure comes back as the whole walk in order, liked songs already placed
+    // along it; pinSeeds only makes sure the two ends are where they belong.
+    S.mix = j.kind === 'adventure' ? pinSeeds(ids)
+          : pinSeeds([...anchors, ...ids.filter(i => !anchors.includes(i))]);
     $('mixN').textContent = S.mix.length;
     await showMix({ animate: true });
     renderFilterBar();
@@ -3110,7 +3128,11 @@ function bindEvents() {
 
   // steering reset (delegated — viewSub is re-rendered on every showMix)
   $('viewSub').addEventListener('click', e => {
-    if (e.target.id === 'steerReset' && S.seed != null) doMix(S.seed);
+    // reset rebuilds the list as the kind it is, from its own seed songs
+    if (e.target.id !== 'steerReset' || S.seed == null) return;
+    if (S.kind === 'blend' && S.seeds.length >= 2) doBlend(S.seeds.slice());
+    else if (S.kind === 'adventure' && S.seedTail.length) doAdventure([S.seeds[0], S.seedTail[0]]);
+    else doMix(S.seed);
   });
 
   // toolbar

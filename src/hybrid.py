@@ -679,7 +679,8 @@ class HybridEngine:
         return picks, cohesion
 
     def adventure(self, a, b, size=25, artist_spacing=3, allowed=None, min_fit=None,
-                  report=None):
+                  report=None, liked=None, disliked=None, keep=None, exclude=None,
+                  beta=0.75):
         """Ordered path FROM a TO b: normalized-lerp waypoints along the CLAP-space
         segment between the two seeds, each snapped to the nearest not-yet-used
         track (mix_from_vector over a shortlist). Returns the full ordered path
@@ -694,7 +695,18 @@ class HybridEngine:
         (cosine, 1.0 = exactly on the line between the two). With `min_fit` a stop
         whose nearest song is below the line is left out and the path has one fewer
         stop, instead of being padded with whatever was nearest however far. The two
-        endpoints are always kept. `allowed` restricts the middle to a collection."""
+        endpoints are always kept. `allowed` restricts the middle to a collection.
+
+        Steering an Adventure (2026-10-01) keeps it an Adventure instead of turning it
+        into a plain mix from its start. All four are optional; with none of them the
+        walk is exactly the one above.
+          liked / disliked: pool indices whose CLAP rows bend every waypoint, by the same
+            Rocchio step refine() takes: wp' = unit(wp) + beta*mean(liked)
+            - beta*mean(disliked). The ends stay where they are.
+          keep: pool indices that must be on the path (songs voted "more like this").
+            Each sits right after the stop whose waypoint it is closest to.
+          exclude: pool indices never picked (removed songs, blocked artists' songs,
+            songs voted "less like this")."""
         ia, ib = self._as_index(a), self._as_index(b)
         if ia is None or ib is None:
             return None
@@ -703,12 +715,30 @@ class HybridEngine:
         size = max(int(size), 3)
         va = self.X[ia].astype(np.float64)
         vb = self.X[ib].astype(np.float64)
-        used, middle = [ia, ib], []
+        keep = [k for k in dict.fromkeys(self._as_index(x) for x in (keep or []))
+                if k is not None and k not in (ia, ib)]
+        steer = None
+        lk = [i for i in (self._as_index(x) for x in (liked or [])) if i is not None]
+        dk = [i for i in (self._as_index(x) for x in (disliked or [])) if i is not None]
+        if lk or dk:
+            steer = np.zeros(self.X.shape[1])
+            if lk:
+                steer = steer + beta * self.X[lk].astype(np.float64).mean(axis=0)
+            if dk:
+                steer = steer - beta * self.X[dk].astype(np.float64).mean(axis=0)
+        used, middle = [ia, ib] + keep, []
+        for x in (exclude or []):
+            xi = self._as_index(x)
+            if xi is not None and xi not in (ia, ib):
+                used.append(xi)
+        stops = []                                  # (unit waypoint, index in middle)
         recent = [self.artist[ia]]
         skipped, strongest_left, fit_of = 0, None, {}
         ran_out = False
         for t in np.linspace(0.0, 1.0, size)[1:-1]:
             wp = (1.0 - t) * va + t * vb
+            if steer is not None:
+                wp = self._unit(wp) + steer
             cands = self.mix_from_vector(wp, size=artist_spacing + 1, exclude=used,
                                          allowed=allowed)
             if not cands:
@@ -738,9 +768,25 @@ class HybridEngine:
                 pick = cands[0]
             if min_fit is not None:
                 fit_of[self.idx[pick]] = fits[pick]
+            stops.append((self._unit(wp), len(middle)))
             middle.append(pick)
             used.append(self.idx[pick])
             recent.append(self.artist[self.idx[pick]])
+        if keep:
+            # each kept song goes right after the stop it sounds closest to; with no stop
+            # at all it goes before the destination
+            after = {}
+            for k in keep:
+                if stops:
+                    j = max(range(len(stops)), key=lambda s: float(self.X[k] @ stops[s][0]))
+                    after.setdefault(stops[j][1], []).append(self.paths[k])
+                else:
+                    after.setdefault(-1, []).append(self.paths[k])
+            woven = list(after.get(-1, []))
+            for m, p in enumerate(middle):
+                woven.append(p)
+                woven.extend(after.get(m, []))
+            middle = woven
         if report is not None:
             weakest = min(fit_of.items(), key=lambda kv: kv[1]) if fit_of else None
             report.update({

@@ -1221,6 +1221,20 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             ban_art = _name_list("ban_artist")
             liked_art = _artist_idx(_name_list("liked_artists"))
             disliked_art = _artist_idx(_name_list("disliked_artists"))
+            # Steering keeps a Blend a Blend and an Adventure an Adventure (2026-10-01).
+            # Before this every steered list was re-ranked around `i` alone, so a Blend
+            # lost the sound of its other seeds and an Adventure lost its walk.
+            # seeds: a Blend's seed songs (2+), ranked from their shared centre.
+            # adventure: {"a", "b", "size"}, the walk rebuilt with the votes bending it.
+            blend_seeds = _idx_list("seeds")
+            adv = data.get("adventure")
+            if adv is not None:
+                if not isinstance(adv, dict):
+                    raise ValueError("adventure must be {a, b, size}")
+                adv_a, adv_b = int(adv.get("a")), int(adv.get("b"))
+                if not (0 <= adv_a < len(eng.paths) and 0 <= adv_b < len(eng.paths)):
+                    raise ValueError("adventure ends out of range")
+                adv_size = min(max(int(adv.get("size", 25)), 3), 100)
         except (TypeError, ValueError) as e:
             return jsonify(error=str(e)), 400
 
@@ -1232,7 +1246,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             min_fit = _fit_arg(data, clap_only=True)
         except (TypeError, ValueError) as e:
             return jsonify(error=str(e)), 400
-        if _seed_outside(mask, i) is not None:
+        if _seed_outside(mask, i, *blend_seeds) is not None:
             return jsonify(error=f"the seed is not in the collection {cinfo['name']!r}"), 400
         # A liked song is pinned into the list by the window, so a vote from outside
         # the collection would put an outside song on screen; refuse it here.
@@ -1240,19 +1254,50 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         if outside is not None:
             return jsonify(error=f"{labels[outside]} is not in the collection {cinfo['name']!r}"), 400
         report = {}
+        if adv is not None:
+            outside = _seed_outside(mask, adv_a, adv_b)
+            if outside is not None:
+                return jsonify(error=f"{labels[outside]} is not in the collection {cinfo['name']!r}"), 400
+            # Removed songs, blocked artists' songs and "less like this" songs never
+            # stand on the path; "more like this" songs stay on it, placed where they
+            # sound closest; every vote (artist votes too) bends the waypoints.
+            excl = set(ban_i) | set(disliked)
+            if ban_art:
+                excl |= {pi for pi, ar in enumerate(eng.artist)
+                         if (ar or "").strip().lower() in ban_art}
+            excl -= {adv_a, adv_b}
+            try:
+                refs = active.adventure(
+                    adv_a, adv_b, size=adv_size, allowed=mask, min_fit=min_fit,
+                    report=report, liked=liked + liked_art,
+                    disliked=disliked + disliked_art,
+                    keep=[x for x in liked if x not in excl], exclude=sorted(excl))
+            except ValueError as e:
+                return jsonify(error=str(e)), 400
+            except AttributeError:
+                return jsonify(error=f"multiseed not supported by the '{active.name}' engine"), 501
+            if refs is None:
+                return jsonify(error="unknown seed"), 404
+            tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
+            stop = _stop_info(report, adv_size - 2, len(tracks) - 2, cinfo, min_fit)
+            return jsonify(seed=labels[adv_a], seed_i=adv_a, kind="adventure",
+                           tracks=tracks, stop=stop, collection=cinfo)
         try:
             # Artist votes STEER the query vector but are not excluded from the result.
             # Per-track votes keep their existing exclude semantics (you already have
             # that track). Excluding artist-expanded rows made "More Like This Artist"
             # return ZERO tracks by that artist -- the exact opposite of the ask.
             # Hard removal is what "Block This Artist" (ban_artist) is for.
-            q = eng.refine(i, liked_idx=liked + liked_art,
+            # A Blend starts from the centre of all its seeds, as /api/mix/blend does.
+            start = (eng.X[blend_seeds].astype(np.float64).mean(axis=0)
+                     if len(blend_seeds) >= 2 else i)
+            q = eng.refine(start, liked_idx=liked + liked_art,
                            disliked_idx=disliked + disliked_art)
             # Over-fetch when bans are active so a removal is BACKFILLED rather than
             # leaving the mix short (same rule as _banned_headroom on the /api/mix path).
             want = _banned_headroom(size, ban_i, ban_art)
             picks = eng.mix_from_vector(
-                q, size=want, exclude=[i] + liked + disliked + sorted(ban_i),
+                q, size=want, exclude=[i] + blend_seeds + liked + disliked + sorted(ban_i),
                 allowed=mask, min_fit=min_fit, report=report)
             picks = _drop_banned(picks, ban_i, ban_art)[:size]
             if report.get("fit"):        # boundary over the songs delivered, as in _build_mix
@@ -1266,6 +1311,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return jsonify(
             seed=labels[i],
             seed_i=i,
+            kind="blend" if len(blend_seeds) >= 2 else "mix",
             tracks=[{"i": eng.idx[p], "label": _label(eng, p)} for p in picks],
             stop=stop, collection=cinfo,
         )

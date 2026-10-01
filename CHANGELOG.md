@@ -30,6 +30,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   seeds and steering an Adventure dropped its destination. All of a Blend's seeds are
   now marked as seeds in the list.
 
+- **Steering a Blend or an Adventure keeps it one.** More or Less Like This, Remove,
+  Block This Artist and the filter chips used to rebuild any list as a plain mix around
+  its first song, so a Blend lost the sound of its other picks and an Adventure lost its
+  walk. Now a steered Blend is ranked from the middle of all its picks, and a steered
+  Adventure is walked again from start to destination: removed and blocked songs stay
+  off the path, a song you like stays on it at the point it sounds closest to, and every
+  vote bends the path toward or away from those songs. Reset rebuilds a Blend or an
+  Adventure as itself. Create Mix is unchanged.
+
 ### Added (2026-09-30)
 
 - **Collections: draw a mix from a smaller set of your own songs.** Mix options now
