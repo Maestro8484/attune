@@ -202,3 +202,22 @@ def test_catalog_versions_take_the_label_form(tmp_path):
     assert h["v2-catalog-artist@cat"].w["artist"] == variants.ARTIST_WEIGHT
     sc = {n: abtest._scoring_of(obj) for n, (obj, _pool) in engines.items()}
     assert [sc[n]["catalog"] for n in names] == [False, False, True, True, True]
+
+
+def test_the_key_records_whether_the_catalog_was_loaded(lib, tmp_path):
+    assert lib["on"].catalog_loaded and not lib["off"].catalog_loaded
+    assert not lib["plain"].catalog_loaded and not lib["on"].without_catalog().catalog_loaded
+    # a catalog with years and styles but no recording ids still counts as loaded
+    d = str(tmp_path)
+    dbp, paths = build_db(d)
+    ids = os.path.join(d, "ids_norec.csv")
+    with open(ids, "w", encoding="utf-8", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["path", "recording_mbid", "artist_mbids", "original_year", "style"])
+        for p in paths:
+            w.writerow([p, "", "", 1999, "Big Beat"])
+    conn = sqlite3.connect(dbp)
+    enrich.import_csvs(conn, ids, None)
+    conn.close()
+    eng = hybrid.HybridEngine(dbp)
+    assert eng.catalog_loaded and all(r is None for r in eng.recording)

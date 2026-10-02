@@ -207,7 +207,7 @@ def _scoring_of(obj):
         return None
     return {"fusion": h.fusion, "clap_space": h.clap_space,
             "weights": {k: v for k, v in h.w.items() if v},
-            "catalog": any(r is not None for r in getattr(h, "recording", []))}
+            "catalog": bool(getattr(h, "catalog_loaded", False))}
 
 
 def run_generate(args):

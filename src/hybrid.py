@@ -414,6 +414,7 @@ class HybridEngine:
         self.recording = [c[0] if c else None for c in cat]
         self.artist_ids = [c[1] if c else [] for c in cat]
         self.similar = cat_similar
+        self.catalog_loaded = bool(cat_ids or cat_similar)   # for the listening test's key
         self.bpm = np.array([tempo.get(p, 0) or 0 for p in paths], float)
         self.key = _keys_from_chroma_batch([chroma.get(p) for p in paths])
         self.meta = {p: {"artist": meta[p][0], "album": meta[p][1], "title": meta[p][2],
@@ -616,6 +617,7 @@ class HybridEngine:
         e.recording = [None] * len(self.paths)
         e.artist_ids = [[] for _ in self.paths]
         e.similar = {}
+        e.catalog_loaded = False
         return e
 
     def _artist_affinity(self, si):
