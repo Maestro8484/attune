@@ -94,12 +94,21 @@ def _refuse_to_mix(conn, n_todo, weights=CLAP_WEIGHTS):
 
 
 def _mark_library(conn, weights=CLAP_WEIGHTS):
-    """Record which weights made this library's fingerprints, beside the first one written.
-    Not committed here: it lands in the same commit as that fingerprint."""
-    if weights is None:
-        return
+    """Record which weights made this library's fingerprints, beside the first one written, and
+    stop if the library has come to say another kind since this run started (a second run of
+    the other kind, going at the same time). Called before every batch of fingerprints is
+    written; not committed here, so the mark lands in the same commit as the fingerprints."""
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-    conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
+    row = conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
+    if row is None:
+        if weights is not None:
+            conn.execute("INSERT INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
+    elif row[0] != weights:
+        conn.rollback()
+        raise SystemExit(
+            f"Stopped: while this run was going, the library came to say its fingerprints are made "
+            f"with {row[0]}, and this run makes {weights or 'the original release'} ones. Nothing "
+            f"more was written.")
 
 
 def _import_stack():

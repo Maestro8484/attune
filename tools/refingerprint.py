@@ -7,7 +7,7 @@ weights (src/embed_onnx.py, CLAP_WEIGHTS). The two kinds of fingerprint are unre
 so the fingerprint stage refuses to add new songs to a library of the earlier kind. This tool is
 the way across: one deliberate action that
 
-  1. copies the library beside itself and checks the copy byte for byte,
+  1. copies the library beside itself and checks the copy holds the same songs and fingerprints,
   2. clears every sound fingerprint in the library and records which weights the new ones come
      from (both in one transaction), and
   3. runs the fingerprint stage over every song.
@@ -28,7 +28,6 @@ from __future__ import annotations
 import argparse
 import hashlib
 import os
-import shutil
 import sqlite3
 import sys
 import time
@@ -36,14 +35,6 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 import embed_onnx  # noqa: E402
-
-
-def _sha256(path):
-    h = hashlib.sha256()
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
 
 
 def state(db_path):
@@ -61,17 +52,39 @@ def state(db_path):
     return songs, prints, theirs
 
 
+def _fingerprint_digest(conn):
+    """(songs, fingerprints, one checksum over every fingerprint row in path order)."""
+    h = hashlib.sha256()
+    n = 0
+    for path, vec in conn.execute("SELECT path, vec FROM clap WHERE vec IS NOT NULL ORDER BY path"):
+        h.update(path.encode("utf-8", "replace"))
+        h.update(vec)
+        n += 1
+    return conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0], n, h.hexdigest()
+
+
 def backup(db_path):
-    """A byte-for-byte copy beside the library, verified. Returns its path, or None."""
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-    conn.close()
+    """A copy of the library beside it, made by SQLite itself and checked. Returns its path, or
+    None when the copy does not hold what the library holds.
+
+    Not a file copy. A library that something else has open keeps its newest changes in a side
+    file, and copying the main file alone leaves them out while every byte still matches (a cold
+    reader showed 200 committed fingerprints missing from such a copy on 2026-10-02). SQLite's
+    own backup reads through that side file. The check is on content: the same number of songs,
+    and the same checksum over every fingerprint, in the copy as in the library."""
     stem, ext = os.path.splitext(db_path)
     dest = f"{stem}.backup-{time.strftime('%Y%m%d-%H%M%S')}-before-refingerprint{ext}"
-    shutil.copyfile(db_path, dest)
-    if os.path.getsize(dest) != os.path.getsize(db_path) or _sha256(dest) != _sha256(db_path):
-        return None
-    return dest
+    src = sqlite3.connect(db_path, timeout=30)
+    dst = sqlite3.connect(dest)
+    try:
+        src.backup(dst)
+        dst.commit()
+        same = _fingerprint_digest(src) == _fingerprint_digest(dst)
+        sound = dst.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        dst.close()
+        src.close()
+    return dest if same and sound else None
 
 
 def clear_and_mark(db_path, weights=embed_onnx.CLAP_WEIGHTS):
@@ -130,9 +143,10 @@ def main(argv=None):
 
     dest = backup(a.db)
     if dest is None:
-        print("refingerprint: FAILED - the backup is not byte for byte the library. Nothing was changed.")
+        print("refingerprint: FAILED - the backup does not hold what the library holds. Nothing was changed.")
         return 2
-    print(f"refingerprint: backup verified: {dest} ({os.path.getsize(dest):,} bytes)")
+    print(f"refingerprint: backup verified: {dest} ({os.path.getsize(dest):,} bytes, "
+          f"the same songs and fingerprints as the library)")
     n = clear_and_mark(a.db, weights)
     print(f"refingerprint: cleared {n:,} fingerprint rows; the library now says {weights}")
     t0 = time.time()

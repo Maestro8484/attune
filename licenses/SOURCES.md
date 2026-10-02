@@ -11,6 +11,7 @@ The generator itself never touches the network. It checks these files exist and 
 | `flatbuffers` | `LICENSE` | https://raw.githubusercontent.com/google/flatbuffers/master/LICENSE | 2026-09-20 | The flatbuffers wheel declares Apache-2.0 but ships no text. |
 | `proxy-tools` | `LICENSE.txt` | https://raw.githubusercontent.com/jtushman/proxy_tools/master/LICENSE.txt | 2026-09-20 | The proxy_tools wheel ships no text. Its metadata declares MIT while the file the project publishes is a 3-clause BSD text; both are permissive and what upstream publishes is what is shipped here. |
 | `hugging-face-transformers-log-mel-front-end` | `LICENSE` | https://www.apache.org/licenses/LICENSE-2.0.txt | 2026-09-20 | Apache-2.0, for the port of Transformers code in src/embed_onnx.py. |
+| `hugging-face-transformers-checkpoint-key-renaming` | `LICENSE` | https://www.apache.org/licenses/LICENSE-2.0.txt | 2026-09-20 | Apache-2.0, for the port of Transformers code in src/embed.py. The same text as the row above, retrieved with it and placed in this folder on 2026-10-02. |
 | `sqlite` | `PUBLIC-DOMAIN-NOTE.txt` | written by this project, recording https://www.sqlite.org/copyright.html | 2026-09-20 | SQLite has no licence to reproduce. This is a note saying so, not a licence. |
 
 Everything else under `licenses/` is generated. Do not edit it by hand; re-run the generator instead.

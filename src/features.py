@@ -245,13 +245,14 @@ def _ffmpeg_decode(path: str, sr: int = SR) -> np.ndarray | None:
         except Exception:
             # Including a timeout, whose partial output is deliberately NOT harvested: half a
             # song from a decoder that hung is the same fragment this whole guard exists to
-            # refuse, and it would arrive with nothing to mark it as partial.
-            return b""
+            # refuse, and it would arrive with nothing to mark it as partial. None, not empty:
+            # a run that hung is not asked a second time.
+            return None
         raw = r.stdout or b""
         return raw[:len(raw) - len(raw) % 4]     # stdout can end mid-sample; drop the tail
 
     raw = run()
-    if not raw and path.lower().endswith(".mp3"):
+    if raw == b"" and path.lower().endswith(".mp3"):
         # ffmpeg guesses the container from the file's first bytes, and an MP3 with a tag in
         # front of a RIFF wrapper makes it guess wrong and give up ("invalid start code ID3 in
         # RIFF header"). Told the file is MP3 it reads the song. Measured 2026-10-02 on the
@@ -269,38 +270,46 @@ def _ffmpeg_decode(path: str, sr: int = SR) -> np.ndarray | None:
 
 def _ffmpeg_seconds(path: str, sr: int = SR) -> float | None:
     """How much audio ffmpeg can actually get out of this file, in seconds, without
-    keeping any of it. Same decode as _ffmpeg_decode, but the samples are counted and
-    thrown away as they arrive, so asking the question costs no memory."""
+    keeping any of it. Same decode as _ffmpeg_decode, including its second ask for an MP3
+    ffmpeg could not place, but the samples are counted and thrown away as they arrive, so
+    asking the question costs no memory."""
     exe = shutil.which("ffmpeg")
     if not exe:
         return None
-    cmd = [exe, "-nostdin", "-v", "quiet", "-i", path,
-           "-t", str(FFMPEG_CAP_SECONDS),
-           "-af", "aresample=rematrix_maxval=1.0",
-           "-f", "f32le", "-ac", "1", "-ar", str(int(sr)), "-"]
-    try:
-        pr = subprocess.Popen(
-            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-    except Exception:
-        return None
-    n = 0
-    try:
-        while True:
-            chunk = pr.stdout.read(1 << 20)
-            if not chunk:
-                break
-            n += len(chunk)
-    except Exception:
-        return None
-    finally:
+
+    def count(as_format=()):
+        cmd = [exe, "-nostdin", "-v", "quiet", *as_format, "-i", path,
+               "-t", str(FFMPEG_CAP_SECONDS),
+               "-af", "aresample=rematrix_maxval=1.0",
+               "-f", "f32le", "-ac", "1", "-ar", str(int(sr)), "-"]
         try:
-            pr.stdout.close()
-            pr.wait(timeout=FFMPEG_TIMEOUT_S)
+            pr = subprocess.Popen(
+                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
         except Exception:
-            pr.kill()
-    return (n // 4) / sr
+            return None
+        n = 0
+        try:
+            while True:
+                chunk = pr.stdout.read(1 << 20)
+                if not chunk:
+                    break
+                n += len(chunk)
+        except Exception:
+            return None
+        finally:
+            try:
+                pr.stdout.close()
+                pr.wait(timeout=FFMPEG_TIMEOUT_S)
+            except Exception:
+                pr.kill()
+        return n
+
+    n = count()
+    if n == 0 and path.lower().endswith(".mp3"):
+        n = count(("-f", "mp3"))
+    return None if n is None else (n // 4) / sr
 
 
 def short_read_check(path: str, got: float, sr: int = SR) -> dict | None:

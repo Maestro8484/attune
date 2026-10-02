@@ -103,7 +103,10 @@ def ffmpeg(monkeypatch):
         def fake_run(cmd, **_kw):
             forced = cmd[cmd.index("-i") - 2:cmd.index("-i")] == ["-f", "mp3"]
             asked.append("mp3" if forced else "guess")
-            return _Ran(answers["mp3" if forced else "guess"])
+            out = answers["mp3" if forced else "guess"]
+            if isinstance(out, Exception):
+                raise out
+            return _Ran(out)
         monkeypatch.setattr(features.shutil, "which", lambda _name: "ffmpeg")
         monkeypatch.setattr(features.subprocess, "run", fake_run)
         return asked
@@ -127,3 +130,9 @@ def test_a_file_ffmpeg_reads_is_not_asked_twice(ffmpeg):
 def test_only_an_mp3_is_read_again_as_mp3(ffmpeg):
     asked = ffmpeg({"guess": b"", "mp3": np.ones(8, dtype="<f4").tobytes()})
     assert features._ffmpeg_decode("nothing.flac", SR) is None and asked == ["guess"]
+
+
+def test_a_run_that_hung_is_not_asked_a_second_time(ffmpeg):
+    """A second ask after a timeout would double the longest wait on one file."""
+    asked = ffmpeg({"guess": TimeoutError("hung"), "mp3": np.ones(8, dtype="<f4").tobytes()})
+    assert features._ffmpeg_decode("hung.mp3", SR) is None and asked == ["guess"]

@@ -291,11 +291,6 @@ class LearnedEngine(Engine):
         import json
         import sqlite3
         import numpy as np
-        try:
-            import onnxruntime as ort
-        except ImportError:
-            raise SystemExit("--engine learned needs onnxruntime in the runtime venv: "
-                             "pip install onnxruntime")
         self._np = np
         self._log = log or (lambda msg: None)
         if hybrid_engine is None:
@@ -312,6 +307,11 @@ class LearnedEngine(Engine):
                 "earlier kind of sound fingerprint, and this library's fingerprints were made with "
                 "the fingerprint model's trained weights, which are unrelated numbers. Start "
                 "without --engine learned: the default engine is the one built for this library.")
+        try:
+            import onnxruntime as ort
+        except ImportError:
+            raise SystemExit("--engine learned needs onnxruntime in the runtime venv: "
+                             "pip install onnxruntime")
 
         mdir = models_dir or os.path.join(HERE, "models")
         with open(os.path.join(mdir, "learned_norm.json"), encoding="utf-8") as fh:

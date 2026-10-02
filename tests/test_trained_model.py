@@ -196,8 +196,6 @@ def test_the_download_tool_and_the_data_sheet_pin_the_same_file():
 def test_the_way_across(stand_ins, tmp_path, capsys):
     import refingerprint
     dbp = build_db(str(tmp_path), fingerprints=True)
-    with open(dbp, "rb") as fh:
-        before = fh.read()
     conn = sqlite3.connect(dbp)
     old = dict(conn.execute("SELECT path, vec FROM clap"))
     conn.close()
@@ -208,8 +206,10 @@ def test_the_way_across(stand_ins, tmp_path, capsys):
     assert refingerprint.main(["--db", dbp, "--yes", "--workers", "2"]) == 0
     backups = [f for f in os.listdir(tmp_path) if "before-refingerprint" in f]
     assert len(backups) == 1
-    with open(os.path.join(tmp_path, backups[0]), "rb") as fh:
-        assert fh.read() == before
+    conn = sqlite3.connect(os.path.join(tmp_path, backups[0]))
+    assert dict(conn.execute("SELECT path, vec FROM clap")) == old      # the backup holds the old ones
+    assert conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone() is None
+    conn.close()
     assert says(dbp) == (TRAINED, N)
     conn = sqlite3.connect(dbp)
     new = dict(conn.execute("SELECT path, vec FROM clap"))
@@ -230,15 +230,152 @@ def test_the_way_across_refuses_the_earlier_model_file(stand_ins, tmp_path):
 
 
 def test_the_learned_engine_does_not_load_on_trained_fingerprints(tmp_path):
-    pytest.importorskip("onnxruntime")
-    import engine
+    import engine                                         # refused before onnxruntime is asked for
     dbp = build_db(str(tmp_path), fingerprints=True, says=TRAINED)
     with pytest.raises(SystemExit) as stop:
         engine.LearnedEngine(dbp)
     assert "cannot be used on this library" in str(stop.value)
 
 
-def test_text_search_asks_the_library_which_text_half(tmp_path):
+def test_text_search_asks_the_library_which_text_half(tmp_path, monkeypatch):
     import textsearch
-    assert textsearch.library_weights(build_db(str(tmp_path / "a"), fingerprints=True)) is None
-    assert textsearch.library_weights(build_db(str(tmp_path / "b"), fingerprints=True, says=TRAINED)) == TRAINED
+    plain = build_db(str(tmp_path / "a"), fingerprints=True)
+    trained = build_db(str(tmp_path / "b"), fingerprints=True, says=TRAINED)
+    assert textsearch.library_weights(plain) is None
+    assert textsearch.library_weights(trained) == TRAINED
+    asked = []
+    monkeypatch.setattr(textsearch, "load_model",
+                        lambda dev=None, weights=None: asked.append(weights) or ("torch", "model", "proc", "dev"))
+    monkeypatch.setattr(textsearch, "embed_text", lambda *_a: np.ones(512, np.float32) / np.sqrt(512))
+    for dbp in (plain, trained):
+        results, _meta, _session = textsearch.search(dbp, "anything", n=3)
+        assert len(results) == 3
+    assert asked == [None, TRAINED]                       # search() loads the half the library needs
+
+
+def test_a_backup_that_does_not_hold_the_library_stops_the_way_across(stand_ins, tmp_path, monkeypatch, capsys):
+    import refingerprint
+    dbp = build_db(str(tmp_path), fingerprints=True)
+    monkeypatch.setattr(refingerprint, "backup", lambda _db: None)
+    assert refingerprint.main(["--db", dbp, "--yes"]) == 2
+    assert says(dbp) == (None, N) and "Nothing was changed" in capsys.readouterr().out
+
+
+def test_the_backup_holds_what_another_open_connection_has_not_flushed(tmp_path):
+    """A cold reader showed a file copy of a library that something else has open can miss its
+    newest fingerprints. The backup reads through SQLite, so it holds them."""
+    import refingerprint
+    dbp = build_db(str(tmp_path), fingerprints=False)
+    writer = sqlite3.connect(dbp)
+    writer.execute("PRAGMA journal_mode=WAL")
+    reader = sqlite3.connect(dbp)
+    reader.execute("BEGIN")
+    reader.execute("SELECT COUNT(*) FROM tracks").fetchone()          # holds the side file open
+    paths = [r[0] for r in writer.execute("SELECT path FROM tracks")]
+    for p in paths:
+        writer.execute("INSERT INTO clap(path, vec, dim) VALUES(?,?,?)", (p, np.ones(512, np.float32).tobytes(), 512))
+    writer.commit()
+    dest = refingerprint.backup(dbp)
+    reader.close()
+    writer.close()
+    assert dest is not None
+    conn = sqlite3.connect(dest)
+    assert conn.execute("SELECT COUNT(*) FROM clap WHERE vec IS NOT NULL").fetchone()[0] == N
+    conn.close()
+
+
+def test_a_model_file_passed_by_path_is_held_to_the_library_too(stand_ins, tmp_path):
+    """--onnx with the earlier, unstamped file: a trained-weight library refuses it, and the
+    library is left as it was."""
+    stand_ins(None)
+    dbp = build_db(str(tmp_path), fingerprints=True, says=TRAINED)
+    conn = sqlite3.connect(dbp)
+    conn.execute("DELETE FROM clap WHERE path LIKE ?", ("%t00.mp3",))
+    conn.commit()
+    conn.close()
+    with pytest.raises(SystemExit) as stop:
+        embed_onnx.embed(dbp, workers=1, batch=4, onnx_path="an/earlier/file.onnx")
+    assert "NOT fingerprinted" in str(stop.value) and says(dbp) == (TRAINED, N - 1)
+
+
+@pytest.mark.parametrize("mod", [embed_onnx, embed])
+def test_a_library_that_changes_kind_under_a_run_stops_it(mod, tmp_path):
+    dbp = build_db(str(tmp_path), fingerprints=False)
+    conn = sqlite3.connect(dbp)
+    mod._refuse_to_mix(conn, 3)                           # a new library: this run may start
+    other = sqlite3.connect(dbp)                          # a second run of another kind marks it first
+    other.execute("INSERT INTO meta(key, value) VALUES('clap_weights', 'some_other_checkpoint')")
+    other.commit()
+    other.close()
+    with pytest.raises(SystemExit) as stop:
+        mod._mark_library(conn)
+    assert "some_other_checkpoint" in str(stop.value)
+    conn.close()
+    assert says(dbp) == ("some_other_checkpoint", 0)
+
+
+class _FakeTensor:
+    def __init__(self, a):
+        self.a = a
+
+    def detach(self):
+        return self
+
+    def cpu(self):
+        return self
+
+    def numpy(self):
+        return self.a
+
+
+class _NoGrad:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_a):
+        return False
+
+
+class _FakeTorch:
+    class cuda:
+        @staticmethod
+        def is_available():
+            return False
+
+    @staticmethod
+    def no_grad():
+        return _NoGrad()
+
+    @staticmethod
+    def is_tensor(x):
+        return isinstance(x, _FakeTensor)
+
+
+class _FakeClap:
+    def to(self, _dev):
+        return self
+
+    def eval(self):
+        return self
+
+    def get_audio_features(self, **inp):
+        return _FakeTensor(np.ones((inp["n"], 512), np.float32) / np.sqrt(512))
+
+
+class _FakeValue:
+    def __init__(self, v):
+        self.v = v
+
+    def to(self, _dev):
+        return self.v
+
+
+def test_the_torch_stage_marks_a_new_library_too(tmp_path, monkeypatch):
+    """embed.py end to end with no torch and no model: a new library is fingerprinted and marked."""
+    monkeypatch.setattr(embed, "_import_stack", lambda: (_FakeTorch, None, None, None))
+    monkeypatch.setattr(embed, "load_model",
+                        lambda *_a: (_FakeClap(), lambda audio, sampling_rate, return_tensors: {"n": _FakeValue(len(audio))}))
+    monkeypatch.setattr(embed, "_decode", lambda _lib, _p, _m: ([np.zeros(4, np.float32)] * 3, None))
+    dbp = build_db(str(tmp_path), fingerprints=False)
+    embed.embed(dbp, workers=2, batch=4)
+    assert says(dbp) == (TRAINED, N)

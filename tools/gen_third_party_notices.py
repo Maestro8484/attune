@@ -647,7 +647,7 @@ HAND_PLACED = [
          retrieved="2026-09-20",
          source="https://www.apache.org/licenses/LICENSE-2.0.txt",
          why="Apache-2.0, for the port of Transformers code in src/embed.py. The same text as "
-             "the entry above, copied from it on 2026-10-02."),
+             "the row above, retrieved with it and placed in this folder on 2026-10-02."),
     dict(slug="sqlite", file="PUBLIC-DOMAIN-NOTE.txt", retrieved="2026-09-20",
          source="written by this project, recording https://www.sqlite.org/copyright.html",
          why="SQLite has no licence to reproduce. This is a note saying so, not a licence."),

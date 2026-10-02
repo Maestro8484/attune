@@ -31,6 +31,9 @@ WIN_FRACS = (0.15, 0.5, 0.85)       # start / middle / end windows, mean-pooled
 # made with the other kind.
 CLAP_WEIGHTS = "music_audioset_epoch_15_esc_90.14"
 CKPT_REPO, CKPT_FILE = "lukewys/laion_clap", CLAP_WEIGHTS + ".pt"
+# The revision of that repository the fingerprints were checked against (2026-10-02). Pinned so a
+# file changed upstream can never be loaded under the same weights name.
+CKPT_REVISION = "b3708341862f581175dba5c356a4ebf74a9b6651"
 REFINGERPRINT_HINT = "python tools/refingerprint.py --db <library>"
 
 
@@ -65,12 +68,21 @@ def _refuse_to_mix(conn, n_todo, weights=CLAP_WEIGHTS):
 
 
 def _mark_library(conn, weights=CLAP_WEIGHTS):
-    """Record which weights made this library's fingerprints, beside the first one written.
-    Not committed here: it lands in the same commit as that fingerprint."""
-    if weights is None:
-        return
+    """Record which weights made this library's fingerprints, beside the first one written, and
+    stop if the library has come to say another kind since this run started (a second run of
+    the other kind, going at the same time). Called before every batch of fingerprints is
+    written; not committed here, so the mark lands in the same commit as the fingerprints."""
     conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-    conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
+    row = conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
+    if row is None:
+        if weights is not None:
+            conn.execute("INSERT INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
+    elif row[0] != weights:
+        conn.rollback()
+        raise SystemExit(
+            f"Stopped: while this run was going, the library came to say its fingerprints are made "
+            f"with {row[0]}, and this run makes {weights or 'the original release'} ones. Nothing "
+            f"more was written.")
 
 
 # The makers' checkpoint names its tensors the way their own code does. This is the renaming the
@@ -112,7 +124,7 @@ def load_model(torch, ClapModel, ClapProcessor):
     torch's safe loader, with only the plain numpy value types its bookkeeping needs let through."""
     import numpy
     from huggingface_hub import hf_hub_download
-    ck = hf_hub_download(CKPT_REPO, CKPT_FILE)
+    ck = hf_hub_download(CKPT_REPO, CKPT_FILE, revision=CKPT_REVISION)
     allow = [numpy.dtype, numpy.ndarray,
              (numpy._core.multiarray.scalar, "numpy.core.multiarray.scalar"),
              (numpy._core.multiarray._reconstruct, "numpy.core.multiarray._reconstruct")]
