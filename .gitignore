@@ -94,7 +94,7 @@ eval/report_*.json
 eval/compare_clap_alone_*.json
 eval/recipe_sweep_*.json
 
-# the CLAP audio model is 263 MiB. Keeping it in the repo made every clone pay for it, needed
+# the CLAP audio model is 267 MiB. Keeping it in the repo made every clone pay for it, needed
 # the git-lfs add-on to get anything but a 134-byte stub, and drew on a shared monthly
 # bandwidth allowance. It is published as a release asset instead:
 #     python tools/fetch_model.py

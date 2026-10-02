@@ -602,6 +602,16 @@ VENDORED_SOURCE = [
               "written so the analyzer can produce the same features as the CLAP model "
               "expects without importing torch. The port is bit-exact by design and the "
               "attribution is in the file's own comments. Attune's code around it is MIT."),
+    dict(name="Hugging Face Transformers (checkpoint key renaming)", license="Apache-2.0",
+         url="https://github.com/huggingface/transformers",
+         files=["_internal/attune/src/embed.py"],
+         marker="convert_clap_original_pytorch_to_hf.py",
+         note="embed.py loads the CLAP model's trained checkpoint, whose tensors are named the "
+              "way its makers' code names them. The table and the loop that rename them for "
+              "the transformers ClapModel are ported from the conversion script the "
+              "transformers project publishes for these checkpoints. embed.py runs only when "
+              "someone points Attune at their own Python with torch installed; the attribution "
+              "is in the file's own comments. Attune's code around it is MIT."),
 ]
 
 
@@ -633,6 +643,11 @@ HAND_PLACED = [
          retrieved="2026-09-20",
          source="https://www.apache.org/licenses/LICENSE-2.0.txt",
          why="Apache-2.0, for the port of Transformers code in src/embed_onnx.py."),
+    dict(slug="hugging-face-transformers-checkpoint-key-renaming", file="LICENSE",
+         retrieved="2026-09-20",
+         source="https://www.apache.org/licenses/LICENSE-2.0.txt",
+         why="Apache-2.0, for the port of Transformers code in src/embed.py. The same text as "
+             "the entry above, copied from it on 2026-10-02."),
     dict(slug="sqlite", file="PUBLIC-DOMAIN-NOTE.txt", retrieved="2026-09-20",
          source="written by this project, recording https://www.sqlite.org/copyright.html",
          why="SQLite has no licence to reproduce. This is a note saying so, not a licence."),

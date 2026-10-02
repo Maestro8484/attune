@@ -218,7 +218,7 @@ python tools/fetch_model.py
 Install the `[app]` extra, not the bare package. `onnxruntime` lives only in the extras, so
 a bare `pip install -e .` cannot load the model the next line downloads.
 
-`tools/fetch_model.py` downloads the 263 MiB audio model, which isn't kept in the repository
+`tools/fetch_model.py` downloads the 267 MiB audio model, which isn't kept in the repository
 so that a clone stays small. It checks the download against a pinned SHA-256 and puts it
 where the code expects it.
 

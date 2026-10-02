@@ -1,5 +1,7 @@
 {
   "model": "laion/larger_clap_music",
+  "weights": "music_audioset_epoch_15_esc_90.14",
+  "weights_source": "lukewys/laion_clap, music_audioset_epoch_15_esc_90.14.pt (CC0-1.0): the checkpoint the model's makers trained. The Hugging Face release named in \"model\" holds the same architecture with weights that were never trained; it supplies the layout only. The .onnx file carries the name above in its own metadata (clap_weights).",
   "onnx": "clap_music.onnx",
   "opset": 17,
   "graph_input": "mel: float32 (batch, 3, 1, 1001, 64) — 3 log-mel windows per track",
@@ -31,15 +33,18 @@
     "layout": "(frames, mels) float32 per clip"
   },
   "_distribution": {
-    "note": "clap_music.onnx is not in the git repository: it is 263 MiB, it needed the git-lfs add-on to clone, and it drew on a shared monthly bandwidth allowance. It is published as a release asset and fetched with `python tools/fetch_model.py`, which verifies the sha256 below before putting it in place. The frozen Windows app is unaffected: its installer carries the model inside.",
-    "sha256": "02679faef2868832d051e4fa9c97f3be197887987b8b1cdd21b3a1b8a51a70ff",
-    "bytes": 275930879,
-    "hash_recomputed": "2026-09-20, from the file on disk; it matches the git-lfs pointer oid recorded at HEAD, which is the same sha256 by construction",
-    "url": "https://github.com/Maestro8484/attune/releases/download/model-clap-music-v1/clap_music.onnx"
+    "note": "clap_music.onnx is not in the git repository: it is 267 MiB, it needed the git-lfs add-on to clone, and it drew on a shared monthly bandwidth allowance. It is published as a release asset and fetched with `python tools/fetch_model.py`, which verifies the sha256 below before putting it in place. The frozen Windows app is unaffected: its installer carries the model inside.",
+    "sha256": "66fe0e1a1867dc2d4032452502dbbbe9d9478fa0823611469a74c9f02af166c8",
+    "bytes": 279980909,
+    "hash_recomputed": "2026-10-02, from the file on disk straight after the export",
+    "url": "https://github.com/Maestro8484/attune/releases/download/model-clap-music-v2/clap_music.onnx",
+    "earlier_file": "model-clap-music-v1 (sha256 02679faef2868832d051e4fa9c97f3be197887987b8b1cdd21b3a1b8a51a70ff, 275930879 bytes) was exported from the Hugging Face release's untrained weights. Its fingerprints are unrelated to this file's, and a library made with it is moved across with tools/refingerprint.py."
   },
   "_provenance": {
-    "created": "2026-07-19",
-    "exported_from": "transformers 5.13.0 ClapModel(laion/larger_clap_music) audio tower, torch 2.6.0, torch.onnx.export dynamo=False, CPU float32",
+    "created": "2026-07-19; re-exported with the trained weights 2026-10-02",
+    "exported_from": "transformers 5.13.0 ClapModel (the laion/larger_clap_music architecture) audio tower, loaded with music_audioset_epoch_15_esc_90.14.pt through the transformers project's own key renaming, torch 2.6.0, torch.onnx.export dynamo=False, CPU float32. The gate_a* lines below were measured on the 2026-07-19 export; the mel front end they certify is unchanged. The 2026-10-02 export's own checks are the gate_trained_* lines.",
+    "gate_trained_tower": "onnxruntime vs torch on identical mels, 3 tracks: worst cosine 0.999999943, max abs diff 1.4e-06; batch-1 == batch-3 bitwise (2026-10-02)",
+    "gate_trained_parity": "520 library tracks, raw audio -> this module's decoder -> numpy mel -> onnxruntime (CPU EP), against fingerprints made by torch on a GPU from the same checkpoint: 518 at cosine 1.000000 with the same 50 nearest neighbours in a 21,101-track pool; the other 2 are damaged files the torch run read only a fragment of (12.7 s of 278 s, 78 s of 276 s) and this module's second decoder reads whole (pool seed 20261002, 2026-10-02)",
     "mel_source": "numpy port of transformers 5.13.0 feature_extraction_clap.py (_np_extract_fbank_features, rand_trunc/not-longer branch) + audio_utils.py spectrogram/mel_filter_bank/window_function/power_to_db (Apache-2.0)",
     "checkpoint_config": "preprocessor_config.json: truncation=rand_trunc, frequency_min=50, frequency_max=14000, feature_size=64, hop=480, fft=1024, sr=48000; config.json audio_config: enable_fusion=false (is_longer unused in forward)",
     "gate_a0": "torch pipeline vs 3 stored production rows: worst cosine 0.999999997 (2026-07-19)",

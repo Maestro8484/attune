@@ -87,7 +87,7 @@ alone, z-scored, by weighted Euclidean distance, with the same style and variety
 needs no model and no ONNX runtime.
 
 It is not one of the three engines the app offers. It is the from-source baseline, useful if
-you don't want to fetch the 263 MiB model, and it's what `attune-mix` runs.
+you don't want to fetch the 267 MiB model, and it's what `attune-mix` runs.
 
 ## How we know V2 is the one
 

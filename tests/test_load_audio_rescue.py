@@ -86,3 +86,44 @@ def test_the_floor_case_still_takes_any_improvement(rig):
     CONFIRM_GAIN bar, because there was no usable vector to protect."""
     got, redecoded, asked = rig(first_seconds=3.0, claimed=None, ffmpeg_seconds=4.0)
     assert asked == 1 and redecoded is True and abs(got - 4.0) < 0.01
+
+
+class _Ran:
+    def __init__(self, out):
+        self.stdout = out
+
+
+@pytest.fixture
+def ffmpeg(monkeypatch):
+    """_ffmpeg_decode with ffmpeg itself replaced. `answers` maps "guess" and "mp3" to the bytes
+    that run hands back; returns the list of how each run was asked."""
+    def rig(answers):
+        asked = []
+
+        def fake_run(cmd, **_kw):
+            forced = cmd[cmd.index("-i") - 2:cmd.index("-i")] == ["-f", "mp3"]
+            asked.append("mp3" if forced else "guess")
+            return _Ran(answers["mp3" if forced else "guess"])
+        monkeypatch.setattr(features.shutil, "which", lambda _name: "ffmpeg")
+        monkeypatch.setattr(features.subprocess, "run", fake_run)
+        return asked
+    return rig
+
+
+def test_an_mp3_ffmpeg_cannot_place_is_read_again_as_mp3(ffmpeg):
+    """Measured 2026-10-02: 18 MP3 files with a tag in front of a RIFF wrapper gave nothing by
+    ffmpeg's own guess of the container, and 15 of them the whole song when told it is MP3."""
+    song = np.ones(8, dtype="<f4").tobytes()
+    asked = ffmpeg({"guess": b"", "mp3": song})
+    y = features._ffmpeg_decode("damaged.MP3", SR)
+    assert asked == ["guess", "mp3"] and len(y) == 8
+
+
+def test_a_file_ffmpeg_reads_is_not_asked_twice(ffmpeg):
+    asked = ffmpeg({"guess": np.ones(8, dtype="<f4").tobytes(), "mp3": b""})
+    assert len(features._ffmpeg_decode("fine.mp3", SR)) == 8 and asked == ["guess"]
+
+
+def test_only_an_mp3_is_read_again_as_mp3(ffmpeg):
+    asked = ffmpeg({"guess": b"", "mp3": np.ones(8, dtype="<f4").tobytes()})
+    assert features._ffmpeg_decode("nothing.flac", SR) is None and asked == ["guess"]

@@ -5,6 +5,45 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (2026-10-02, the model file carries the trained weights)
+
+- **Attune now fingerprints songs with the model its makers trained.** Every version up to
+  0.1.2 analyzed with the Hugging Face release of the fingerprint model, and that release
+  turned out to hold a network that was never trained. The model file is now exported from the
+  makers' own checkpoint (`music_audioset_epoch_15_esc_90.14`, CC0-1.0): the same model, the
+  same 512 numbers per song, the same file name, different numbers inside. On a reference
+  library of 21,101 songs, 520 picked at random were fingerprinted by the app from the audio
+  files and compared with fingerprints made by the reference program: 518 came out identical,
+  with the same 50 nearest songs. The other 2 are damaged files the reference program read only
+  a fragment of, and the app reads whole.
+- **A new library is mixed the new way from its first scan.** The first fingerprint written
+  into a library records which model made it, so a library scanned by this version comes up
+  under the sound profile described below.
+- **A library made by an earlier version keeps working, and stays as it was.** Its fingerprints
+  and the new ones are unrelated numbers, so new songs are not fingerprinted into it: a scan
+  says so and stops at that stage, and mixes go on as before with the songs already there.
+  **To move such a library across**, `tools/refingerprint.py --db <library> --yes` backs it up,
+  clears the old fingerprints and fingerprints every song again. Measured on 200 songs: 1.6
+  seconds a song on the processor of one desktop PC, so about 9 hours for 21,000 songs. It can
+  be stopped and picked up again. There is no button for it in the window yet.
+- **The model file says what it is.** The file carries the name of its weights inside it, and
+  the fingerprint stage reads that before writing anything. A copy of the earlier file left in
+  place stops the stage with the reason, instead of writing its fingerprints under the new
+  name. `tools/fetch_model.py` knows the new file and replaces the earlier one.
+- **Some MP3 files that nothing could open now open.** An MP3 with a tag in front of a RIFF
+  wrapper made ffmpeg guess the wrong container and give up. When the guess returns nothing,
+  ffmpeg is now told the file is MP3. The reference library held 18 such files: 17 can now be
+  fingerprinted, 15 of them read to their full length.
+- **Text search uses the trained text half** for a library with trained-weight fingerprints
+  (`src/textsearch.py`, a from-source tool). Asked for "classical orchestral music" on the
+  reference library it returned Dvorak, Bizet, Wagner and Mozart; before, every prompt
+  returned the same songs.
+- **The older learned engine does not start on a library with trained-weight fingerprints.**
+  Its head was trained on the earlier kind. `--engine learned` on such a library stops with a
+  sentence saying so.
+- **The fit line of the sound profile moved from 0.55 to 0.53**, placed by the same rule on the
+  reference library itself. It is still a starting point, not a tuned value.
+
 ### Added (2026-10-01, sound lab)
 
 - **A library with trained-weight fingerprints is mixed a new way.** A library can now say
@@ -23,9 +62,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   other artists, the share by an artist listeners play with the seed's artist was 33.1 in 100
   for the app as it is, 55.5 for this profile with catalog tags, and 48.5 with the library's own
   tags; 16.3 is what random picks score.
-- **No download makes such a library yet.** The model file the app analyzes with is still the
-  one that was never trained, so every library made by a released version keeps the old
-  recipe. The profile waits for that file to be replaced.
+- **No released download makes such a library.** The model file in every release up to 0.1.2
+  is the one that was never trained, so a library made by a released version keeps the old
+  recipe. The file was replaced on 2026-10-02 (the section above).
 - **The head** is `models/sound_head.npz`, 3 MB: two layers that reshape the 512 numbers of a
   fingerprint into 256 so that songs by artists listeners play together sit closer. It runs
   with the libraries the app already carries and nothing is downloaded.

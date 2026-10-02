@@ -261,16 +261,17 @@ def test_the_app_draws_the_fit_line_where_the_engine_says(tmp_path, monkeypatch)
 
 @pytest.mark.parametrize("module", ["embed_onnx", "embed"])
 def test_new_songs_are_never_fingerprinted_into_a_library_of_the_other_kind(module, plain, trained):
-    """Both fingerprint stages carry the release's weights. Into a library that says "trained
-    weights" they write nothing and say why; a library that does not say is fingerprinted as ever."""
+    """Both fingerprint stages carry the trained weights (since 2026-10-02). Into a library made
+    with the release they write nothing and say why; a library that says "trained weights" is
+    fingerprinted. The rest of this guard is in tests/test_trained_model.py."""
     import importlib
     import sqlite3
     mod = importlib.import_module(module)
-    assert mod.CLAP_WEIGHTS is None
-    conn = sqlite3.connect(plain)
+    assert mod.CLAP_WEIGHTS == hybrid.TRAINED_CLAP_WEIGHTS
+    conn = sqlite3.connect(trained)
     mod._refuse_to_mix(conn, 5)                           # same kind: goes ahead
     conn.close()
-    conn = sqlite3.connect(trained)
+    conn = sqlite3.connect(plain)
     mod._refuse_to_mix(conn, 0)                           # nothing to fingerprint: nothing to refuse
     with pytest.raises(SystemExit) as stop:
         mod._refuse_to_mix(conn, 5)

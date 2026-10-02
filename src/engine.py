@@ -302,6 +302,16 @@ class LearnedEngine(Engine):
             hy = _load("hybrid", os.path.join(HERE, "hybrid.py"))
             hybrid_engine = hy.HybridEngine(db_path)
         self.eng = hybrid_engine
+        # The head was trained on fingerprints from the Hugging Face release of the model. A
+        # library whose fingerprints came from the trained weights holds unrelated numbers in
+        # those 512 inputs. Run on the reference library 2026-10-02 it did not fail, it
+        # returned lists nobody can vouch for, which is worse. So it does not load there.
+        if getattr(self.eng, "trained_fingerprints", False):
+            raise SystemExit(
+                "The learned metric cannot be used on this library. Its head was trained on the "
+                "earlier kind of sound fingerprint, and this library's fingerprints were made with "
+                "the fingerprint model's trained weights, which are unrelated numbers. Start "
+                "without --engine learned: the default engine is the one built for this library.")
 
         mdir = models_dir or os.path.join(HERE, "models")
         with open(os.path.join(mdir, "learned_norm.json"), encoding="utf-8") as fh:

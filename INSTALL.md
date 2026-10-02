@@ -77,7 +77,7 @@ pip install -e .[app]
 `source .venv/bin/activate` on macOS and Linux.
 
 **Install the `[app]` extra, not the bare package.** The bare `pip install -e .` gives you
-the librosa engine and **no ONNX runtime**, so the 263 MiB model cannot be loaded at all and
+the librosa engine and **no ONNX runtime**, so the 267 MiB model cannot be loaded at all and
 the good engine never starts. `[app]` adds the web UI and that runtime. (The tag reader,
 mutagen, is a core dependency and comes with the bare install; this paragraph used to say
 otherwise and that was stale.) The other extras:
@@ -90,7 +90,7 @@ pip install -e .[neural]   # PyTorch, only if you want to re-derive embeddings t
 
 ### Get the model
 
-The neural model the default engine uses is **not in the repository**. It's 263 MiB, and
+The neural model the default engine uses is **not in the repository**. It's 267 MiB, and
 keeping it out is what makes a clone small and fast.
 
 ```

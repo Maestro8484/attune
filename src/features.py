@@ -231,22 +231,34 @@ def _ffmpeg_decode(path: str, sr: int = SR) -> np.ndarray | None:
     exe = shutil.which("ffmpeg")
     if not exe:
         return None
-    cmd = [exe, "-nostdin", "-v", "quiet", "-i", path,
-           "-t", str(FFMPEG_CAP_SECONDS),
-           "-af", "aresample=rematrix_maxval=1.0",
-           "-f", "f32le", "-ac", "1", "-ar", str(int(sr)), "-"]
-    try:
-        r = subprocess.run(
-            cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL, timeout=FFMPEG_TIMEOUT_S,
-            creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-    except Exception:
-        # Including a timeout, whose partial output is deliberately NOT harvested: half a
-        # song from a decoder that hung is the same fragment this whole guard exists to
-        # refuse, and it would arrive with nothing to mark it as partial.
-        return None
-    raw = r.stdout or b""
-    raw = raw[:len(raw) - len(raw) % 4]      # stdout can end mid-sample; drop the tail
+
+    def run(as_format=()):
+        cmd = [exe, "-nostdin", "-v", "quiet", *as_format, "-i", path,
+               "-t", str(FFMPEG_CAP_SECONDS),
+               "-af", "aresample=rematrix_maxval=1.0",
+               "-f", "f32le", "-ac", "1", "-ar", str(int(sr)), "-"]
+        try:
+            r = subprocess.run(
+                cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL, timeout=FFMPEG_TIMEOUT_S,
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
+        except Exception:
+            # Including a timeout, whose partial output is deliberately NOT harvested: half a
+            # song from a decoder that hung is the same fragment this whole guard exists to
+            # refuse, and it would arrive with nothing to mark it as partial.
+            return b""
+        raw = r.stdout or b""
+        return raw[:len(raw) - len(raw) % 4]     # stdout can end mid-sample; drop the tail
+
+    raw = run()
+    if not raw and path.lower().endswith(".mp3"):
+        # ffmpeg guesses the container from the file's first bytes, and an MP3 with a tag in
+        # front of a RIFF wrapper makes it guess wrong and give up ("invalid start code ID3 in
+        # RIFF header"). Told the file is MP3 it reads the song. Measured 2026-10-02 on the
+        # 18 files of the reference library that nothing else could open: 0 of 18 by the
+        # guess, 15 of 18 whole when told. Asked only after the guess returned nothing, so
+        # no file that decodes today is read any differently.
+        raw = run(("-f", "mp3"))
     if not raw:
         return None
     y = np.frombuffer(raw, dtype="<f4").astype(np.float32)

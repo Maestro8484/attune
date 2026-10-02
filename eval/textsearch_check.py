@@ -13,7 +13,7 @@ from __future__ import annotations
 import os, sys, argparse
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-from textsearch import search, format_results, load_model
+from textsearch import search, format_results, load_model, library_weights
 
 # query -> genre substrings (case-insensitive) that would count as a plausible hit.
 # Deliberately loose/heuristic -- a coarse sanity signal, not ground truth labels.
@@ -37,7 +37,7 @@ def main():
     ap.add_argument("--n", type=int, default=15)
     a = ap.parse_args()
 
-    session = load_model()
+    session = load_model(weights=library_weights(a.db))
     total_hits = total_n = 0
     for q, keywords in DEFAULT_CHECKS.items():
         results, meta, session = search(a.db, q, a.n, session=session)

@@ -1,7 +1,8 @@
 """Torch-free neural embeddings — ONNX twin of embed.py (ROADMAP_STANDALONE Phase A).
 
-Same protocol as embed.py (laion/larger_clap_music, 48 kHz, three 10 s windows at
-0.15/0.5/0.85, mean-pooled, L2-normalized, written to the same `clap` table), but:
+Same protocol as embed.py (laion/larger_clap_music with its makers' trained weights, see
+CLAP_WEIGHTS below; 48 kHz, three 10 s windows at 0.15/0.5/0.85, mean-pooled, L2-normalized,
+written to the same `clap` table), but:
   decode  -> librosa (as before)
   log-mel -> numpy port of transformers' ClapFeatureExtractor (bit-exact, see
              models/clap_norm.json for constants + provenance)
@@ -22,7 +23,7 @@ except ImportError:                                    # a bare Python, before p
     sys.exit("this needs numpy.\n  pip install -r requirements.txt")
 import features                 # sibling module, for its second decoder — see _decode()
 
-MODEL = "laion/larger_clap_music"   # provenance; the weights live in the .onnx
+MODEL = "laion/larger_clap_music"   # the architecture; the weights live in the .onnx
 SR = 48000
 WIN_S = 10.0
 WIN_FRACS = (0.15, 0.5, 0.85)       # start / middle / end windows, mean-pooled
@@ -42,28 +43,63 @@ N_SAMPLES = int(WIN_S * SR)                                    # 480000
 N_FRAMES = 1 + (N_SAMPLES + 2 * (N_FFT // 2) - N_FFT) // HOP   # 1001
 
 
-# Which weights this embedder's model carries. None is the Hugging Face release, whose weights
-# were never trained. A library records which weights made its fingerprints in its meta table
-# (clap_weights; absent = the release). The two kinds of fingerprint are unrelated numbers, so
-# new songs are never fingerprinted into a library made with the other kind.
-CLAP_WEIGHTS = None
+# Which weights the model file this build expects carries: the checkpoint the model's makers
+# trained (lukewys/laion_clap, music_audioset_epoch_15_esc_90.14.pt, CC0-1.0), exported to
+# models/clap_music.onnx. The Hugging Face release of the same model, which every build before
+# 2026-10-02 carried, holds weights that were never trained; its fingerprints are unrelated
+# numbers. A library records which weights made its fingerprints in its meta table
+# (clap_weights; absent = the release), and new songs are never fingerprinted into a library
+# made with the other kind.
+CLAP_WEIGHTS = "music_audioset_epoch_15_esc_90.14"
+REFINGERPRINT_HINT = "python tools/refingerprint.py --db <library>"
 
 
-def _refuse_to_mix(conn, n_todo):
-    """Stop, with the reason, before writing fingerprints of one kind into a library of the other."""
+def model_weights(sess):
+    """Which weights a loaded model file carries, read from the file itself: the export stamps
+    them in as metadata (clap_weights). A file without the stamp is the old release."""
+    try:
+        return sess.get_modelmeta().custom_metadata_map.get("clap_weights") or None
+    except Exception:
+        return None
+
+
+def _library_weights(conn):
+    """(what the library says made its fingerprints, whether it holds any fingerprint)."""
     try:
         row = conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
     except sqlite3.OperationalError:
         row = None
-    theirs = row[0] if row else None
-    if n_todo and theirs != CLAP_WEIGHTS:
-        conn.close()
-        raise SystemExit(
-            f"{n_todo} new song(s) were NOT fingerprinted. This library's fingerprints were made with "
-            f"other weights of the fingerprint model ({theirs or 'the original release'}) than this "
-            f"build carries ({CLAP_WEIGHTS or 'the original release'}). The two kinds are unrelated, and "
-            f"a mix would treat them as one. The new songs stay out of mixes until the model file "
-            f"matches the library.")
+    try:
+        has = conn.execute("SELECT 1 FROM clap WHERE vec IS NOT NULL LIMIT 1").fetchone() is not None
+    except sqlite3.OperationalError:
+        has = False
+    return (row[0] if row else None), has
+
+
+def _refuse_to_mix(conn, n_todo, weights=CLAP_WEIGHTS):
+    """Stop, with the reason, before writing fingerprints of one kind into a library of the other.
+    A library that holds no fingerprint and does not say is a new one: it goes ahead, and
+    _mark_library() records the kind beside its first fingerprint."""
+    theirs, has = _library_weights(conn)
+    if not n_todo or theirs == weights or (theirs is None and not has):
+        return
+    conn.close()
+    raise SystemExit(
+        f"{n_todo} new song(s) were NOT fingerprinted. This library's fingerprints were made with "
+        f"other weights of the fingerprint model ({theirs or 'the original release'}) than this "
+        f"build carries ({weights or 'the original release'}). The two kinds are unrelated, and "
+        f"a mix would treat them as one. The new songs stay out of mixes until the model file "
+        f"matches the library. To move a library made with the original release over to this "
+        f"build's fingerprints, every song has to be fingerprinted again:  {REFINGERPRINT_HINT}")
+
+
+def _mark_library(conn, weights=CLAP_WEIGHTS):
+    """Record which weights made this library's fingerprints, beside the first one written.
+    Not committed here: it lands in the same commit as that fingerprint."""
+    if weights is None:
+        return
+    conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("INSERT OR IGNORE INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
 
 
 def _import_stack():
@@ -80,7 +116,7 @@ _FETCH_HINT = "from the repository root, run:  python tools/fetch_model.py"
 
 
 def _check_model_present(onnx_path=ONNX_PATH):
-    """The model is not in the repository: it is 263 MiB and lives on a release instead.
+    """The model is not in the repository: it is 267 MiB and lives on a release instead.
     Say that in one sentence rather than letting onnxruntime raise a stack trace about a file
     it could not parse. A checkout made without git-lfs leaves a 134-byte text stub here, which
     looks present to `os.path.exists` and fails exactly the same way.
@@ -233,6 +269,20 @@ def make_session(onnxruntime, onnx_path=ONNX_PATH):
     return onnxruntime.InferenceSession(onnx_path, providers=["CPUExecutionProvider"])
 
 
+def _check_model_weights(sess, onnx_path=ONNX_PATH):
+    """Which weights the loaded file carries. The bundled file must be the one this build
+    expects: a checkout that still has the earlier model in place would otherwise write
+    untrained fingerprints and label them trained. A --onnx path is the caller's business,
+    and is taken for what the file says it is."""
+    weights = model_weights(sess)
+    if onnx_path == ONNX_PATH and weights != CLAP_WEIGHTS:
+        sys.exit(f"CLAP model at {onnx_path} is not the one this build expects: it carries "
+                 f"{weights or 'the original release, whose weights were never trained'}, and "
+                 f"this build fingerprints with {CLAP_WEIGHTS}.\n"
+                 f"  Fetch the current one:  {_FETCH_HINT}")
+    return weights
+
+
 def track_mels(clips, mel_filters, window) -> np.ndarray:
     """3 clips -> (3, 1, 1001, 64) float32, the graph's per-track input block."""
     return np.stack([log_mel_clip(c, mel_filters, window)[None, :] for c in clips])
@@ -255,12 +305,15 @@ def embed(db_path, workers=6, batch=8, path_map=None, onnx_path=ONNX_PATH):
     done = {r[0] for r in conn.execute("SELECT path FROM clap WHERE vec IS NOT NULL OR err IS NOT NULL")}
     todo = [r[0] for r in conn.execute("SELECT path FROM tracks") if r[0] not in done]
     print(f"{len(done)} already embedded, {len(todo)} to go, device=cpu/onnx", flush=True)
-    _refuse_to_mix(conn, len(todo))
     if not todo:
         conn.close()
         return
+    if onnx_path == ONNX_PATH:
+        _refuse_to_mix(conn, len(todo))   # the cheap refusal first, before the model loads
 
     sess = make_session(onnxruntime, onnx_path)
+    weights = _check_model_weights(sess, onnx_path)
+    _refuse_to_mix(conn, len(todo), weights)
     mel_filters, window = build_mel_filters(), build_window()
     print("model ready", flush=True)
 
@@ -311,6 +364,7 @@ def embed(db_path, workers=6, batch=8, path_map=None, onnx_path=ONNX_PATH):
             conn.execute("INSERT OR REPLACE INTO clap VALUES(?,?,?,?)",
                          (items[0][0], None, None, f"embed: {e.__class__.__name__}"))
             return 0, 1
+        _mark_library(conn, weights)
         for bi, (path, _) in enumerate(items):
             v = E[bi]
             conn.execute("INSERT OR REPLACE INTO clap VALUES(?,?,?,?)",

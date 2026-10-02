@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """fetch_model.py - download the CLAP audio model this repo does not ship.
 
-`src/models/clap_music.onnx` is 263 MiB. Keeping it in the repository meant every clone paid
+`src/models/clap_music.onnx` is 267 MiB. Keeping it in the repository meant every clone paid
 for it, needed the git-lfs add-on installed to get anything but a 134-byte stub, and drew on a
 shared monthly bandwidth allowance. So it is published once as a release asset instead, and
 this script fetches it and checks it before anything trusts it.
@@ -42,11 +42,17 @@ import urllib.request
 
 # --- the pinned artifact ----------------------------------------------------------------------
 # Publish the file under this tag once, and this URL is stable forever after:
-#   gh release create model-clap-music-v1 src/models/clap_music.onnx --title ... --notes ...
+#   gh release create model-clap-music-v2 src/models/clap_music.onnx --title ... --notes ...
+#
+# v2 (2026-10-02) is the model with its makers' trained weights: lukewys/laion_clap,
+# music_audioset_epoch_15_esc_90.14.pt, CC0-1.0. The file under the v1 tag (sha256 02679fae...,
+# 275,930,879 bytes) was exported from the Hugging Face release, whose weights were never
+# trained; a copy of it left in place reads as a mismatch here and is replaced. The file says
+# which weights it carries in its own metadata (clap_weights), and src/embed_onnx.py checks it.
 MODEL_URL = ("https://github.com/Maestro8484/attune/releases/download/"
-             "model-clap-music-v1/clap_music.onnx")
-MODEL_SHA256 = "02679faef2868832d051e4fa9c97f3be197887987b8b1cdd21b3a1b8a51a70ff"
-MODEL_BYTES = 275930879
+             "model-clap-music-v2/clap_music.onnx")
+MODEL_SHA256 = "66fe0e1a1867dc2d4032452502dbbbe9d9478fa0823611469a74c9f02af166c8"
+MODEL_BYTES = 279980909
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEFAULT_DEST = os.path.join(REPO_ROOT, "src", "models", "clap_music.onnx")

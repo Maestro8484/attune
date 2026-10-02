@@ -1,9 +1,9 @@
 """CLAP text -> track search: rank library tracks by similarity to a text prompt.
 
-Loads the SAME music-CLAP model embed.py uses to build the `clap` table
-(laion/larger_clap_music), encodes a text prompt with get_text_features, L2-normalizes
-it exactly like embed.py normalizes audio vectors, and ranks every track by dot product
-(cosine, since both sides are unit vectors) against its stored CLAP embedding.
+Loads the text half of the model that made the library's fingerprints (the library says
+which weights, see library_weights()), encodes a text prompt, L2-normalizes it exactly
+like embed.py normalizes audio vectors, and ranks every track by dot product (cosine,
+since both sides are unit vectors) against its stored CLAP embedding.
 
 Read-only: only ever SELECTs from the DB (opened with sqlite mode=ro); does not touch
 hybrid.py or the clap/tracks tables.
@@ -41,11 +41,38 @@ def _import_stack():
                   "  pip install torch transformers")
 
 
-def load_model(dev=None):
+def library_weights(db_path):
+    """What the library says made its fingerprints (meta: clap_weights), or None when it does
+    not say, which is a library made with the Hugging Face release."""
+    conn = sqlite3.connect(_readonly_uri(db_path), uri=True, timeout=30)
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
+        return row[0] if row else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def load_model(dev=None, weights=None):
+    """The text half that matches the library's fingerprints. `weights` is what the library says
+    made them: the trained checkpoint (embed.CLAP_WEIGHTS) loads through embed.load_model();
+    None loads the Hugging Face release, for a library made with it. Any other value is a kind
+    this build has no text half for, and is refused."""
+    import embed
     torch, ClapModel, ClapProcessor = _import_stack()
     dev = dev or ("cuda" if torch.cuda.is_available() else "cpu")
-    model = ClapModel.from_pretrained(MODEL).to(dev).eval()
-    proc = ClapProcessor.from_pretrained(MODEL)
+    if weights == embed.CLAP_WEIGHTS:
+        model, proc = embed.load_model(torch, ClapModel, ClapProcessor)
+        model = model.to(dev).eval()
+        model.attune_trained = True
+    elif weights is None:
+        model = ClapModel.from_pretrained(MODEL).to(dev).eval()
+        proc = ClapProcessor.from_pretrained(MODEL)
+        model.attune_trained = False
+    else:
+        sys.exit(f"this library's fingerprints were made with {weights}, and text search has no "
+                 f"text model of that kind. Nothing was searched.")
     return torch, model, proc, dev
 
 
@@ -53,18 +80,25 @@ def embed_text(query, torch, model, proc, dev):
     """Text -> L2-normalized float32 512-d vector, same normalization embed.py applies
     to audio vectors, so a plain dot product against the clap table is a cosine score.
 
-    Deliberately does NOT call model.get_text_features()/pooler_output. Verified against
-    this checkpoint (laion/larger_clap_music): ClapTextModel.pooler.dense.bias loads as
-    exactly all-zero (never present in the released weights), so its tanh pooler collapses
-    every input to nearly the same direction -- pairwise cosine between totally unrelated
-    prompts (e.g. "calm solo piano" vs "aggressive metal") came out ~0.999, and search
-    results were ~identical regardless of query. Attention-masked mean-pooling of
-    last_hidden_state before the (checkpoint-trained) text_projection layer avoids the
-    broken pooler and spreads unrelated prompts to ~0.90 cosine -- the ranking actually
-    responds to the query. text_projection itself is unaffected (it's a plain linear
-    layer, still loaded from the checkpoint)."""
+    With the trained weights this is the model's own get_text_features.
+
+    With the Hugging Face release it deliberately is NOT: that release holds weights that
+    were never trained (every bias exactly zero), so its tanh pooler collapses every input
+    to nearly the same direction -- pairwise cosine between totally unrelated prompts
+    (e.g. "calm solo piano" vs "aggressive metal") came out ~0.999, and search results were
+    ~identical regardless of query. Attention-masked mean-pooling of last_hidden_state
+    before the text_projection layer spreads unrelated prompts to ~0.90 cosine. That is a
+    workaround on an untrained network, kept for a library that still holds the release's
+    fingerprints; it is not a working text search."""
     inp = proc(text=[query], return_tensors="pt", padding=True)
     inp = {k: v.to(dev) for k, v in inp.items()}
+    if getattr(model, "attune_trained", False):
+        with torch.no_grad():
+            o = model.get_text_features(**inp)
+        o = o if torch.is_tensor(o) else (o.pooler_output if getattr(o, "pooler_output", None) is not None else o[0])
+        v = o[0].detach().cpu().numpy().astype(np.float32)
+        nrm = np.linalg.norm(v)
+        return v / nrm if nrm > 1e-9 else v
     with torch.no_grad():
         text_out = model.text_model(input_ids=inp["input_ids"], attention_mask=inp.get("attention_mask"))
         mask = inp["attention_mask"].unsqueeze(-1).float()
@@ -127,7 +161,7 @@ def search(db_path, query, n=15, session=None):
     paths = list(clap)
     X = np.vstack([clap[p] for p in paths])
 
-    torch, model, proc, dev = session or load_model()
+    torch, model, proc, dev = session or load_model(weights=library_weights(db_path))
     qv = embed_text(query, torch, model, proc, dev)
 
     results = rank(paths, X, qv, n)
