@@ -152,10 +152,10 @@ CLAP_LINE_DEFAULT = 0.99
 #
 # FIT_LINE_SOUND was first placed (0.55) on that corrected copy, which also held catalog tags
 # and artist links. Re-placed 2026-10-02 by the same rule on the reference library itself, which
-# holds neither (pool 21,118, 200 seeds): the 100th song fits at 0.53. The line is one number
-# for every seed and seeds differ widely: on that measurement a quarter of seeds reach it within
-# 9 songs. That is a property of a single line, not of where it sits.
-FIT_LINE_SOUND = 0.53          # the sound profile
+# holds neither, with the head that ships (pool 21,118, 200 seeds): the 100th song fits at 0.54.
+# The line is one number for every seed and seeds differ widely: on that measurement a quarter
+# of seeds reach it within 10 songs. That is a property of a single line, not of where it sits.
+FIT_LINE_SOUND = 0.54          # the sound profile
 FIT_LINE_V2_TRAINED = 0.50     # the V2 recipe on trained-weight fingerprints
 CLAP_LINE_TRAINED = 0.79       # the CLAP-only walks on trained-weight fingerprints
 

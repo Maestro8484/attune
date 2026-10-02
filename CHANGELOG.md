@@ -41,8 +41,15 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - **The older learned engine does not start on a library with trained-weight fingerprints.**
   Its head was trained on the earlier kind. `--engine learned` on such a library stops with a
   sentence saying so.
-- **The fit line of the sound profile moved from 0.55 to 0.53**, placed by the same rule on the
-  reference library itself. It is still a starting point, not a tuned value.
+- **The small trained head is taught by ListenBrainz data alone.** The head reshapes a
+  fingerprint so that songs by artists listeners play together sit closer. Its first version
+  learned that from Last.fm and ListenBrainz together and was never published: Last.fm's terms
+  allow non-commercial use only and no relicensing, which does not sit under this project's
+  licence. ListenBrainz data carries no conditions (CC0). Scored on the same bench as before,
+  the ListenBrainz-only head came out level: 48.8 against 48.6 on the reference library's own
+  tags, 55.2 against 55.5 with catalog tags.
+- **The fit line of the sound profile moved from 0.55 to 0.54**, placed by the same rule on the
+  reference library itself with the head above. It is still a starting point, not a tuned value.
 
 ### Added (2026-10-01, sound lab)
 
