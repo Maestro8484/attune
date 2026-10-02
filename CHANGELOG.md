@@ -22,10 +22,17 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 - **A library made by an earlier version keeps working, and stays as it was.** Its fingerprints
   and the new ones are unrelated numbers, so new songs are not fingerprinted into it: a scan
   says so and stops at that stage, and mixes go on as before with the songs already there.
-  **To move such a library across**, `tools/refingerprint.py --db <library> --yes` backs it up,
-  clears the old fingerprints and fingerprints every song again. Measured on 200 songs: 1.6
-  seconds a song on the processor of one desktop PC, so about 9 hours for 21,000 songs. It can
-  be stopped and picked up again. There is no button for it in the window yet.
+  If the scan found new songs it says where to go, in a sentence, instead of reporting a failure.
+- **Preferences, Library has a new row for such a library: Sound fingerprints.** It appears
+  only when there is something to do. It says what the library is, how many songs it holds and
+  roughly how long fingerprinting them again takes on this PC, and has one button,
+  "Fingerprint every song again". Pressing it asks once, makes a copy of the library beside
+  it, clears the earlier fingerprints and does every song again with the current model, with
+  the same progress bar and log as a scan. It can be stopped; the row then says how many songs
+  are still waiting and the button reads "Continue". When it finishes, "Load now" brings the
+  library up under the sound profile. Measured on 200 songs: 1.6 seconds a song on the
+  processor of one desktop PC, so about 9 hours for 21,000 songs. From a command line the same
+  steps are `tools/refingerprint.py --db <library> --yes`.
 - **The model file says what it is.** The file carries the name of its weights inside it, and
   the fingerprint stage reads that before writing anything. A copy of the earlier file left in
   place stops the stage with the reason, instead of writing its fingerprints under the new

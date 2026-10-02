@@ -79,6 +79,7 @@ const Prefs = (() => {
   function open() {
     $('prefsWrap').hidden = false;
     $('prefsMsg').textContent = '';
+    paintFingerprints();
     plexTokenDirty = false;
     paintThemeGrid();
     paintLcdGrid();
@@ -520,15 +521,36 @@ const Prefs = (() => {
     if (!$('prefsWrap').hidden) {
       $('scanDetail').hidden = !running && !st.lines.length;
       $('scanFill2').style.width = pct + '%';
-      $('scanNote').textContent = running
-        ? 'Safe to close the lid — the scan picks up where it left off next time, nothing is lost.'
-        : '';
+      $('scanNote').textContent = !running ? ''
+        : st.kind === 'fingerprints'
+          ? 'You can stop this or close Attune at any time. The songs already done are kept, ' +
+            'and Continue under Sound fingerprints carries on.'
+          : 'Safe to close the lid — the scan picks up where it left off next time, nothing is lost.';
+      // The row above changes as the job goes (earlier library, then songs still waiting,
+      // then nothing), so it is repainted with the log, a few polls apart.
+      if (running && st.kind === 'fingerprints' && (++fpTick % 3 === 0)) paintFingerprints();
       const log = $('scanLog');
       log.textContent = st.lines.join('\n');
       log.scrollTop = log.scrollHeight;
     }
     $('btnRescan').textContent = running ? '⏹ Cancel scan' : '⟳ Rescan library';
     if (wizLive) paintWizScan(st);
+    if (!running && scanTimer && st.finished && st.kind === 'fingerprints') {
+      // The fingerprint job is not a scan: it finds no new songs, so the scan's own
+      // endings below ("N new tracks found", "library is up to date") would all be wrong.
+      stopScanPoll();
+      const done = st.new_embedded || 0;
+      if (st.error) toast(st.error, true);
+      else if (st.cancelled) toast('Stopped. The songs already fingerprinted are kept; ' +
+                                   'press Continue in Preferences, Library to carry on.');
+      else toast(`Fingerprints done for ${done.toLocaleString()} song${done === 1 ? '' : 's'}.`);
+      if (done && typeof offerReload === 'function') {
+        offerReload(done, `${done.toLocaleString()} song${done === 1 ? '' : 's'} ` +
+                          'fingerprinted, ready to load');
+      }
+      paintFingerprints();
+      return;
+    }
     if (!running && scanTimer && st.finished) {
       stopScanPoll();
       // WHAT IS WORTH LOADING is not the same as what was imported. A scan resumed after
@@ -597,6 +619,72 @@ const Prefs = (() => {
       await jpost('/api/scan/start', folders.length ? { folders } : {});
       startScanPoll();
       $('scanDetail').hidden = false;
+    } catch (e) { toast(e.message, true); }
+  }
+
+  /* ---------------------------------------------------------------- sound fingerprints
+
+     One row in Preferences, Library, shown only when there is something to do. Two cases:
+     a library made by an earlier version of Attune (its fingerprints came from a model
+     that turned out to be untrained, and new songs cannot join it), and a library whose
+     fingerprinting was stopped part way. One button either way; the job is the scan job's
+     (same banner, same log, same Stop), so the two can never run at once. */
+  let fpState = null, fpTick = 0;
+  // "under a minute", "about 12 min", "about 9.3 hr": from the measured seconds a song.
+  function fpTime(st) {
+    const t = fmtDuration(st.est_seconds);
+    return st.est_seconds < 60 ? t : 'about ' + t;
+  }
+  async function paintFingerprints() {
+    try { fpState = await jget('/api/fingerprints/state'); }
+    catch { fpState = null; }
+    const st = fpState;
+    const show = !!st && (st.kind === 'earlier' || (st.kind === 'current' && st.waiting > 0));
+    $('fpRow').hidden = !show;
+    if (!show) return;
+    const n = st.todo.toLocaleString(), time = fpTime(st);
+    const mine = st.running && st.running_kind === 'fingerprints';
+    if (st.kind === 'earlier') {
+      $('fpSay').textContent =
+        'This library was made by an earlier version of Attune. Its sound fingerprints came ' +
+        'from a listening model that turned out never to have been trained, so mixes lean ' +
+        'on tags and tempo, and new songs cannot be added to it. Fingerprinting every song ' +
+        'again with the current model fixes both.';
+      $('fpCost').textContent =
+        `${n} songs, ${time} on this PC. A copy of the library is made first. ` +
+        'You can stop it and carry on later. Until it finishes, mixes are made from the ' +
+        'songs done so far.';
+      $('btnFpRenew').textContent = mine ? '⏹ Stop' : 'Fingerprint every song again';
+    } else {
+      $('fpSay').textContent =
+        `${n} song${st.todo === 1 ? ' is' : 's are'} waiting for a sound fingerprint and ` +
+        'will not appear in mixes until they have one.';
+      $('fpCost').textContent = mine
+        ? 'Fingerprinting now. You can stop it and carry on later; the songs already done are kept.'
+        : `It takes ${time} on this PC. You can stop it and carry on later.`;
+      $('btnFpRenew').textContent = mine ? '⏹ Stop' : 'Continue';
+    }
+    $('btnFpRenew').disabled = st.running && !mine;   // a scan is running: wait for it
+  }
+
+  async function fingerprintsPress() {
+    const st = fpState;
+    if (!st) return;
+    if (st.running && st.running_kind === 'fingerprints') {
+      await jpost('/api/scan/cancel').catch(() => {});
+      setTimeout(paintFingerprints, 1500);
+      return;
+    }
+    if (st.kind === 'earlier' && !confirm(
+        `Fingerprint all ${st.todo.toLocaleString()} songs again?\n\n` +
+        `It takes ${fpTime(st)} on this PC. A copy of the library ` +
+        'is made first, then the earlier fingerprints are cleared. Mixes are made from the ' +
+        'songs done so far until it finishes. You can stop it and carry on later.')) return;
+    try {
+      await jpost('/api/fingerprints/renew', {});
+      startScanPoll();
+      $('scanDetail').hidden = false;
+      setTimeout(paintFingerprints, 800);
     } catch (e) { toast(e.message, true); }
   }
 
@@ -1016,6 +1104,7 @@ const Prefs = (() => {
     $('miniExpand').onclick = () => toggleMini(false);
     $('tagSave').onclick = saveTags;
     $('btnRescan').onclick = rescan;
+    $('btnFpRenew').onclick = fingerprintsPress;
     $('scanShow').onclick = () => { open(); };
     // Add-row reads RAW values (readFolderInputs) so a blank row is actually added even
     // when the current fields are empty; Browse opens the server-side folder picker.

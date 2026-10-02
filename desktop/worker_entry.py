@@ -24,7 +24,9 @@ import sys
 import argparse       # noqa: F401  scan.py, embed_onnx.py
 import concurrent.futures  # noqa: F401  scan.py
 import csv            # noqa: F401  enrich.py
+import hashlib        # noqa: F401  embed_onnx.py (the library copy's check, --start-over)
 import json           # noqa: F401  scan.py, embed_onnx.py
+import pathlib        # noqa: F401  embed_onnx.py
 import queue          # noqa: F401  embed_onnx.py
 import sqlite3        # noqa: F401  db.py, embed_onnx.py
 import subprocess     # noqa: F401  scan.py (ffprobe)

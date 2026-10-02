@@ -84,8 +84,10 @@ function toast(msg, err) {
    banner/button/poll because it needs S/loadLibrary, which live here. */
 let reloadTimer = 0;
 
-function offerReload(newCount) {
-  $('reloadMsg').textContent =
+function offerReload(newCount, what) {
+  // `what` replaces the default wording for a job that found no new tracks (the
+  // fingerprint job in prefs.js re-does songs the library already holds).
+  $('reloadMsg').textContent = what ||
     `${fmt(newCount)} new track${newCount === 1 ? '' : 's'} — ready to load`;
   $('reloadBar').hidden = true;
   const btn = $('reloadNow');

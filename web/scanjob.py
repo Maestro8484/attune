@@ -123,6 +123,57 @@ def _db_counts(db_path):
         return {"tracks": 0, "analyzed": 0, "embedded": 0}
 
 
+# Seconds one song takes to fingerprint on a processor, measured 2026-10-02 over 200 songs on
+# one desktop PC (decode, mel and the model). Only for the estimate the window shows before a
+# library is fingerprinted again; the live figure during the run comes from the run itself.
+FINGERPRINT_SECONDS_A_SONG = 1.6
+# The sentence embed_onnx.py's refusal starts with (src/embed_onnx.py, _refuse_to_mix).
+_REFUSED_MARK = "NOT fingerprinted"
+
+
+def fingerprint_state(db_path, weights):
+    """What the window needs to know about a library's sound fingerprints. `weights` is the kind
+    this build makes. kind is:
+      "earlier"  it holds fingerprints and does not say this build's kind made them (a library
+                 from Attune 0.1.0 to 0.1.2): new songs cannot be fingerprinted into it until
+                 every song is done again;
+      "current"  it says this build's kind;
+      "empty"    no fingerprint yet and nothing said, which a first scan takes care of.
+    `waiting` is how many songs have no fingerprint row at all, `todo` how many the job would do."""
+    out = {"kind": "empty", "songs": 0, "fingerprints": 0, "waiting": 0, "todo": 0,
+           "seconds_a_song": FINGERPRINT_SECONDS_A_SONG, "est_seconds": 0}
+    try:
+        con = sqlite3.connect(_readonly_uri(db_path), uri=True)
+    except sqlite3.Error:
+        return out
+    try:
+        out["songs"] = con.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        try:
+            out["fingerprints"] = con.execute(
+                "SELECT COUNT(*) FROM clap WHERE vec IS NOT NULL").fetchone()[0]
+            out["waiting"] = con.execute(
+                "SELECT COUNT(*) FROM tracks t WHERE NOT EXISTS "
+                "(SELECT 1 FROM clap c WHERE c.path = t.path)").fetchone()[0]
+        except sqlite3.OperationalError:
+            out["waiting"] = out["songs"]
+        try:
+            row = con.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
+        except sqlite3.OperationalError:
+            row = None
+        says = row[0] if row else None
+    except sqlite3.Error:
+        return out
+    finally:
+        con.close()
+    if says == weights:
+        out["kind"] = "current"
+    elif says is not None or out["fingerprints"]:
+        out["kind"] = "earlier"
+    out["todo"] = out["songs"] if out["kind"] == "earlier" else out["waiting"]
+    out["est_seconds"] = int(out["todo"] * FINGERPRINT_SECONDS_A_SONG)
+    return out
+
+
 class ScanJob:
     """At most one scan runs at a time; state is read lock-free by /status (GIL-safe
     reads of plain attributes; the deque bounds memory)."""
@@ -157,8 +208,59 @@ class ScanJob:
         self.error = ""
         self.before = {}
         self.after = {}
+        self.kind = "scan"             # "scan", or "fingerprints" (start_fingerprints below)
 
     # ---------------------------------------------------------------- run
+    def start_fingerprints(self, ml_python, redo_all):
+        """Fingerprint the library again, or carry on a run of that which was stopped: the one
+        stage `embed_onnx --start-over`, which copies the library, clears the earlier
+        fingerprints and marks the new kind when the library is of an earlier kind, and
+        otherwise just fingerprints the songs that have none. Same lock, same status, same
+        cancel as a scan, so the two can never overlap. `redo_all` says every song is being
+        done again, so every fingerprint the run leaves counts as new."""
+        with _START_LOCK:
+            if self.running:
+                raise RuntimeError("a scan is already running")
+            self.__init__(self.db_path, self.logger, self.load_settings)
+            self.kind = "fingerprints"
+            self.running = True
+            self.started = int(time.time())
+            self.before = _db_counts(self.db_path)
+            if redo_all:
+                self.before["embedded"] = 0
+            self.logger.info("fingerprints started: redo_all=%s ml_python=%s", redo_all,
+                             ml_python or "(standalone/analyzer)")
+            self.thread = threading.Thread(target=self._run_fingerprints, args=(ml_python,),
+                                           daemon=True)
+            self.thread.start()
+
+    def _run_fingerprints(self, ml_python):
+        try:
+            # Always the ONNX stage: it is the one that carries --start-over, and the one a
+            # packaged copy has. Frozen: the analyzer program. From source: the configured
+            # analysis Python if there is one (it has librosa and onnxruntime), else this one.
+            if getattr(sys, "frozen", False):
+                analyzer = _analyzer_exe()
+                if not os.path.isfile(analyzer):
+                    self.logger.error("analyzer exe missing at %s", analyzer)
+                    self.error = ("Part of Attune is missing, so it cannot read music. "
+                                  "Reinstalling Attune puts it back.")
+                    return
+                argv = [analyzer, "embed_onnx", "--db", self.db_path, "--start-over"]
+            else:
+                argv = [ml_python or sys.executable, os.path.join(SRC, "embed_onnx.py"),
+                        "--db", self.db_path, "--start-over"]
+            rc = self._exec("fingerprints", argv)
+            if rc != 0 and not self.cancelled:
+                self.error = "Fingerprinting stopped before it finished. The log below says why."
+        finally:
+            self._finish()
+
+    def _finish(self):
+        self.after = _db_counts(self.db_path)
+        self.finished = int(time.time())
+        self.running = False
+        self.stage = ""
     def start(self, folders, ml_python, exclude=()):
         with _START_LOCK:
             if self.running:
@@ -300,7 +402,16 @@ class ScanJob:
             rc = self._exec(embed_label, _embed_argv())
             if rc != 0:
                 if not self.cancelled:
-                    self.error = f"embed failed (rc={rc}) — see log tail"
+                    if any(_REFUSED_MARK in line for line in self.lines):
+                        # Not a failure: the fingerprint stage declined to mix two kinds of
+                        # fingerprint. Say what the person can do about it, in the window's
+                        # own words, instead of "embed failed (rc=1)".
+                        self.error = ("New songs were read but not fingerprinted, so they are "
+                                      "not in mixes yet. This library was made by an earlier "
+                                      "version of Attune. Open Preferences, Library, Sound "
+                                      "fingerprints to bring it across.")
+                    else:
+                        self.error = f"embed failed (rc={rc}) — see log tail"
         finally:
             self.after = _db_counts(self.db_path)
             self.finished = int(time.time())
@@ -332,6 +443,7 @@ class ScanJob:
         after = self.after if not self.running else _db_counts(self.db_path)
         return {
             "running": self.running,
+            "kind": self.kind,
             "stage": self.stage,
             "stages": self.stages_done,
             "progress": self.progress,
@@ -399,6 +511,32 @@ def register(app, ctx):
     def scan_cancel():
         job.cancel()
         return jsonify(ok=True)
+
+    # ---- sound fingerprints: bring a library made by an earlier version across
+    weights = ctx.get("fingerprint_weights")
+
+    @bp.get("/api/fingerprints/state")
+    def fingerprints_state():
+        st = fingerprint_state(job.db_path, weights)
+        st["running"] = bool(job.running)
+        st["running_kind"] = job.kind if job.running else ""
+        return jsonify(ok=True, **st)
+
+    @bp.post("/api/fingerprints/renew")
+    def fingerprints_renew():
+        st = fingerprint_state(job.db_path, weights)
+        if not st["todo"]:
+            return jsonify(ok=False, error="Every song in this library already has a "
+                           "fingerprint of the current kind. There is nothing to do."), 400
+        ml = (load_settings().get("ml_venv_python") or "").strip()
+        if ml and not os.path.isfile(ml):
+            ml = ""
+        try:
+            job.start_fingerprints(ml, redo_all=(st["kind"] == "earlier"))
+        except RuntimeError:
+            return jsonify(ok=False, error="A scan is running. Wait for it to finish, or stop "
+                           "it, then press this again."), 409
+        return jsonify(ok=True, todo=st["todo"], est_seconds=st["est_seconds"])
 
     app.register_blueprint(bp)
     return job

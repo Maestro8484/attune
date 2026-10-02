@@ -725,6 +725,15 @@
                 Watch library folders — analyze new music automatically</label>
                 <span class="hint">New/changed audio in your library folders triggers an
                   incremental scan (20 s quiet period).</span></div></div>
+            <!-- Shown only when there is something to do: a library made by an earlier
+                 version of Attune, or one whose fingerprinting was stopped part way.
+                 prefs.js paintFingerprints() fills it from /api/fingerprints/state. -->
+            <div class="prefrow" id="fpRow" hidden><span class="k">Sound fingerprints</span>
+              <div class="v">
+                <span id="fpSay"></span>
+                <div class="btnrow"><button id="btnFpRenew" class="primary"></button></div>
+                <span class="hint" id="fpCost"></span>
+              </div></div>
             <div id="scanDetail" hidden>
               <div class="progressbar"><div class="fill" id="scanFill2" style="width:0%"></div></div>
               <div id="scanNote" class="hint"></div>

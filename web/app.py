@@ -1996,7 +1996,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     scanjob = importlib.util.module_from_spec(sj_spec)
     sj_spec.loader.exec_module(scanjob)
     scan_job = scanjob.register(app, {"db_path": db_path, "load_settings": cfgmod.load,
-                                      "logger": scan_logger})
+                                      "logger": scan_logger,
+                                      # the kind of fingerprint this build makes, for the
+                                      # Sound fingerprints row in Preferences
+                                      "fingerprint_weights": hybrid.TRAINED_CLAP_WEIGHTS})
     reload_ctx["scan_job"] = scan_job       # see the note where reload_ctx is built
     # Flask's own per-app registry, so a test can reach the live scan job (to hold its
     # start lock, or mark it running) without a module-level global or a route for it.

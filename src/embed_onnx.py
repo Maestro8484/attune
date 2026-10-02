@@ -16,7 +16,7 @@ here — embed.py stays as the reference/training path.
   python embed_onnx.py --db ../data/mixer.db [--workers 6] [--batch 8]
 """
 from __future__ import annotations
-import os, sys, time, json, sqlite3, argparse, threading, queue
+import os, sys, time, json, sqlite3, argparse, threading, queue, hashlib
 try:
     import numpy as np
 except ImportError:                                    # a bare Python, before pip install
@@ -109,6 +109,117 @@ def _mark_library(conn, weights=CLAP_WEIGHTS):
             f"Stopped: while this run was going, the library came to say its fingerprints are made "
             f"with {row[0]}, and this run makes {weights or 'the original release'} ones. Nothing "
             f"more was written.")
+
+
+# ---------------------------------------------------------------------------
+# Moving a library made with the earlier model file over to this build's: copy it, clear its
+# fingerprints, record the new kind, fingerprint every song again. Here, not in a tool, so the
+# packaged analyzer can do it for the window (`embed_onnx --db ... --start-over`);
+# tools/refingerprint.py is the same steps from a command line.
+# ---------------------------------------------------------------------------
+
+def library_state(db_path):
+    """What a library holds, read-only: songs, fingerprints, songs that could be fingerprinted
+    and have no row yet, and which weights it says made its fingerprints (None = it does not
+    say, which with fingerprints present means the earlier model file)."""
+    import pathlib
+    conn = sqlite3.connect(pathlib.Path(os.path.abspath(db_path)).as_uri() + "?mode=ro",
+                           uri=True, timeout=30)
+    try:
+        songs = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
+        try:
+            prints = conn.execute("SELECT COUNT(*) FROM clap WHERE vec IS NOT NULL").fetchone()[0]
+            waiting = conn.execute("SELECT COUNT(*) FROM tracks t WHERE NOT EXISTS "
+                                   "(SELECT 1 FROM clap c WHERE c.path = t.path)").fetchone()[0]
+        except sqlite3.OperationalError:
+            prints, waiting = 0, songs
+        says, _has = _library_weights(conn)
+    finally:
+        conn.close()
+    return {"songs": songs, "fingerprints": prints, "waiting": waiting, "says": says}
+
+
+def _fingerprint_digest(conn):
+    """(songs, fingerprints, one checksum over every fingerprint row in path order)."""
+    h = hashlib.sha256()
+    n = 0
+    try:
+        rows = conn.execute("SELECT path, vec FROM clap WHERE vec IS NOT NULL ORDER BY path")
+    except sqlite3.OperationalError:
+        rows = ()
+    for path, vec in rows:
+        h.update(path.encode("utf-8", "replace"))
+        h.update(vec)
+        n += 1
+    return conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0], n, h.hexdigest()
+
+
+def backup_library(db_path):
+    """A copy of the library beside it, made by SQLite itself and checked. Returns its path, or
+    None when the copy does not hold what the library holds.
+
+    Not a file copy. A library that something else has open keeps its newest changes in a side
+    file, and copying the main file alone leaves them out while every byte still matches (a cold
+    reader showed 200 committed fingerprints missing from such a copy on 2026-10-02). SQLite's
+    own backup reads through that side file. The check is on content: the same number of songs,
+    and the same checksum over every fingerprint, in the copy as in the library."""
+    stem, ext = os.path.splitext(db_path)
+    dest = f"{stem}.backup-{time.strftime('%Y%m%d-%H%M%S')}-before-refingerprint{ext}"
+    src = sqlite3.connect(db_path, timeout=30)
+    dst = sqlite3.connect(dest)
+    try:
+        src.backup(dst)
+        dst.commit()
+        same = _fingerprint_digest(src) == _fingerprint_digest(dst)
+        sound = dst.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    finally:
+        dst.close()
+        src.close()
+    return dest if same and sound else None
+
+
+def clear_and_mark(db_path, weights=CLAP_WEIGHTS):
+    """Clear every fingerprint row and record the new kind, in one transaction."""
+    conn = sqlite3.connect(db_path, timeout=30)
+    try:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute("CREATE TABLE IF NOT EXISTS clap(path TEXT PRIMARY KEY, dim INT, vec BLOB, err TEXT)")
+        n = conn.execute("DELETE FROM clap").rowcount
+        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
+        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return n
+
+
+def start_over(db_path, onnx_path=ONNX_PATH):
+    """The crossing's first three steps, for a library that holds another kind of fingerprint
+    than the model file makes: check the model, copy the library, clear and mark. A library
+    already of this kind is left alone, so a crossing that was stopped is carried on by the
+    ordinary run that follows. Says what it did, one line each, for the window's log."""
+    _librosa, onnxruntime = _import_stack()
+    sess = make_session(onnxruntime, onnx_path)
+    weights = _check_model_weights(sess, onnx_path)
+    del sess
+    if weights is None:
+        sys.exit("That model file carries the original release's untrained weights, so nothing "
+                 "was cleared.")
+    st = library_state(db_path)
+    if st["says"] == weights or (st["says"] is None and not st["fingerprints"]):
+        print(f"this library already takes {weights} fingerprints; carrying on with "
+              f"{st['waiting']:,} song(s) that have none", flush=True)
+        return
+    dest = backup_library(db_path)
+    if dest is None:
+        sys.exit("The copy of the library made first does not hold what the library holds, so "
+                 "nothing was cleared.")
+    print(f"copy of the library made first: {dest}", flush=True)
+    n = clear_and_mark(db_path, weights)
+    print(f"cleared {n:,} earlier fingerprints; the library now takes {weights} ones", flush=True)
 
 
 def _import_stack():
@@ -414,7 +525,13 @@ def main():
     ap.add_argument("--workers", type=int, default=6)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--onnx", default=ONNX_PATH)
+    ap.add_argument("--start-over", action="store_true",
+                    help="for a library made with the earlier model file: copy it, clear its "
+                         "fingerprints, then fingerprint every song again (hours for a large "
+                         "library; can be stopped and run again to carry on)")
     a = ap.parse_args()
+    if a.start_over:
+        start_over(a.db, a.onnx)
     embed(a.db, a.workers, a.batch, onnx_path=a.onnx)
 
 

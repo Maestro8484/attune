@@ -14,9 +14,14 @@ the way across: one deliberate action that
 
 Nothing else is touched: no tags, no ratings, no playlists, no sound descriptors, no music file.
 It takes about two seconds a song on an ordinary processor, so hours for a large library; it can
-be stopped, and running the ordinary fingerprint stage afterwards (src/embed_onnx.py --db ...)
+be stopped, and running it again, or the ordinary fingerprint stage (src/embed_onnx.py --db ...),
 picks up where it stopped. Until it finishes, songs without a fingerprint stay out of mixes.
-Close Attune first. To undo: close Attune and copy the backup over the library.
+To undo: close Attune and copy the backup over the library.
+
+The window does the same thing from Preferences, Library, "Sound fingerprints". The steps
+themselves live in src/embed_onnx.py (library_state, backup_library, clear_and_mark), which is
+what the packaged analyzer runs as `embed_onnx --db <library> --start-over`. This file is the
+same steps with the plan shown first.
 
     python tools/refingerprint.py --db <library>          # say what would happen, change nothing
     python tools/refingerprint.py --db <library> --yes    # do it
@@ -26,82 +31,15 @@ Exit codes: 0 done or nothing to do, 1 refused (the reason is printed), 2 the ba
 from __future__ import annotations
 
 import argparse
-import hashlib
 import os
-import sqlite3
 import sys
 import time
-from pathlib import Path
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "src"))
 import embed_onnx  # noqa: E402
 
-
-def state(db_path):
-    """(songs, fingerprints, what the library says made them), read-only."""
-    conn = sqlite3.connect(Path(os.path.abspath(db_path)).as_uri() + "?mode=ro", uri=True, timeout=30)
-    try:
-        songs = conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0]
-        try:
-            prints = conn.execute("SELECT COUNT(*) FROM clap WHERE vec IS NOT NULL").fetchone()[0]
-        except sqlite3.OperationalError:
-            prints = 0
-        theirs, _has = embed_onnx._library_weights(conn)
-    finally:
-        conn.close()
-    return songs, prints, theirs
-
-
-def _fingerprint_digest(conn):
-    """(songs, fingerprints, one checksum over every fingerprint row in path order)."""
-    h = hashlib.sha256()
-    n = 0
-    for path, vec in conn.execute("SELECT path, vec FROM clap WHERE vec IS NOT NULL ORDER BY path"):
-        h.update(path.encode("utf-8", "replace"))
-        h.update(vec)
-        n += 1
-    return conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0], n, h.hexdigest()
-
-
-def backup(db_path):
-    """A copy of the library beside it, made by SQLite itself and checked. Returns its path, or
-    None when the copy does not hold what the library holds.
-
-    Not a file copy. A library that something else has open keeps its newest changes in a side
-    file, and copying the main file alone leaves them out while every byte still matches (a cold
-    reader showed 200 committed fingerprints missing from such a copy on 2026-10-02). SQLite's
-    own backup reads through that side file. The check is on content: the same number of songs,
-    and the same checksum over every fingerprint, in the copy as in the library."""
-    stem, ext = os.path.splitext(db_path)
-    dest = f"{stem}.backup-{time.strftime('%Y%m%d-%H%M%S')}-before-refingerprint{ext}"
-    src = sqlite3.connect(db_path, timeout=30)
-    dst = sqlite3.connect(dest)
-    try:
-        src.backup(dst)
-        dst.commit()
-        same = _fingerprint_digest(src) == _fingerprint_digest(dst)
-        sound = dst.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
-    finally:
-        dst.close()
-        src.close()
-    return dest if same and sound else None
-
-
-def clear_and_mark(db_path, weights=embed_onnx.CLAP_WEIGHTS):
-    """Clear every fingerprint row and record the new kind, in one transaction."""
-    conn = sqlite3.connect(db_path, timeout=30)
-    try:
-        conn.execute("BEGIN IMMEDIATE")
-        n = conn.execute("DELETE FROM clap").rowcount
-        conn.execute("CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)")
-        conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('clap_weights', ?)", (weights,))
-        conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
-    finally:
-        conn.close()
-    return n
+backup = embed_onnx.backup_library
+clear_and_mark = embed_onnx.clear_and_mark
 
 
 def main(argv=None):
@@ -116,7 +54,8 @@ def main(argv=None):
     if not os.path.isfile(a.db):
         print(f"refingerprint: no library at {a.db}")
         return 1
-    songs, prints, theirs = state(a.db)
+    st = embed_onnx.library_state(a.db)
+    songs, prints, theirs = st["songs"], st["fingerprints"], st["says"]
     print(f"refingerprint: {a.db}: {songs:,} songs, {prints:,} fingerprints, made with "
           f"{theirs or 'the original release (the library does not say otherwise)'}")
 
@@ -151,10 +90,10 @@ def main(argv=None):
     print(f"refingerprint: cleared {n:,} fingerprint rows; the library now says {weights}")
     t0 = time.time()
     embed_onnx.embed(a.db, workers=a.workers, batch=a.batch, onnx_path=a.onnx)
-    songs, prints, theirs = state(a.db)
+    st = embed_onnx.library_state(a.db)
     took = time.time() - t0
-    print(f"refingerprint: done in {took / 60:.1f} minutes ({took / max(songs, 1):.2f} s a song): "
-          f"{prints:,} of {songs:,} songs carry a {theirs} fingerprint")
+    print(f"refingerprint: done in {took / 60:.1f} minutes ({took / max(st['songs'], 1):.2f} s a song): "
+          f"{st['fingerprints']:,} of {st['songs']:,} songs carry a {st['says']} fingerprint")
     return 0
 
 
