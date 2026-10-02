@@ -65,10 +65,18 @@ VARIANTS = {
 }
 
 
+_OVERRIDES = frozenset({"fusion", "clap_space", "weights", "family_credit", "catalog"})
+
+
 def variant_engine(base, name, earfeel_file=None, **override):
     """A HybridEngine that scores as the named version, sharing `base`'s loaded library.
     `base` is not changed. `override` replaces or adds settings (fusion=, clap_space=,
     weights={...}) on top of the named version, for the influence report's grid."""
+    unknown = set(override) - _OVERRIDES
+    if unknown:
+        # a misspelt or renamed setting must fail loudly: ignored, the report would carry
+        # the default's numbers under the other version's name
+        raise TypeError(f"variant_engine() does not know {sorted(unknown)}; it takes {sorted(_OVERRIDES)}")
     spec = dict(VARIANTS[name])
     weights = dict(spec.get("weights", {}))
     weights.update(override.pop("weights", {}))

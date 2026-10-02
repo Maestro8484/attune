@@ -7,10 +7,14 @@ Locks in:
   3. on: a family-only match scores between no match and the same value;
   4. a shared STYLE on top of a shared family scores between family-only and the same value;
   5. explain() adds up to _score() with the switch on, under the raw sum and under rank fusion,
-     and names how much of the genre credit the family tier gave;
+     and every key it returns but the total is a term of that sum (the page draws a bar per key);
   6. the importer loads the map, matches values whatever their case, and skips blank rows;
   7. the switch rides engine_v2.json like the others; a value out of range is refused or ignored;
-  8. the two listening-test versions turn it on, and the engine "before the catalog" has no families.
+  8. the two listening-test versions turn it on, and the engine "before the catalog" has no families;
+  9. a song in two families shares a family with either, a family-only match scores exactly the
+     credit, and a song that shares a tag never scores below one that shares only the family;
+ 10. a family table alone does not make the listening-test key say "catalog";
+ 11. a version asked for with a setting the harness does not know fails, never falls back silently.
 
 Synthetic library: nine tracks, CLAP vectors close enough that every track is a candidate.
 """
@@ -41,14 +45,15 @@ FAMILIES = [("Punk", "Rock"), ("GRUNGE", "Rock"), ("Ska", "Rock"), ("Pop", "Pop"
             ("Electronic", "Electronic"), ("House", "Electronic"), ("", "Rock"), ("Blank", "")]
 
 
-def build_db(dirpath, name="lib.db"):
+def build_db(dirpath, name="lib.db", genres=None):
+    genres = GENRES if genres is None else genres
     dbp = os.path.join(dirpath, name)
     conn = dbm.connect(dbp)
     rng = np.random.default_rng(11)
     centre = rng.normal(size=512)
     now = int(time.time())
     paths = []
-    for i, g in enumerate(GENRES):
+    for i, g in enumerate(genres):
         p = os.path.join(dirpath, f"t{i:02d}.mp3")
         paths.append(p)
         v = centre + 0.3 * rng.normal(size=512)
@@ -63,12 +68,12 @@ def build_db(dirpath, name="lib.db"):
     return dbp, paths
 
 
-def add_families(dbp, dirpath, paths, styles=True):
+def add_families(dbp, dirpath, paths, styles=True, families=None):
     fam_csv = os.path.join(dirpath, "families.csv")
     with open(fam_csv, "w", encoding="utf-8", newline="") as f:
         w = csv.writer(f)
         w.writerow(["value", "family"])
-        w.writerows(FAMILIES)
+        w.writerows(FAMILIES if families is None else families)
     ids_csv = None
     if styles:
         ids_csv = os.path.join(dirpath, "ids.csv")
@@ -157,15 +162,17 @@ def test_explain_adds_up_with_the_switch_on(tiered, fusion):
         s = eng._score(si)
         for ci in range(len(GENRES)):
             comp = eng.explain(si, ci)
-            parts = sum(v for k, v in comp.items() if k not in ("total", "genre_family"))
+            # every key but the total is a term of the sum: the page draws one bar per key
+            parts = sum(v for k, v in comp.items() if k != "total")
             assert comp["total"] == pytest.approx(s[ci], abs=1e-6)   # the raw sum is float32
             assert parts == pytest.approx(comp["total"], abs=1e-9)
+            assert set(comp) <= {"clap", "lib", "genre", "bpm", "key", "era", "artist", "earfeel", "total"}
     if fusion == "raw":
         comp = eng.explain(0, 2)                   # Punk seed, Grunge candidate: family only
         assert comp["genre"] == pytest.approx(eng.w["genre"] * 0.5)
-        assert comp["genre_family"] == pytest.approx(comp["genre"])
-        assert "genre_family" not in eng.explain(0, 1)      # same value: no family part
-        assert "genre_family" not in eng.explain(0, 3)      # another family: none either
+        assert eng._genre_pair(0, 2) == (0.0, 0.5)             # none from tags, all from the family
+        assert eng._genre_pair(0, 1) == (1.0, 0.0)             # same value: no family part
+        assert eng._genre_pair(0, 3) == (0.0, 0.0)             # another family: none either
 
 
 def test_importer_loads_the_map(tmp_path):
@@ -211,3 +218,59 @@ def test_listening_versions(tiered):
     before = base.without_catalog()
     before.family_credit = 0.5
     assert before.genre_fams is None and before._genre_closeness(0)[2] == 0.0
+
+
+#           0       1                   2                  3                4         5
+HYBRIDS = ["Punk", "House; Punk; Ska", "Grunge; Oi; Ska", "Hip Hop; Punk", "Grunge", "Pop"]
+HYBRID_FAMILIES = [("Punk", "Rock"), ("Grunge", "Rock"), ("Oi", "Rock"), ("Ska", "Rock"),
+                   ("House", "Electronic"), ("Hip Hop", "Hip Hop"), ("Pop", "Pop")]
+
+
+@pytest.fixture()
+def hybrids(tmp_path):
+    dbp, paths = build_db(str(tmp_path), genres=HYBRIDS)
+    add_families(dbp, str(tmp_path), paths, styles=False, families=HYBRID_FAMILIES)
+    return dbp
+
+
+@pytest.mark.parametrize("credit", [0.25, 0.5, 0.8, 1.0])
+def test_a_shared_tag_never_scores_below_a_family_only_match(hybrids, credit):
+    eng = hybrid.HybridEngine(hybrids, family_credit=credit)
+    g = eng._genre_closeness(0)                    # seed: Punk
+    # 1 shares the tag Punk but is two thirds something else, one of them another family;
+    # 2 shares no tag and is all Rock. The tag match must not lose to it at any credit.
+    assert g[1] == pytest.approx(1 / 3 + credit * (2 / 3))
+    assert g[2] == pytest.approx(credit)
+    assert g[1] >= g[2]
+    assert g[5] == 0.0                             # Pop: no family shared
+
+
+def test_a_song_in_two_families_shares_a_family_with_either(hybrids):
+    eng = hybrid.HybridEngine(hybrids, family_credit=0.5)
+    assert eng.genre_fams[3] == {"hip hop", "rock"}
+    g = eng._genre_closeness(3)                    # seed: Hip Hop + Punk
+    assert g[4] == 0.5                             # Grunge: family only, exactly the credit, not half of it
+    assert eng._genre_closeness(4)[3] == 0.5       # and the same read the other way
+    assert g[5] == 0.0
+
+
+def test_family_table_alone_is_not_the_catalog(tmp_path):
+    dbp, paths = build_db(str(tmp_path))
+    add_families(dbp, str(tmp_path), paths, styles=False)
+    eng = hybrid.HybridEngine(dbp)
+    assert eng.genre_fams is not None and eng.catalog_loaded is False
+    add_families(dbp, str(tmp_path), paths, styles=True)
+    assert hybrid.HybridEngine(dbp).catalog_loaded is True
+
+
+def test_copies_do_not_share_weights_and_unknown_settings_fail(tiered):
+    import variants as V
+    dbp, _ = tiered
+    base = hybrid.HybridEngine(dbp)
+    before = base.without_catalog()
+    before.w["genre"] = 0.0
+    assert base.w["genre"] == hybrid.DEFAULT_WEIGHTS["genre"]
+    with pytest.raises(TypeError):
+        V.variant_engine(base, "v2", feel_file="old-name.json")
+    with pytest.raises(TypeError):
+        V.variant_engine(base, "v2", family_credits=0.5)

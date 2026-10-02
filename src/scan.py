@@ -63,7 +63,10 @@ _CATALOG_TAG_KEYS = {
                        "wm/originalreleaseyear", "origyear", "----:com.apple.itunes:origyear"),
     "style":          ("txxx:style", "style", "----:com.apple.itunes:style"),
 }
-_MBID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
+# a MusicBrainz id standing on its own: not the tail or the head of a longer run of hex digits
+_MBID = re.compile(r"(?<![0-9a-f])[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?![0-9a-f])", re.I)
+_YEAR = re.compile(r"[0-9]{4}")      # ASCII digits only: str.isdigit() also passes "²²²²", which int() refuses
+YEAR_RANGE = (1000, 2100)            # a year outside this is a damaged tag, not a release date
 
 # RIFF INFO, the metadata a .wav actually carries. mutagen's WAVE class reads only ID3,
 # and almost nothing writes ID3 into a wav: ffmpeg, Audacity and Windows all write an
@@ -188,16 +191,23 @@ def _mutagen_tags(path):
     if f is None:
         return None
 
-    tags = f.tags or {}
+    # `is None`, never `or {}`: truth-testing an EasyID3 asks its length, which reads every
+    # key it knows, and its MusicBrainz key decodes the file's UFID frame as ASCII. One
+    # file with a damaged id used to raise UnicodeDecodeError here and end the whole scan.
+    tags = f.tags if f.tags is not None else {}
     # One lowercase name can map to more than one real key (an ASF file carries both
     # `Title` and `title`), so keep every candidate in the order the container lists
     # them and take the first that actually holds a value.
     lower = {}
     try:
-        for k in tags.keys():
-            lower.setdefault(str(k).lower(), []).append(k)
+        keys = list(tags.keys())
     except Exception:
-        lower = {}
+        # The Easy wrapper lists its keys by reading every one, so a single damaged frame
+        # makes the listing itself raise. Ask for the six fields by name instead; field()
+        # below already steps over a name the file does not have.
+        keys = [k for names in _TAG_KEYS.values() for k in names]
+    for k in keys:
+        lower.setdefault(str(k).lower(), []).append(k)
 
     def field(name):
         for want in _TAG_KEYS[name]:
@@ -219,7 +229,7 @@ def _mutagen_tags(path):
             if not got.get(n):
                 got[n] = v
 
-    year = "".join(ch for ch in str(got["date"] or "")[:4] if ch.isdigit())
+    year = "".join(ch for ch in str(got["date"] or "")[:4] if ch in "0123456789")
     dur = getattr(getattr(f, "info", None), "length", None)
     return {
         "artist": got["artist"] or got["albumartist"],
@@ -256,23 +266,27 @@ def _catalog_tags(path):
     """The catalog tags one file carries (see _CATALOG_TAG_KEYS), as the fields of a catalog_ids
     row: recording_mbid, artist_mbids ("; " between several), original_year (int), style ("; "
     between several). Only the fields the file actually has; {} for a file with none of them,
-    or one mutagen cannot open. Read-only, like every tag read in this file."""
+    or one mutagen cannot open. Read-only, like every tag read in this file. Never raises:
+    one file with a damaged tag must not end a scan of the other twenty thousand."""
     try:
-        import mutagen
-        f = mutagen.File(path)                  # not the Easy wrapper: it hides TXXX and UFID
-    except Exception:
-        return {}
-    tags = getattr(f, "tags", None)
-    if not tags:
-        return {}
-    lower = {}
-    try:
-        for k in tags.keys():
-            lower.setdefault(str(k).lower(), []).append(k)
+        return _catalog_tags_unguarded(path)
     except Exception:
         return {}
 
-    def values(name):
+
+def _catalog_tags_unguarded(path):
+    import mutagen
+    f = mutagen.File(path)                      # not the Easy wrapper: it hides TXXX and UFID
+    tags = getattr(f, "tags", None)
+    if tags is None:
+        return {}
+    lower = {}
+    for k in tags.keys():
+        lower.setdefault(str(k).lower(), []).append(k)
+
+    def every(name):
+        """Each spelling's values in turn, so a blank or damaged one never hides a good one
+        under another name (ORIGINALDATE "0000" beside ORIGINALYEAR "1969")."""
         for want in _CATALOG_TAG_KEYS[name]:
             for key in lower.get(want, ()):
                 try:
@@ -280,8 +294,10 @@ def _catalog_tags(path):
                 except Exception:
                     continue
                 if vals:
-                    return vals
-        return []
+                    yield vals
+
+    def values(name):
+        return next(every(name), [])
 
     out = {}
     rec = _MBID.findall(" ".join(values("recording_mbid")))
@@ -293,10 +309,11 @@ def _catalog_tags(path):
             arts.append(a.lower())
     if arts:
         out["artist_mbids"] = "; ".join(arts)
-    for v in values("original_year"):
-        y = v[:4]
-        if len(y) == 4 and y.isdigit() and y != "0000":
-            out["original_year"] = int(y)
+    for vals in every("original_year"):
+        years = [int(v[:4]) for v in vals if _YEAR.fullmatch(v[:4])]
+        years = [y for y in years if YEAR_RANGE[0] <= y <= YEAR_RANGE[1]]
+        if years:
+            out["original_year"] = years[0]
             break
     styles = []
     for v in values("style"):
@@ -345,7 +362,7 @@ def _read_tags(path):
     if os.path.splitext(path)[1].lower() == ".wav":
         info = _riff_info_tags(path)
         if info:
-            year = "".join(ch for ch in str(info.get("date") or "")[:4] if ch.isdigit())
+            year = "".join(ch for ch in str(info.get("date") or "")[:4] if ch in "0123456789")
             return {
                 "artist": info.get("artist"),
                 "album": info.get("album"),
@@ -398,7 +415,7 @@ def _ffprobe_tags(path):
         tags.update({k.lower(): v for k, v in (fmt.get("tags", {}) or {}).items()})
         dur = fmt.get("duration")
         year = tags.get("date") or tags.get("year") or ""
-        year = "".join(ch for ch in str(year)[:4] if ch.isdigit()) or None
+        year = "".join(ch for ch in str(year)[:4] if ch in "0123456789") or None
         return {
             "artist": tags.get("artist") or tags.get("album_artist"),
             "album": tags.get("album"),

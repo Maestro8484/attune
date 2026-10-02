@@ -67,14 +67,18 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 #               directions, models/earfeel.json; see _load_earfeel(). That file is made
 #               for the fingerprint model's trained weights and ships only with them.
 #   family_credit  the genre ingredient in two tiers. 0 (the default) is the genre term as it
-#               always was: shared tags over all tags. Above 0, two songs whose tags differ
-#               but sit in the same broad family (Punk and Grunge are both Rock) get that
-#               share of the credit the tags left unclaimed:
-#                   tags + family_credit * (1 - tags) * families
-#               so the same value still scores 1, a different family still scores 0, and a
-#               family-only match scores family_credit. The families come from the
-#               genre_family table (src/enrich.py); a library without it has none and the
-#               term is unchanged whatever this is set to.
+#               always was: shared tags over all tags. Above 0, two songs that share a broad
+#               family (Punk and Grunge are both Rock) get that share of the credit the
+#               tags left unclaimed:
+#                   tags + family_credit * (1 - tags)      when they share a family
+#                   tags                                   when they do not
+#               so the same value still scores 1, no shared family still scores what the
+#               tags alone give, a family-only match scores exactly family_credit, and a
+#               song that shares a tag never scores below one that shares only the family.
+#               A song in two families (a hybrid such as Punk with a Hip Hop style) shares a
+#               family with either. The families come from the genre_family table
+#               (src/enrich.py); a library without it has none and the term is unchanged
+#               whatever this is set to.
 FUSIONS = ("raw", "z", "rank")
 CLAP_SPACES = ("raw", "centered", "abtt1", "abtt2", "abtt3")
 EARFEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
@@ -447,8 +451,10 @@ class HybridEngine:
         self.recording = [c[0] if c else None for c in cat]
         self.artist_ids = [c[1] if c else [] for c in cat]
         self.similar = cat_similar
-        # for the listening test's key
-        self.catalog_loaded = bool(cat_ids or cat_similar or cat_families)
+        # For the listening test's key: the catalog rules (covers out, STYLE in, original
+        # year, one recording once) ran. A family table alone runs none of them, and the
+        # key records family_credit on its own.
+        self.catalog_loaded = bool(cat_ids or cat_similar)
         self.bpm = np.array([tempo.get(p, 0) or 0 for p in paths], float)
         self.key = _keys_from_chroma_batch([chroma.get(p) for p in paths])
         self.meta = {p: {"artist": meta[p][0], "album": meta[p][1], "title": meta[p][2],
@@ -592,15 +598,14 @@ class HybridEngine:
     def _genre_closeness(self, si):
         """The genre ingredient over the pool for one seed, 0 to 1. Shared tags over all tags
         (Jaccard), as V2 was eared. With family_credit above 0 and a family map loaded, a
-        song gets that share of whatever credit its tags left unclaimed when its families
-        overlap the seed's; see the note on family_credit at the top of this file."""
+        song that shares a family with the seed gets that share of whatever credit its
+        tags left unclaimed; see the note on family_credit at the top of this file."""
         st = self.genre_tags[si]
         jac = np.array([len(st & g) / len(st | g) if st and g else 0.0
                         for g in self.genre_tags])
         if self.family_credit and self.genre_fams is not None:
             sf = self.genre_fams[si]
-            fam = np.array([len(sf & g) / len(sf | g) if sf and g else 0.0
-                            for g in self.genre_fams])
+            fam = np.array([1.0 if sf & g else 0.0 for g in self.genre_fams])
             jac = jac + self.family_credit * (1.0 - jac) * fam
         return jac
 
@@ -611,9 +616,8 @@ class HybridEngine:
         jac = len(st & gt) / len(st | gt) if st and gt else 0.0
         fam = 0.0
         if self.family_credit and self.genre_fams is not None:
-            sf, gf = self.genre_fams[si], self.genre_fams[ci]
-            if sf and gf:
-                fam = self.family_credit * (1.0 - jac) * (len(sf & gf) / len(sf | gf))
+            if self.genre_fams[si] & self.genre_fams[ci]:
+                fam = self.family_credit * (1.0 - jac)
         return jac, fam
 
     def _fuse(self, g):
@@ -669,6 +673,7 @@ class HybridEngine:
         the catalog tables existed: genre tags from GENRE alone with "covers" counted, the
         file's own year, no recording or artist ids. The A side of the catalog ear test."""
         e = copy.copy(self)
+        e.w = dict(self.w)                 # a copy's weights are its own
         e.genre_tags = [_tags(self.meta.get(p, {}).get("genre")) for p in self.paths]
         e.year = np.array([self.meta.get(p, {}).get("year") or 0 for p in self.paths], float)
         e.recording = [None] * len(self.paths)
@@ -1224,12 +1229,10 @@ class HybridEngine:
             comp["lib"] = float(w["lib"] * (self.L[ci] @ self.L[si]))
 
         if w.get("genre"):
+            # one bar for genre, both tiers together: the page draws a bar per key, so the
+            # keys stay the terms of the sum. _genre_pair() has the split for anyone asking.
             jac, fam = self._genre_pair(si, ci)
             comp["genre"] = float(w["genre"] * (jac + fam))
-            if fam:
-                # how much of the genre credit came from the family tier: a part of
-                # comp["genre"], not a term of its own, so it is not added to the total
-                comp["genre_family"] = float(w["genre"] * fam)
 
         if w.get("bpm"):
             sb, cb = self.bpm[si], self.bpm[ci]

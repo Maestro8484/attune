@@ -130,6 +130,7 @@ GUI_DATA = [
     ("src/scan.py",            "attune/src"),
     ("src/features.py",        "attune/src"),
     ("src/db.py",              "attune/src"),
+    ("src/enrich.py",          "attune/src"),   # scan.py imports it (catalog tags, 2026-10-01)
     ("src/embed.py",           "attune/src"),
     # learned-metric engine (`engine: learned` in settings) — onnxruntime + this head
     # are the only ONNX pieces the GUI itself can use. The 276 MB CLAP encoder is
@@ -153,6 +154,7 @@ ANALYZER_DATA = [
     ("src/scan.py",       "attune/src"),
     ("src/features.py",   "attune/src"),
     ("src/db.py",         "attune/src"),
+    ("src/enrich.py",     "attune/src"),    # scan.py imports it; without it every scan dies at import
     ("src/embed_onnx.py", "attune/src"),
     # embed_onnx.py resolves MODELS_DIR from its own __file__, so this dest makes it
     # land on .../attune/src/models inside the analyzer bundle automatically.

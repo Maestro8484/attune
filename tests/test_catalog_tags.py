@@ -11,7 +11,11 @@ Locks in:
   4. a field the file does not carry keeps what an import put there; one it carries replaces it;
   5. the app's scan job passes the switch from settings `read_catalog_tags`, itself, and a
      settings read that fails means off;
-  6. the command line flag reaches import_folder.
+  6. the command line flag reaches import_folder;
+  7. a damaged tag never ends a scan and never stores a wrong value: digits that are not ASCII, a
+     year outside 1000 to 2100, a blank date beside a good year under another name, an id with
+     extra characters glued on, an id that is not text at all;
+  8. the desktop build carries every module the bundled scripts import.
 
 Every audio file here is made by the test; nothing outside its temp folder is read or written.
 """
@@ -310,3 +314,101 @@ def test_command_line_flag(music, tmp_path):
         assert r.returncode == 0, r.stderr
         assert _has_table(dbp, "catalog_ids") is want
         assert ("catalog tags read from 7 of them" in r.stdout) is want
+
+
+def _flac(folder, name, **tags):
+    p = os.path.join(folder, name)
+    with open(p, "wb") as f:
+        f.write(_flac_bytes())
+    fl = FLAC(p)
+    fl["title"] = "Title"
+    for k, v in tags.items():
+        fl[k] = v
+    fl.save()
+    return p
+
+
+def _mp3_with_ufid(folder, name, data):
+    p = os.path.join(folder, name)
+    with open(p, "wb") as f:
+        f.write(_mp3_bytes())
+    t = ID3()
+    t.add(TIT2(encoding=3, text=["Title"]))
+    t.add(TCON(encoding=3, text=["Punk"]))
+    t.add(UFID(owner="http://musicbrainz.org", data=data))
+    t.save(p, v2_version=4)
+    return p
+
+
+def test_damaged_tags_store_nothing_wrong_and_never_end_a_scan(tmp_path):
+    folder = tmp_path / "damaged"
+    folder.mkdir()
+    d = str(folder)
+    sup = chr(0xB2) * 4                                         # four superscript twos: digits, not ASCII
+    assert scan._catalog_tags(_flac(d, "sup.flac", ORIGINALDATE=sup)) == {}
+    assert scan._catalog_tags(_flac(d, "y1.flac", ORIGINALDATE="0001")) == {}
+    assert scan._catalog_tags(_flac(d, "y9.flac", ORIGINALDATE="9999")) == {}
+    assert scan._catalog_tags(_flac(d, "zero.flac", ORIGINALDATE="0000", ORIGINALYEAR="1969")) == {"original_year": 1969}
+    assert scan._catalog_tags(_flac(d, "ok.flac", ORIGINALDATE="1969-07-20")) == {"original_year": 1969}
+    # an id is taken only when it stands on its own
+    glued = _mp3_with_ufid(d, "glued.mp3", b"abc" + REC[0].encode("ascii"))
+    assert scan._catalog_tags(glued) == {}
+    # an id that is not text: the catalog reader stores nothing, and the plain reader, which
+    # used to raise UnicodeDecodeError out of the whole scan on this file, still reads the rest
+    binary = _mp3_with_ufid(d, "binary.mp3", bytes([0xFF, 0xFE]) + b"-not-text")
+    assert scan._catalog_tags(binary) == {}
+    assert scan._read_tags(binary)["genre"] == "Punk"
+    # and a scan over all of them finishes, with the one good year stored
+    dbp = str(tmp_path / "damaged.db")
+    scan.import_folder(dbp, d, catalog_tags=True)
+    conn = sqlite3.connect(dbp)
+    assert conn.execute("SELECT COUNT(*) FROM tracks").fetchone()[0] == 7
+    assert sorted(y for (y,) in conn.execute("SELECT original_year FROM catalog_ids")) == [1969, 1969]
+    conn.close()
+
+
+def _local_imports(path):
+    import ast
+    names = set()
+    for node in ast.walk(ast.parse(open(path, encoding="utf-8").read())):
+        if isinstance(node, ast.Import):
+            names |= {a.name.split(".")[0] for a in node.names}
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            names.add(node.module.split(".")[0])
+    return {n for n in names if os.path.exists(os.path.join(SRC, n + ".py"))}
+
+
+def _build_list(name):
+    import ast
+    src = open(os.path.join(os.path.dirname(HERE), "desktop", "build.py"), encoding="utf-8").read()
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", "") == name for t in node.targets):
+            return {e.elts[0].value for e in node.value.elts}
+    raise AssertionError(f"{name} not found in desktop/build.py")
+
+
+@pytest.mark.parametrize("bundle", ["GUI_DATA", "ANALYZER_DATA"])
+def test_the_build_carries_every_module_its_scripts_import(bundle):
+    """desktop/build.py names the src/ scripts it ships one by one, and PyInstaller cannot see
+    what a script shipped as a data file imports. A sibling module left off the list is not a
+    build error: the packaged app dies at `import` the first time a scan runs. scan.py gained
+    `import enrich` on 2026-10-01 and the list did not, which a cold reader caught by running it."""
+    files = _build_list(bundle)
+    scripts = {f for f in files if f.startswith("src/") and f.endswith(".py")}
+    assert "src/scan.py" in scripts
+    missing = {}
+    for f in sorted(scripts):
+        need = {"src/" + n + ".py" for n in _local_imports(os.path.join(os.path.dirname(HERE), f))} - files
+        if need:
+            missing[f] = sorted(need)
+    # Known and accepted: modules a bundled script imports only on a road the packaged app
+    # never takes are listed here by name, so a NEW gap still fails.
+    for f, allowed in KNOWN_UNBUNDLED.get(bundle, {}).items():
+        if f in missing:
+            missing[f] = [m for m in missing[f] if m not in allowed]
+            if not missing[f]:
+                del missing[f]
+    assert not missing, f"imported by a bundled script but not in {bundle}: {missing}"
+
+
+KNOWN_UNBUNDLED = {}

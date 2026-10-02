@@ -23,6 +23,7 @@ import sys
 # (Same pattern, same reason, as the explicit import block in app_desktop.py.)
 import argparse       # noqa: F401  scan.py, embed_onnx.py
 import concurrent.futures  # noqa: F401  scan.py
+import csv            # noqa: F401  enrich.py
 import json           # noqa: F401  scan.py, embed_onnx.py
 import queue          # noqa: F401  embed_onnx.py
 import sqlite3        # noqa: F401  db.py, embed_onnx.py
