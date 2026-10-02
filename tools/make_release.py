@@ -95,6 +95,7 @@ def main(argv=None):
     build_installer.assert_out_is_outside_dist(dist, out)
     build_installer.assert_expected_layout(dist, allow_extra=args.allow_extra)
     build_installer.assert_no_database(dist)
+    build_installer.assert_no_numba_cache(dist)
     os.makedirs(out, exist_ok=True)
 
     artifacts = []

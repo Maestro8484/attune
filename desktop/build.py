@@ -297,6 +297,25 @@ def build_analyzer(dist, work, allow_no_ffmpeg=False):
         shutil.rmtree(dest)
     shutil.move(built, dest)
     shutil.rmtree(stage, ignore_errors=True)
+    n = strip_numba_cache(dest)
+    print(f"[build] removed {n} numba cache file(s) from the analyzer")
+
+
+def strip_numba_cache(folder):
+    """Delete numba's on-disk compile cache (*.nbi index, *.nbc code) from a built folder.
+
+    --collect-all librosa copies librosa's __pycache__ as it stands in the build
+    environment, and numba writes its cache there whenever librosa runs in that
+    environment. The files carry the build machine's own paths, user name included, so
+    every release up to 0.1.2 handed them out (95 files, found 2026-10-02). They are a
+    cache and nothing else: without them numba compiles on first use, as it does anyway
+    when the cached source stamp does not match."""
+    n = 0
+    for pattern in ("*.nbi", "*.nbc"):
+        for path in glob.glob(os.path.join(folder, "**", pattern), recursive=True):
+            os.remove(path)
+            n += 1
+    return n
 
 
 @contextlib.contextmanager

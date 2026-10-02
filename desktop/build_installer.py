@@ -136,6 +136,19 @@ def _looks_like_sqlite(path):
         return False
 
 
+def assert_no_numba_cache(dist):
+    """Refuse to package numba's compile cache (*.nbi, *.nbc). Those files carry the build
+    machine's own paths, user name included; desktop/build.py strips them after the
+    analyzer build (strip_numba_cache), and this is the check that it did."""
+    found = [os.path.join(dp, fn) for dp, _dn, fns in os.walk(dist) for fn in fns
+             if fn.lower().endswith((".nbi", ".nbc"))]
+    if found:
+        raise SystemExit(
+            f"[build_installer] REFUSING to package: {len(found)} numba cache file(s), which "
+            f"carry the build machine's paths, for example\n  {found[0]}\n"
+            f"Build again with desktop/build.py, which removes them.")
+
+
 def assert_no_database(dist):
     """Refuse to package a folder holding a library database. See the module docstring.
 
