@@ -84,6 +84,10 @@ DEFAULTS = {
     "ml_venv_python": "",          # python.exe of the heavy analyze venv ('' = analysis off)
     "scan_on_launch": False,       # run an incremental rescan when the app starts
     "watch_folders": False,        # live-watch library_folders; new/changed audio triggers an incremental scan
+    "read_catalog_tags": False,    # a scan also reads each file's MusicBrainz recording and
+                                   # artist ids, original release date and STYLE tag into
+                                   # catalog_ids (src/enrich.py). Off by default: those rows
+                                   # change how a mix is scored, which waits on a listening test.
     "theme": "bee",                # UI theme id, and the one memory of it as of CONNECT
                                    # (2026-09-20): prefs.js now reads this key back on open
                                    # and paints the theme grid from it. localStorage still

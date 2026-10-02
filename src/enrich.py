@@ -10,7 +10,10 @@ filestate: this is not analysis data, and a features rebuild must never wipe it.
                      is a fact about the vocabulary, so it holds for a song scanned tomorrow too.
 
 Filled by tools/import_catalog.py from CSV files (GenreTagger's data/attune_export.csv,
-data/artist_similarity.csv and data/genre_families.csv). The engine reads them itself at load
+data/artist_similarity.csv and data/genre_families.csv). catalog_ids has a second road: when a
+tagger has written the same facts into the files as standard tags, the scan reads them from
+there (scan.py import-folder --catalog-tags, upsert_from_tags below), so they survive a rescan
+with no CSV step. Both roads give the same rows. The engine reads them itself at load
 (hybrid._load_catalog; the app loads hybrid.py by file path, so hybrid imports nothing from here)
 for:
 
@@ -54,6 +57,29 @@ FAMILY_DDL = """CREATE TABLE IF NOT EXISTS genre_family (
 
 def _has_table(conn, name) -> bool:
     return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def ensure_catalog_table(conn) -> None:
+    conn.execute(CATALOG_DDL)
+
+
+def upsert_from_tags(conn, path, tags) -> int:
+    """One file's catalog tags (scan._catalog_tags) into catalog_ids. Field by field: a value
+    the file carries replaces the stored one; a field the file does not carry keeps what an
+    import put there. A file with none of them writes nothing. Returns 1 if a row was written."""
+    row = {k: tags.get(k) or None for k in ("recording_mbid", "artist_mbids", "original_year", "style")}
+    if not any(v is not None for v in row.values()):
+        return 0
+    row["path"] = path
+    conn.execute(
+        """INSERT INTO catalog_ids(path, recording_mbid, artist_mbids, original_year, style)
+           VALUES(:path, :recording_mbid, :artist_mbids, :original_year, :style)
+           ON CONFLICT(path) DO UPDATE SET
+             recording_mbid=COALESCE(excluded.recording_mbid, catalog_ids.recording_mbid),
+             artist_mbids=COALESCE(excluded.artist_mbids, catalog_ids.artist_mbids),
+             original_year=COALESCE(excluded.original_year, catalog_ids.original_year),
+             style=COALESCE(excluded.style, catalog_ids.style)""", row)
+    return 1
 
 
 def _int(v):

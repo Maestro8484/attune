@@ -3,14 +3,16 @@ dump, then analyze audio into feature vectors. Incremental + parallel + resumabl
 
 Usage:
   python scan.py import-folder <music_dir>             # walk a folder, read tags (mutagen)
+  python scan.py import-folder <music_dir> --catalog-tags   # ... and the catalog tags too
   python scan.py import-catalog <library.json>        # load MusicIP metadata dump
   python scan.py analyze [--limit N] [--workers K] [--paths-file F]
   python scan.py stats
 """
 from __future__ import annotations
-import sys, os, json, time, shutil, argparse, subprocess, sqlite3
+import sys, os, re, json, time, shutil, argparse, subprocess, sqlite3
 import concurrent.futures as cf
 import db as dbm
+import enrich
 import features as feat
 
 DB_DEFAULT = os.path.join(os.path.dirname(__file__), "..", "data", "mixer.db")
@@ -35,6 +37,33 @@ _TAG_KEYS = {
     "date":        ("date", "year", "originaldate", "TDRC", "TDRL", "TYER", "TDOR",
                     "WM/Year", "\xa9day"),
 }
+
+# The catalog tags: what an outside tagger (MusicBrainz Picard, beets, GenreTagger) leaves in a
+# file beyond the six fields above. The first name in each row is the one Picard's tag mapping
+# gives the fact (picard-docs.musicbrainz.org, Appendix B); the rest are the other spellings a
+# reader should accept, as Navidrome's resources/mappings.yaml lists them. All lowercase; real
+# keys are lowercased at lookup time. Read only by import-folder --catalog-tags, into the same
+# catalog_ids table tools/import_catalog.py fills (src/enrich.py).
+#
+#   recording id   ID3 UFID:http://musicbrainz.org; Vorbis MUSICBRAINZ_TRACKID (the name says
+#                  track, the value is the recording); MP4 and ASF likewise
+#   artist ids     ID3 TXXX:MusicBrainz Artist Id; Vorbis MUSICBRAINZ_ARTISTID
+#   original date  ID3v2.4 TDOR, ID3v2.3 TORY; Vorbis ORIGINALDATE, ORIGINALYEAR. MP4 has no
+#                  agreed name, so the ones in use are all accepted
+#   style          no standard name anywhere; TXXX:STYLE / STYLE is what Discogs-based taggers
+#                  and GenreTagger write
+_CATALOG_TAG_KEYS = {
+    "recording_mbid": ("ufid:http://musicbrainz.org", "musicbrainz_trackid", "musicbrainz track id",
+                       "----:com.apple.itunes:musicbrainz track id", "musicbrainz/track id"),
+    "artist_mbids":   ("txxx:musicbrainz artist id", "musicbrainz_artistid", "musicbrainz artist id",
+                       "----:com.apple.itunes:musicbrainz artist id", "musicbrainz/artist id"),
+    "original_year":  ("tdor", "originaldate", "----:com.apple.itunes:originaldate",
+                       "wm/originalreleasetime", "tory", "originalyear", "txxx:originalyear",
+                       "----:com.apple.itunes:originalyear", "----:com.apple.itunes:original year",
+                       "wm/originalreleaseyear", "origyear", "----:com.apple.itunes:origyear"),
+    "style":          ("txxx:style", "style", "----:com.apple.itunes:style"),
+}
+_MBID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I)
 
 # RIFF INFO, the metadata a .wav actually carries. mutagen's WAVE class reads only ID3,
 # and almost nothing writes ID3 into a wav: ffmpeg, Audacity and Windows all write an
@@ -202,6 +231,83 @@ def _mutagen_tags(path):
     }
 
 
+def _catalog_values(raw):
+    """_tag_values() for the shapes the catalog tags come in: an ID3 UFID frame keeps its value
+    in .data, as bytes; an MP4 freeform atom is bytes; the rest are text like any other tag."""
+    if raw is None:
+        return []
+    data = getattr(raw, "data", None)
+    if isinstance(data, (bytes, bytearray)):    # ID3 UFID
+        raw = [bytes(data)]
+    elif hasattr(raw, "text"):                  # any ID3 text frame, TXXX included
+        raw = raw.text
+    items = raw if isinstance(raw, (list, tuple)) else [raw]
+    out = []
+    for it in items:
+        it = getattr(it, "value", it)           # ASF attribute
+        s = bytes(it).decode("utf-8", "replace") if isinstance(it, (bytes, bytearray)) else str(it)
+        s = s.strip().strip("\x00").strip()
+        if s and s not in out:
+            out.append(s)
+    return out
+
+
+def _catalog_tags(path):
+    """The catalog tags one file carries (see _CATALOG_TAG_KEYS), as the fields of a catalog_ids
+    row: recording_mbid, artist_mbids ("; " between several), original_year (int), style ("; "
+    between several). Only the fields the file actually has; {} for a file with none of them,
+    or one mutagen cannot open. Read-only, like every tag read in this file."""
+    try:
+        import mutagen
+        f = mutagen.File(path)                  # not the Easy wrapper: it hides TXXX and UFID
+    except Exception:
+        return {}
+    tags = getattr(f, "tags", None)
+    if not tags:
+        return {}
+    lower = {}
+    try:
+        for k in tags.keys():
+            lower.setdefault(str(k).lower(), []).append(k)
+    except Exception:
+        return {}
+
+    def values(name):
+        for want in _CATALOG_TAG_KEYS[name]:
+            for key in lower.get(want, ()):
+                try:
+                    vals = _catalog_values(tags[key])
+                except Exception:
+                    continue
+                if vals:
+                    return vals
+        return []
+
+    out = {}
+    rec = _MBID.findall(" ".join(values("recording_mbid")))
+    if rec:
+        out["recording_mbid"] = rec[0].lower()
+    arts = []
+    for a in _MBID.findall(" ".join(values("artist_mbids"))):    # ID3v2.3 joins several with "/"
+        if a.lower() not in arts:
+            arts.append(a.lower())
+    if arts:
+        out["artist_mbids"] = "; ".join(arts)
+    for v in values("original_year"):
+        y = v[:4]
+        if len(y) == 4 and y.isdigit() and y != "0000":
+            out["original_year"] = int(y)
+            break
+    styles = []
+    for v in values("style"):
+        for part in v.split(";"):
+            if part.strip() and part.strip() not in styles:
+                styles.append(part.strip())
+    if styles:
+        out["style"] = "; ".join(styles)
+    return out
+
+
 _WARNED_NO_MUTAGEN = False
 
 
@@ -305,8 +411,13 @@ def _ffprobe_tags(path):
         return {"title": os.path.splitext(os.path.basename(path))[0]}
 
 
-def import_folder(db_path, music_dir, workers=8, exclude=()):
+def import_folder(db_path, music_dir, workers=8, exclude=(), catalog_tags=False):
+    """`catalog_tags` also reads each file's catalog tags (recording id, artist ids, original
+    release date, STYLE) into catalog_ids. Off by default: those rows change how a mix is
+    scored (src/enrich.py), and that waits on a listening test."""
     conn = dbm.connect(db_path)
+    if catalog_tags:
+        enrich.ensure_catalog_table(conn)
     # exclude: folder prefixes never imported (settings `exclude_folders`, ruling
     # B2 2026-08-04). Born from _SYNCAPP\Versioning: a sync tool's version-history
     # folder seeded 199 dead rows the pool could never use. Pruned during the walk
@@ -328,9 +439,13 @@ def import_folder(db_path, music_dir, workers=8, exclude=()):
             if os.path.splitext(n)[1].lower() in AUDIO_EXTS:
                 files.append(os.path.abspath(os.path.join(root, n)))
     print(f"found {len(files)} audio files under {music_dir}")
-    n = 0
+    n = n_cat = 0
+
+    def _read(path):
+        return _read_tags(path), (_catalog_tags(path) if catalog_tags else None)
+
     with cf.ThreadPoolExecutor(max_workers=workers) as ex:
-        for path, tags in zip(files, ex.map(_read_tags, files)):
+        for path, (tags, cat) in zip(files, ex.map(_read, files)):
             try:
                 st = os.stat(path)
                 mtime, size = int(st.st_mtime), st.st_size
@@ -339,11 +454,15 @@ def import_folder(db_path, music_dir, workers=8, exclude=()):
             rec = {"path": path, "bytes": size, "mtime": mtime}
             rec.update(tags)
             dbm.upsert_track(conn, rec)
+            if cat:
+                n_cat += enrich.upsert_from_tags(conn, path, cat)
             n += 1
             if n % 500 == 0:
                 conn.commit(); print(f"  {n}/{len(files)} tagged", flush=True)
     conn.commit()
     print(f"imported {n} tracks -> {os.path.abspath(db_path)}")
+    if catalog_tags:
+        print(f"catalog tags read from {n_cat} of them")
     print("stats:", dbm.stats(conn))
 
 
@@ -673,10 +792,14 @@ def main():
     ap.add_argument("--exclude", action="append",
                     help="folder prefix to skip during import-folder (repeatable; "
                          "settings `exclude_folders` feeds this)")
+    ap.add_argument("--catalog-tags", action="store_true",
+                    help="with import-folder: also read each file's MusicBrainz recording and "
+                         "artist ids, original release date and STYLE into catalog_ids "
+                         "(settings `read_catalog_tags` feeds this; off by default)")
     a = ap.parse_args()
     add_user_bin_to_path()
     if a.cmd == "import-folder":
-        import_folder(a.db, a.arg, exclude=a.exclude or ())
+        import_folder(a.db, a.arg, exclude=a.exclude or (), catalog_tags=a.catalog_tags)
     elif a.cmd == "import-catalog":
         import_catalog(a.db, a.arg)
     elif a.cmd == "analyze":

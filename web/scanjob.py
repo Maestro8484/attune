@@ -133,8 +133,11 @@ class ScanJob:
     # other, so the lock travels on the object instead. ISSUES.md row 2, 2026-09-21.
     start_lock = _START_LOCK
 
-    def __init__(self, db_path, logger=None):
+    def __init__(self, db_path, logger=None, load_settings=None):
         self.db_path = db_path
+        # Read at the moment a scan runs, by the job itself, so no caller of start() can
+        # forget to pass a scan option along (the exclude_folders lesson, autoscan.py).
+        self.load_settings = load_settings
         # Structured logging, first slice (AUDIT_FABLE_2026-07-28.md S2 item 9): a
         # logger routed into <config_dir()>/logs/scan.log by applog.py, handed in by
         # register() below. Falls back to a bare, handler-less logger (a silent no-op
@@ -160,7 +163,8 @@ class ScanJob:
         with _START_LOCK:
             if self.running:
                 raise RuntimeError("a scan is already running")
-            self.__init__(self.db_path, self.logger)     # reset state, keep the logger
+            # reset state, keep the logger and the settings reader
+            self.__init__(self.db_path, self.logger, self.load_settings)
             self.running = True
             self.started = int(time.time())
             self.before = _db_counts(self.db_path)
@@ -171,6 +175,15 @@ class ScanJob:
                 target=self._run, args=(list(folders), ml_python, list(exclude)),
                 daemon=True)
             self.thread.start()
+
+    def _catalog_args(self):
+        """["--catalog-tags"] when settings `read_catalog_tags` is on, else nothing. A
+        settings file that cannot be read means off, never a failed scan."""
+        try:
+            on = bool(self.load_settings and self.load_settings().get("read_catalog_tags"))
+        except Exception:
+            on = False
+        return ["--catalog-tags"] if on else []
 
     def _exec(self, name, argv):
         """Run one stage, streaming stdout into the tail buffer. Returns rc."""
@@ -268,7 +281,8 @@ class ScanJob:
                     excl_args += ["--exclude", e]
                 rc = self._exec(f"import {os.path.basename(d) or d}",
                                 _scan_argv(imp_python, "import-folder", d,
-                                           "--db", self.db_path, *excl_args))
+                                           "--db", self.db_path, *excl_args,
+                                           *self._catalog_args()))
                 if rc != 0:
                     if not self.cancelled:
                         self.error = f"import failed (rc={rc}) — see log tail"
@@ -352,8 +366,8 @@ def register(app, ctx):
     # subprocesses with cwd=SRC (attune/src), so a relative --db (e.g. the launcher's
     # "mixer-ng/data/mixer.db") would resolve against SRC and fail to open. abspath
     # here binds it to the app's working dir, where it is already known to resolve.
-    job = ScanJob(os.path.abspath(ctx["db_path"]), ctx.get("logger"))
     load_settings = ctx["load_settings"]
+    job = ScanJob(os.path.abspath(ctx["db_path"]), ctx.get("logger"), load_settings)
     bp = Blueprint("scanjob", __name__)
 
     @bp.get("/api/scan/status")
