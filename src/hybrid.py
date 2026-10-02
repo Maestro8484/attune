@@ -79,10 +79,45 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 #               family with either. The families come from the genre_family table
 #               (src/enrich.py); a library without it has none and the term is unchanged
 #               whatever this is set to.
+#   clap_space also takes "head": the fingerprint through a small trained head,
+#               models/sound_head.npz, two layers that reshape the 512 numbers into 256 so
+#               that songs by artists listeners play together sit closer. Made for
+#               fingerprints from the model's trained weights. See _apply_head().
 FUSIONS = ("raw", "z", "rank")
-CLAP_SPACES = ("raw", "centered", "abtt1", "abtt2", "abtt3")
+CLAP_SPACES = ("raw", "centered", "abtt1", "abtt2", "abtt3", "head")
 EARFEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
                          "earfeel.json")
+HEAD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
+                         "sound_head.npz")
+
+# THE SOUND PROFILE (2026-10-01). The configuration a library gets when its fingerprints were
+# made with the fingerprint model's TRAINED weights. A library says so itself, in its meta
+# table: clap_weights = TRAINED_CLAP_WEIGHTS. A library that does not say so scores as V2,
+# exactly as before, and the byte-identical regression gate holds it there.
+#
+# It was chosen on offline evidence in place of a listening test, on the owner's ruling for
+# that task: 158 versions scored on which artists real listeners play together and on the
+# catalog's styles, artists held out of everything trained, weights picked on one half of the
+# seeds and reported on the other. The table, the rule that picked these numbers and where
+# the evidence is thin: audit-sonic/sound_lab_results.txt in the development workspace.
+#
+#   fingerprint  through the trained head ("head"), weight 1
+#   genre        the shared-tag match, 0.2
+#   year         1.5
+#   Earfeel      0.25
+#   artist       0.12, how often listeners play the two artists together; it acts only in a
+#                library that holds the artist_similarity table
+#   descriptors and tempo get no weight: on this evidence they added nothing once the
+#   fingerprint came from trained weights
+#   scale        "z": each ingredient as distance from its own average in units of its own
+#                spread. Of the four scales tried it scored best, the rank scale worst.
+TRAINED_CLAP_WEIGHTS = "music_audioset_epoch_15_esc_90.14"
+SOUND_PROFILE = {
+    "weights": {"clap": 1.0, "lib": 0.0, "genre": 0.2, "bpm": 0.0, "era": 1.5, "key": 0.0,
+                "earfeel": 0.25, "artist": 0.12},
+    "fusion": "z", "clap_space": "head", "family_credit": 0.0,
+}
+PROFILES = ("v2", "sound")
 
 # The fit line: the count becomes a MAXIMUM, not a quota, when a walk is given `min_fit`.
 # Both values are PROVISIONAL starting points (LAW 1: where "fits" ends is judged by ear,
@@ -106,6 +141,17 @@ EARFEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"
 #                     something this file changes.
 FIT_LINE_DEFAULT = 0.70
 CLAP_LINE_DEFAULT = 0.99
+# The same two lines for a library whose fingerprints came from the trained weights. Fit is a
+# share of the seed's own score, and both the scale and the fingerprints changed what that
+# share looks like: measured 2026-10-01 on the corrected copy of the reference library (pool
+# 21,101, 200 seeds), the 10th song of a typical list fits at 0.72 under the sound profile
+# and 0.65 under V2, so the 0.70 line would end most lists in a handful of songs; and two
+# trained-weight fingerprints almost never reach a cosine of 0.99. Each line below is placed
+# where 0.70 sits under V2 on the old fingerprints: at the fit of the 100th song of a typical
+# seed. Starting points with the same standing as the two above, not tuned values.
+FIT_LINE_SOUND = 0.55          # the sound profile
+FIT_LINE_V2_TRAINED = 0.50     # the V2 recipe on trained-weight fingerprints
+CLAP_LINE_TRAINED = 0.79       # the CLAP-only walks on trained-weight fingerprints
 
 # Krumhansl-Schmuckler key profiles (major / minor) for key estimation from chroma.
 _KRUM_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
@@ -184,6 +230,50 @@ def _load_catalog(conn):
             if value and family:
                 families[value.strip().lower()] = family.strip().lower()
     return ids, similar, families
+
+
+def _fingerprint_weights(db_path):
+    """What the library says made its fingerprints: the meta table's clap_weights value, or
+    None when it does not say (every library written before 2026-10-01, and any database
+    without a meta table)."""
+    try:
+        conn = _connect_readonly(db_path, timeout=30)
+    except sqlite3.Error:
+        return None
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
+        return row[0] if row else None
+    except sqlite3.Error:
+        return None
+    finally:
+        conn.close()
+
+
+def _load_head(path=None):
+    """The trained head's numbers from models/sound_head.npz, or None when the file is absent
+    or not a head this engine can run. Two layers: mean (512), w1 (hidden x 512), b1, w2
+    (out x hidden), b2. Stored as 16-bit floats; read back as 32-bit."""
+    try:
+        with np.load(path or HEAD_FILE, allow_pickle=False) as f:
+            h = {k: f[k].astype(np.float32) for k in ("mean", "w1", "b1", "w2", "b2")}
+    except (OSError, ValueError, KeyError):
+        return None
+    ok = (h["w1"].ndim == 2 and h["w2"].ndim == 2 and h["mean"].shape == (h["w1"].shape[1],)
+          and h["b1"].shape == (h["w1"].shape[0],) and h["w2"].shape[1] == h["w1"].shape[0]
+          and h["b2"].shape == (h["w2"].shape[0],))
+    return h if ok else None
+
+
+def _apply_head(h, X):
+    """Run the head over fingerprints X (rows), with numpy alone: subtract the mean the head
+    was trained with, make each row length 1, one hidden layer with the tanh form of GELU,
+    then the output layer, length 1 again. No model is loaded and nothing is written."""
+    Xc = X.astype(np.float32) - h["mean"]
+    Xc /= np.maximum(np.linalg.norm(Xc, axis=1, keepdims=True), 1e-9)
+    a = Xc @ h["w1"].T + h["b1"]
+    a = 0.5 * a * (1.0 + np.tanh(0.7978845608028654 * (a + 0.044715 * a ** 3)))
+    y = a @ h["w2"].T + h["b2"]
+    return (y / np.maximum(np.linalg.norm(y, axis=1, keepdims=True), 1e-9)).astype(np.float32)
 
 
 def _key_from_chroma(chroma12):
@@ -279,18 +369,43 @@ class HybridEngine:
     ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
 
     def __init__(self, db_path, weights=None, fusion=None, clap_space=None, earfeel_file=None,
-                 catalog=True, family_credit=None):
+                 catalog=True, family_credit=None, profile=None, head_file=None):
         """`catalog=False` ignores the catalog tables (src/enrich.py) even when present: the
         A side of an ear test. The optional `artist` weight (not in DEFAULT_WEIGHTS, so 0
-        unless engine_v2.json or the caller sets it) adds how often listeners play the two
-        artists together, 0 to 1, from the artist_similarity table."""
+        unless the sound profile, engine_v2.json or the caller sets it) adds how often
+        listeners play the two artists together, 0 to 1, from the artist_similarity table.
+
+        `profile` picks the starting configuration: "v2" (the shipped recipe) or "sound"
+        (SOUND_PROFILE above). Left as None the library decides: "sound" when it says its
+        fingerprints came from the trained weights AND the head file is there to run, else
+        "v2". The eval tools pass "v2" so their named versions always start from V2."""
+        if profile is not None and profile not in PROFILES:
+            raise ValueError(f"profile must be one of {PROFILES}, not {profile!r}")
+        self.trained_fingerprints = _fingerprint_weights(db_path) == TRAINED_CLAP_WEIGHTS
+        self._head_file = head_file
+        self._head = _load_head(head_file)
+        if profile is None:
+            profile = "sound" if self.trained_fingerprints and self._head is not None else "v2"
+        self.profile = profile
+        # where the app's fit switch draws its line for this library (see FIT_LINE_DEFAULT)
+        self.fit_line = (FIT_LINE_SOUND if profile == "sound"
+                         else FIT_LINE_V2_TRAINED if self.trained_fingerprints else FIT_LINE_DEFAULT)
+        self.clap_line = CLAP_LINE_TRAINED if self.trained_fingerprints else CLAP_LINE_DEFAULT
         self.w = dict(DEFAULT_WEIGHTS)
         self.fusion, self.clap_space = "raw", "raw"
         self.family_credit = 0.0
+        if profile == "sound":
+            self.w.update(SOUND_PROFILE["weights"])
+            self.fusion, self.clap_space = SOUND_PROFILE["fusion"], SOUND_PROFILE["clap_space"]
+            self.family_credit = SOUND_PROFILE["family_credit"]
         cfg = os.path.join(os.path.dirname(db_path), "engine_v2.json")
         if os.path.exists(cfg):
             try:
                 saved = json.load(open(cfg))
+                # A saved file is for the profile it names; one that names none was written
+                # for V2 and leaves the sound profile alone.
+                if saved.get("profile", "v2") != profile:
+                    saved = {}
                 self.w.update(saved.get("best_weights", {}))
                 # the scoring switches ride the same file as the weights; a value this
                 # engine does not know is ignored rather than trusted
@@ -497,6 +612,11 @@ class HybridEngine:
         if name == "raw" or self.X.shape[0] < 2:
             return self.X
         M = self._spaces.get(name)
+        if M is None and name == "head":
+            if self._head is None or self._head["mean"].shape[0] != self.X.shape[1]:
+                raise ValueError("clap_space 'head' needs the head file models/sound_head.npz, "
+                                 "made for fingerprints of this length")
+            M = self._spaces[name] = _apply_head(self._head, self.X)
         if M is None:
             Xc = self.X.astype(np.float64)
             Xc = Xc - Xc.mean(0)
@@ -528,12 +648,21 @@ class HybridEngine:
         or shipped. Each score carries either "pos"/"neg" (lists of text embeddings,
         averaged per side) or a ready direction "w"; "space" names the form of the
         fingerprint they are compared with. A missing or unreadable file means no Earfeel
-        scores, which is not an error: the Earfeel weight then has nothing to act on."""
+        scores, which is not an error: the Earfeel weight then has nothing to act on.
+
+        The file that ships (models/earfeel.json) was made with the model's trained
+        weights and names them. It is read only for a library whose fingerprints came from
+        those weights; on any other library its directions would point nowhere and the
+        scores would be noise under a real name, so there are none. A file passed by path
+        is the caller's business and is always read."""
+        shipped = path is None
         path = path or EARFEEL_FILE
         try:
             with open(path, encoding="utf-8") as fh:
                 spec = json.load(fh)
         except (OSError, ValueError):
+            return
+        if shipped and spec.get("weights") and not self.trained_fingerprints:
             return
         if not self.paths:
             return

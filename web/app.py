@@ -574,7 +574,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         src = source if source is not None else request.args
         if str(src.get("max") or "").lower() not in ("1", "true", "on"):
             return None
-        default = hybrid.CLAP_LINE_DEFAULT if clap_only else hybrid.FIT_LINE_DEFAULT
+        # the engine knows where the line sits for this library: the scale it scores on and
+        # the weights its fingerprints came from both move it (hybrid.FIT_LINE_SOUND)
+        default = (getattr(eng, "clap_line", hybrid.CLAP_LINE_DEFAULT) if clap_only
+                   else getattr(eng, "fit_line", hybrid.FIT_LINE_DEFAULT))
         raw = src.get("min_fit")
         if raw in (None, ""):
             return default

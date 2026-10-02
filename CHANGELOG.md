@@ -5,6 +5,44 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-01, sound lab)
+
+- **A library with trained-weight fingerprints is mixed a new way.** A library can now say
+  which weights of the fingerprint model made its fingerprints (one line in its own records).
+  One that says "the trained weights" gets the sound profile; one that does not say is mixed
+  exactly as before, to the last song. Under the sound profile a mix is sorted by five things
+  put on one common scale: the fingerprint, passed through a small trained head; shared genre
+  tags; how near the two songs' years are; Earfeel; and, where the library holds the table,
+  how often listeners play the two artists together. Tempo and the older sound descriptors
+  take no part: once the fingerprint came from trained weights they added nothing that could
+  be measured.
+- **How it was chosen.** Not by listening, on the owner's ruling for this work: 158 versions
+  were scored on two things that know nothing of the sound, which artists real listeners play
+  together and the catalog's styles, with the artists used for scoring held out of everything
+  trained. On a reference library of 21,098 songs, of the 50 songs each version picked by
+  other artists, the share by an artist listeners play with the seed's artist was 33.1 in 100
+  for the app as it is, 55.5 for this profile with catalog tags, and 48.5 with the library's own
+  tags; 16.3 is what random picks score.
+- **No download makes such a library yet.** The model file the app analyzes with is still the
+  one that was never trained, so every library made by a released version keeps the old
+  recipe. The profile waits for that file to be replaced.
+- **The head** is `models/sound_head.npz`, 3 MB: two layers that reshape the 512 numbers of a
+  fingerprint into 256 so that songs by artists listeners play together sit closer. It runs
+  with the libraries the app already carries and nothing is downloaded.
+- **Earfeel comes with the app.** `models/earfeel.json` is now in the download. It is read
+  only for a library with trained-weight fingerprints, where its five scores mean what they
+  say, so no Earfeel column appears on a library analyzed with today's model file.
+- **The fit switch draws its line for the library in front of it.** "Count as a maximum" ends
+  a list where songs stop fitting; where that line sits depends on the scale, so the sound
+  profile and trained-weight fingerprints each have their own starting line (0.55, and 0.79
+  for the blend and adventure walks). A library on the old recipe keeps 0.70 and 0.99.
+- **New songs are never fingerprinted into a library of the other kind.** Fingerprints from
+  the trained weights and from the release that was never trained are unrelated numbers. A
+  scan now stops before its fingerprint stage, and says why, when the library was made with
+  one kind and the app carries the other, instead of quietly mixing the two.
+- **For the listening tools:** a named version `sound-lab`, and the tools now build every
+  version from the old recipe whatever the library says.
+
 ### Added (2026-10-01, engine fuel)
 
 - **The genre ingredient can work in two tiers. Off by default.** With the switch on,

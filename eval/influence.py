@@ -236,7 +236,7 @@ def main():
     spec = importlib.util.spec_from_file_location("hybrid", os.path.join(_SRC, "hybrid.py"))
     hy = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hy)
-    base = hy.HybridEngine(a.db)
+    base = hy.HybridEngine(a.db, profile="v2")
     lines = []
 
     def out(s):

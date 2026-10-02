@@ -86,7 +86,7 @@ def build_engines(names, db_path, musicip_url, earfeel_file=None, db_alt=None):
     hy = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(hy)
     print(f"loading library db (this is the slow part): {db_path}")
-    eng = hy.HybridEngine(db_path)
+    eng = hy.HybridEngine(db_path, profile="v2")
 
     out = {}
     alt_engines = {}
@@ -98,7 +98,7 @@ def build_engines(names, db_path, musicip_url, earfeel_file=None, db_alt=None):
                 raise SystemExit(f"engine '{name}' needs --db-alt {label}=<path>")
             if label not in alt_engines:
                 print(f"loading library copy '{label}': {db_alt[label]}")
-                alt_engines[label] = hy.HybridEngine(db_alt[label])
+                alt_engines[label] = hy.HybridEngine(db_alt[label], profile="v2")
             base = alt_engines[label]
         if kind in variantmod.VARIANTS:
             hv = base if (kind == "v2" and not label) else variantmod.variant_engine(

@@ -137,6 +137,12 @@ GUI_DATA = [
     # analysis-only and lives with the analyzer.
     ("src/models/metric_head.onnx",  "attune/src/models"),
     ("src/models/learned_norm.json", "attune/src/models"),
+    # the sound profile (hybrid.SOUND_PROFILE): the trained head the fingerprint is scored
+    # through, and the Earfeel directions. hybrid.py reads both by path, only for a library
+    # whose fingerprints came from the trained weights; without the head such a library
+    # falls back to the old recipe, so a build that leaves it out is quietly the old engine.
+    ("src/models/sound_head.npz",    "attune/src/models"),
+    ("src/models/earfeel.json",      "attune/src/models"),
 ]
 
 # imported dynamically / not statically visible (watchdog picks its platform backend

@@ -62,6 +62,12 @@ VARIANTS = {
     "v2-tiers": {"family_credit": FAMILY_CREDIT},
     "v2-earfeel-file-tiers": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "earfeel": EARFEEL_WEIGHT},
                            "earfeel_file": True, "family_credit": FAMILY_CREDIT},
+    # The sound profile (hybrid.SOUND_PROFILE), spelled out in full so it is the same version
+    # whatever library it is built over: what a library with trained-weight fingerprints gets
+    # by default. Its numbers were picked on offline evidence, not provisional starting points.
+    "sound-lab": {"fusion": "z", "clap_space": "head",
+                  "weights": {"clap": 1.0, "lib": 0.0, "genre": 0.2, "bpm": 0.0, "era": 1.5, "key": 0.0,
+                              "earfeel": 0.25, "artist": 0.12}},
 }
 
 
@@ -71,7 +77,13 @@ _OVERRIDES = frozenset({"fusion", "clap_space", "weights", "family_credit", "cat
 def variant_engine(base, name, earfeel_file=None, **override):
     """A HybridEngine that scores as the named version, sharing `base`'s loaded library.
     `base` is not changed. `override` replaces or adds settings (fusion=, clap_space=,
-    weights={...}) on top of the named version, for the influence report's grid."""
+    weights={...}) on top of the named version, for the influence report's grid.
+
+    `base` must have been loaded with profile="v2": every version here is written as V2
+    with switches turned on, and a base that started from the sound profile would carry
+    that profile's weights into all of them."""
+    if getattr(base, "profile", "v2") != "v2":
+        raise ValueError("variant_engine() needs a base engine loaded with profile='v2'")
     unknown = set(override) - _OVERRIDES
     if unknown:
         # a misspelt or renamed setting must fail loudly: ignored, the report would carry

@@ -22,6 +22,30 @@ WIN_S = 10.0
 WIN_FRACS = (0.15, 0.5, 0.85)       # start / middle / end windows, mean-pooled
 
 
+# Which weights this embedder's model carries. None is the Hugging Face release, whose weights
+# were never trained. A library records which weights made its fingerprints in its meta table
+# (clap_weights; absent = the release). The two kinds of fingerprint are unrelated numbers, so
+# new songs are never fingerprinted into a library made with the other kind.
+CLAP_WEIGHTS = None
+
+
+def _refuse_to_mix(conn, n_todo):
+    """Stop, with the reason, before writing fingerprints of one kind into a library of the other."""
+    try:
+        row = conn.execute("SELECT value FROM meta WHERE key='clap_weights'").fetchone()
+    except sqlite3.OperationalError:
+        row = None
+    theirs = row[0] if row else None
+    if n_todo and theirs != CLAP_WEIGHTS:
+        conn.close()
+        raise SystemExit(
+            f"{n_todo} new song(s) were NOT fingerprinted. This library's fingerprints were made with "
+            f"other weights of the fingerprint model ({theirs or 'the original release'}) than this "
+            f"build carries ({CLAP_WEIGHTS or 'the original release'}). The two kinds are unrelated, and "
+            f"a mix would treat them as one. The new songs stay out of mixes until the model file "
+            f"matches the library.")
+
+
 def _import_stack():
     try:
         import torch, librosa
@@ -86,6 +110,7 @@ def embed(db_path, workers=6, batch=6, path_map=None):
     done = {r[0] for r in conn.execute("SELECT path FROM clap WHERE vec IS NOT NULL OR err IS NOT NULL")}
     todo = [r[0] for r in conn.execute("SELECT path FROM tracks") if r[0] not in done]
     print(f"{len(done)} already embedded, {len(todo)} to go, device={dev}", flush=True)
+    _refuse_to_mix(conn, len(todo))
     if not todo:
         conn.close()
         return
