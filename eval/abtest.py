@@ -205,9 +205,13 @@ def _scoring_of(obj):
     h = getattr(obj, "eng", None)
     if h is None or not hasattr(h, "fusion") or not hasattr(obj, "set_weights"):
         return None
-    return {"fusion": h.fusion, "clap_space": h.clap_space,
-            "weights": {k: v for k, v in h.w.items() if v},
-            "catalog": bool(getattr(h, "catalog_loaded", False))}
+    out = {"fusion": h.fusion, "clap_space": h.clap_space,
+           "weights": {k: v for k, v in h.w.items() if v},
+           "catalog": bool(getattr(h, "catalog_loaded", False))}
+    # written only when the two-tier genre term actually ran, so older keys read the same
+    if getattr(h, "family_credit", 0.0) and getattr(h, "genre_fams", None) is not None:
+        out["family_credit"] = h.family_credit
+    return out
 
 
 def run_generate(args):

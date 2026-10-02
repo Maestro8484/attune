@@ -128,7 +128,9 @@ def report_version(base, name, seeds, hseeds, out, feel_file=None, label=None, *
     n = len(eng.paths)
     lab = label or name
     w = "  ".join(f"{t} {eng.w[t]:g}" for t in TERMS if eng.w.get(t))
-    out(f"\n== {lab}   fusion {eng.fusion}, fingerprint {eng.clap_space}, weights: {w}")
+    tiers = (f", genre in two tiers (family credit {eng.family_credit:g})"
+             if eng.family_credit and eng.genre_fams is not None else "")
+    out(f"\n== {lab}   fusion {eng.fusion}, fingerprint {eng.clap_space}{tiers}, weights: {w}")
     res = influence(eng, seeds)
     out(f"   pool {n}, {len(seeds)} seeds, songs of {K} that change when one ingredient "
         f"is removed, median (range):")

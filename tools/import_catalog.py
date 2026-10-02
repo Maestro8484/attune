@@ -1,7 +1,8 @@
-"""Load catalog ids (recording, artists, original year, style) and artist similarity into an Attune
-library database. Backs the database up first. See src/enrich.py for what the engine does with them.
+"""Load catalog ids (recording, artists, original year, style), artist similarity and the genre
+family map into an Attune library database. Backs the database up first. See src/enrich.py for what
+the engine does with them.
 
-  python tools/import_catalog.py --db ..\\mixer-ng\\data\\mixer.db --ids attune_export.csv --similar artist_similarity.csv
+  python tools/import_catalog.py --db ..\\mixer-ng\\data\\mixer.db --ids attune_export.csv --similar artist_similarity.csv --families genre_families.csv
 """
 import os
 import sys

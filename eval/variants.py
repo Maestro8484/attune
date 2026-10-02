@@ -20,6 +20,9 @@ FUSED_CLAP_WEIGHT  Once every ingredient is ranked onto one scale, a weight is a
     stay inside the band, not tuned; on the old fingerprints 0.5 would give about 60.
 FEEL_WEIGHT  The same weight the sound-descriptor term carries, so the two "what it
     sounds like" ingredients beside the fingerprint start level.
+FAMILY_CREDIT  The two-tier genre term's credit for a family-only match (Punk against
+    Grunge, both Rock): half of what the same value gets. Half is the plain midpoint
+    between "a different genre" and "the same genre", not a tuned value.
 """
 from __future__ import annotations
 
@@ -30,6 +33,7 @@ FEEL_WEIGHT = 0.4
 # Provisional, like the two above: the genre ingredient's own weight, so listener-based
 # artist closeness starts level with tag-based genre closeness.
 ARTIST_WEIGHT = 0.3
+FAMILY_CREDIT = 0.5
 
 _FUSED = {"fusion": "rank", "clap_space": "centered"}
 
@@ -52,6 +56,12 @@ VARIANTS = {
     "v2-before-catalog": {"catalog": False},
     # v2 plus how often listeners play the two artists together
     "v2-catalog-artist": {"weights": {"artist": ARTIST_WEIGHT}},
+    # The follow-up to the sitting of 2026-10-01: each of its two finalists with the genre
+    # term in two tiers (needs a library with the genre_family table; without one these
+    # score exactly as v2 and v2-feel-file).
+    "v2-tiers": {"family_credit": FAMILY_CREDIT},
+    "v2-feel-file-tiers": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "feel": FEEL_WEIGHT},
+                           "feel_file": True, "family_credit": FAMILY_CREDIT},
 }
 
 
@@ -68,6 +78,7 @@ def variant_engine(base, name, feel_file=None, **override):
     e.w.update(weights)
     e.fusion = spec.get("fusion", "raw")
     e.clap_space = spec.get("clap_space", "raw")
+    e.family_credit = float(spec.get("family_credit", 0.0))
     if spec.get("feel_file"):
         if not feel_file:
             raise SystemExit(f"version '{name}' needs --feel-file")

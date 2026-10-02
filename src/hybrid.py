@@ -60,6 +60,15 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 #               scores (danceable, happy, intense, instrumental, acoustic) sit to the
 #               seed's. The scores come from the stored fingerprints and a small file of
 #               text directions, models/feel_prompts.json; see _load_feel().
+#   family_credit  the genre ingredient in two tiers. 0 (the default) is the genre term as it
+#               always was: shared tags over all tags. Above 0, two songs whose tags differ
+#               but sit in the same broad family (Punk and Grunge are both Rock) get that
+#               share of the credit the tags left unclaimed:
+#                   tags + family_credit * (1 - tags) * families
+#               so the same value still scores 1, a different family still scores 0, and a
+#               family-only match scores family_credit. The families come from the
+#               genre_family table (src/enrich.py); a library without it has none and the
+#               term is unchanged whatever this is set to.
 FUSIONS = ("raw", "z", "rank")
 CLAP_SPACES = ("raw", "centered", "abtt1", "abtt2", "abtt3")
 FEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
@@ -141,13 +150,15 @@ def _genre_tags(genre, style=None, themes=THEME_TAGS):
 
 
 def _load_catalog(conn):
-    """The two additive tables src/enrich.py writes (tools/import_catalog.py), read here because
-    the app loads this file by path and it imports nothing from src/. Returns (ids, similar):
-    ids maps path to (recording_mbid, [artist_mbids], original_year, style); similar maps an
-    artist mbid to {other artist mbid: best score across sources}, read both ways. Both empty
-    when the tables are absent, which is every library that never imported anything."""
+    """The additive tables src/enrich.py writes (tools/import_catalog.py, or the scan reading
+    the files' own tags), read here because the app loads this file by path and it imports
+    nothing from src/. Returns (ids, similar, families): ids maps path to (recording_mbid,
+    [artist_mbids], original_year, style); similar maps an artist mbid to {other artist mbid:
+    best score across sources}, read both ways; families maps a genre or style value,
+    lowercased, to its broad family. All empty when the tables are absent, which is every
+    library that never imported anything."""
     have = {n for (n,) in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    ids, similar = {}, {}
+    ids, similar, families = {}, {}, {}
     if "catalog_ids" in have:
         for p, rec, arts, year, style in conn.execute(
                 "SELECT path, recording_mbid, artist_mbids, original_year, style FROM catalog_ids"):
@@ -158,7 +169,11 @@ def _load_catalog(conn):
                 d = similar.setdefault(x, {})
                 if score > d.get(y, 0.0):
                     d[y] = score
-    return ids, similar
+    if "genre_family" in have:
+        for value, family in conn.execute("SELECT value, family FROM genre_family"):
+            if value and family:
+                families[value.strip().lower()] = family.strip().lower()
+    return ids, similar, families
 
 
 def _key_from_chroma(chroma12):
@@ -254,13 +269,14 @@ class HybridEngine:
     ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
 
     def __init__(self, db_path, weights=None, fusion=None, clap_space=None, feel_file=None,
-                 catalog=True):
+                 catalog=True, family_credit=None):
         """`catalog=False` ignores the catalog tables (src/enrich.py) even when present: the
         A side of an ear test. The optional `artist` weight (not in DEFAULT_WEIGHTS, so 0
         unless engine_v2.json or the caller sets it) adds how often listeners play the two
         artists together, 0 to 1, from the artist_similarity table."""
         self.w = dict(DEFAULT_WEIGHTS)
         self.fusion, self.clap_space = "raw", "raw"
+        self.family_credit = 0.0
         cfg = os.path.join(os.path.dirname(db_path), "engine_v2.json")
         if os.path.exists(cfg):
             try:
@@ -273,6 +289,9 @@ class HybridEngine:
                     self.fusion = sc["fusion"]
                 if sc.get("clap_space") in CLAP_SPACES:
                     self.clap_space = sc["clap_space"]
+                fc = sc.get("family_credit")
+                if isinstance(fc, (int, float)) and not isinstance(fc, bool) and 0.0 <= fc <= 1.0:
+                    self.family_credit = float(fc)
             except Exception:
                 pass
         if weights:
@@ -281,6 +300,10 @@ class HybridEngine:
             self.fusion = fusion
         if clap_space is not None:
             self.clap_space = clap_space
+        if family_credit is not None:
+            self.family_credit = float(family_credit)
+        if not 0.0 <= self.family_credit <= 1.0:
+            raise ValueError(f"family_credit must be between 0 and 1, not {self.family_credit!r}")
         if self.fusion not in FUSIONS:
             raise ValueError(f"fusion must be one of {FUSIONS}, not {self.fusion!r}")
         if self.clap_space not in CLAP_SPACES:
@@ -332,7 +355,7 @@ class HybridEngine:
                 v = np.frombuffer(blob, np.float32)
                 if v.shape[0] == dim:
                     clap[p] = v
-        cat_ids, cat_similar = _load_catalog(conn) if catalog else ({}, {})
+        cat_ids, cat_similar, cat_families = _load_catalog(conn) if catalog else ({}, {}, {})
         conn.close()   # all reads done at load; don't leak the handle / WAL reader
 
         # z-score + L2-normalize the librosa matrix over ALL analyzed tracks, exactly as the
@@ -409,12 +432,17 @@ class HybridEngine:
         themes = THEME_TAGS if cat_ids else frozenset()
         self.genre_tags = [_genre_tags(meta.get(p, (None,)*5)[3], c[3] if c else None, themes)
                            for p, c in zip(paths, cat)]
+        # The broad families of each song's genre tags, for the two-tier genre term; None when
+        # the library has no genre_family table, and unused while family_credit is 0.
+        self.genre_fams = ([{cat_families[t] for t in ts if t in cat_families}
+                            for ts in self.genre_tags] if cat_families else None)
         self.year = np.array([(c[2] if c and c[2] else None) or meta.get(p, (None,)*5)[4] or 0
                               for p, c in zip(paths, cat)], float)
         self.recording = [c[0] if c else None for c in cat]
         self.artist_ids = [c[1] if c else [] for c in cat]
         self.similar = cat_similar
-        self.catalog_loaded = bool(cat_ids or cat_similar)   # for the listening test's key
+        # for the listening test's key
+        self.catalog_loaded = bool(cat_ids or cat_similar or cat_families)
         self.bpm = np.array([tempo.get(p, 0) or 0 for p in paths], float)
         self.key = _keys_from_chroma_batch([chroma.get(p) for p in paths])
         self.meta = {p: {"artist": meta[p][0], "album": meta[p][1], "title": meta[p][2],
@@ -533,10 +561,7 @@ class HybridEngine:
         if self.use_lib and w.get("lib"):
             out.append(("lib", w["lib"], self.L @ self.L[si]))
         if w.get("genre"):
-            st = self.genre_tags[si]
-            out.append(("genre", w["genre"],
-                        np.array([len(st & g) / len(st | g) if st and g else 0.0
-                                  for g in self.genre_tags])))
+            out.append(("genre", w["genre"], self._genre_closeness(si)))
         if w.get("bpm"):
             sb = self.bpm[si]
             out.append(("bpm", w["bpm"],
@@ -555,6 +580,33 @@ class HybridEngine:
             out.append(("feel", w["feel"],
                         -np.abs(self.feel - self.feel[si]).mean(axis=1).astype(np.float64)))
         return out
+
+    def _genre_closeness(self, si):
+        """The genre ingredient over the pool for one seed, 0 to 1. Shared tags over all tags
+        (Jaccard), as V2 was eared. With family_credit above 0 and a family map loaded, a
+        song gets that share of whatever credit its tags left unclaimed when its families
+        overlap the seed's; see the note on family_credit at the top of this file."""
+        st = self.genre_tags[si]
+        jac = np.array([len(st & g) / len(st | g) if st and g else 0.0
+                        for g in self.genre_tags])
+        if self.family_credit and self.genre_fams is not None:
+            sf = self.genre_fams[si]
+            fam = np.array([len(sf & g) / len(sf | g) if sf and g else 0.0
+                            for g in self.genre_fams])
+            jac = jac + self.family_credit * (1.0 - jac) * fam
+        return jac
+
+    def _genre_pair(self, si, ci):
+        """_genre_closeness() for one candidate, split into its two parts: (tags, family),
+        which add up to that function's value at ci."""
+        st, gt = self.genre_tags[si], self.genre_tags[ci]
+        jac = len(st & gt) / len(st | gt) if st and gt else 0.0
+        fam = 0.0
+        if self.family_credit and self.genre_fams is not None:
+            sf, gf = self.genre_fams[si], self.genre_fams[ci]
+            if sf and gf:
+                fam = self.family_credit * (1.0 - jac) * (len(sf & gf) / len(sf | gf))
+        return jac, fam
 
     def _fuse(self, g):
         """Put one ingredient on the common scale the fusion mode names."""
@@ -580,11 +632,8 @@ class HybridEngine:
         if self.use_lib and w.get("lib"):
             s = s + w["lib"] * (self.L @ self.L[si])
         # genre
-        st = self.genre_tags[si]
         if w.get("genre"):
-            jac = np.array([len(st & g) / len(st | g) if st and g else 0.0
-                            for g in self.genre_tags])
-            s = s + w["genre"] * jac
+            s = s + w["genre"] * self._genre_closeness(si)
         # V2 tempo term: LINEAR |Δbpm|/40 (the eared engine did NOT octave-fold), 0.5 when
         # either tempo is unknown. Octave-folding is a later, un-eared idea — deliberately
         # kept out of the shipped default; the folded form lives in coherence.py's metric.
@@ -617,6 +666,7 @@ class HybridEngine:
         e.recording = [None] * len(self.paths)
         e.artist_ids = [[] for _ in self.paths]
         e.similar = {}
+        e.genre_fams = None
         e.catalog_loaded = False
         return e
 
@@ -1166,9 +1216,12 @@ class HybridEngine:
             comp["lib"] = float(w["lib"] * (self.L[ci] @ self.L[si]))
 
         if w.get("genre"):
-            st, gt = self.genre_tags[si], self.genre_tags[ci]
-            jac = len(st & gt) / len(st | gt) if st and gt else 0.0
-            comp["genre"] = float(w["genre"] * jac)
+            jac, fam = self._genre_pair(si, ci)
+            comp["genre"] = float(w["genre"] * (jac + fam))
+            if fam:
+                # how much of the genre credit came from the family tier: a part of
+                # comp["genre"], not a term of its own, so it is not added to the total
+                comp["genre_family"] = float(w["genre"] * fam)
 
         if w.get("bpm"):
             sb, cb = self.bpm[si], self.bpm[ci]
