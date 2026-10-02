@@ -134,6 +134,7 @@ async function pollReload() {
   try {
     S.stats = await jget('/api/lib/stats');
     paintStats(S.stats);
+    addFeelCols(S.stats.feel); renderHead();
   } catch (e) { console.error('[reload] stats refresh', e); }
   try {
     if (S.view === 'library') await loadLibrary(false);
@@ -631,6 +632,16 @@ const DRAG_VIEWS = new Set(['mix', 'nowplaying', 'playlist']);
 function shownCols() {
   return COLS.filter(c => c.id === 'pos' ? ORDERED_VIEWS.has(S.view) : visCols.has(c.id));
 }
+/* The feel scores (danceable, happy, ...) as optional columns, 0 to 100 = where the song
+   sits in this library. Offered only when the engine has a feel file (stats.feel is
+   empty otherwise), off until turned on from the header menu like BPM. */
+function addFeelCols(feel) {
+  // rebuilt from scratch each time stats arrive, so a library reload that adds, drops or
+  // reorders the scores never leaves a column pointing at the wrong score
+  for (let i = COLS.length - 1; i >= 0; i--) if (COLS[i].feel !== undefined) COLS.splice(i, 1);
+  (feel || []).forEach((f, k) =>
+    COLS.push({ id: 'feel:' + f.id, label: f.label, cls: 'c-feel', feel: k }));
+}
 
 function starsHtml(r, cls = 'stars') {
   let h = `<span class="${cls}" data-i="${r.i}">`;
@@ -664,6 +675,7 @@ function cellHtml(c, r, k) {
     case 'added':   return r.added ? ymd(r.added) : '';
     case 'path':    return esc(r.path || '');
   }
+  if (c.feel !== undefined) return r.feel ? r.feel[c.feel] : '';
   return '';
 }
 
@@ -2843,12 +2855,14 @@ function bindEvents() {
     if (S.sort === s) S.desc = !S.desc; else { S.sort = s; S.desc = false; }
     if (S.view === 'library') { S._userSorted = true; loadLibrary(true); }
     else {
+      const fc = COLS.find(c => c.id === s && c.feel !== undefined);
       const keyf = { track: r => r.track, title: r => r.title.toLowerCase(),
         length: r => r.seconds, artist: r => r.artist.toLowerCase(),
         album: r => r.album.toLowerCase(), year: r => r.year || 0,
         genre: r => (r.genre || '').toLowerCase(),
         rating: r => r.rating || 0, plays: r => r.plays || 0,
-        status: r => r.status }[s];
+        // feel: highest first like the library's server-side sort; no score sorts last
+        status: r => r.status }[s] || (fc ? r => (r.feel ? -r.feel[fc.feel] : Infinity) : null);
       if (!keyf) return;
       const sortNow = () => {
         const rows = S.rows.slice().sort((a, b) =>
@@ -3511,6 +3525,9 @@ async function initCore() {
     toast('Cannot reach server: ' + e.message, true);
     return { ok: false, error: e.message };
   }
+
+  try { addFeelCols(S.stats.feel); renderHead(); }
+  catch (e) { console.error('[core] feel columns', e); }
 
   try {
     const s = S.stats;

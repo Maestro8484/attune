@@ -191,9 +191,16 @@ class LibraryIndex:
     the SAME integer the existing /api/mix, /audio and export routes already speak.
     """
 
-    def __init__(self, db_path, paths, meta):
+    def __init__(self, db_path, paths, meta, feel=None, feel_names=(), feel_labels=()):
         self.paths = paths
         self.n = len(paths)
+        # The engine's feel scores (hybrid._load_feel): one 0..1 percentile per score per
+        # pool track, same row order as `paths`. None when the engine has no feel file,
+        # which is the shipped state; the song list then offers no feel columns at all.
+        ok = feel is not None and getattr(feel, "shape", (0,))[0] == self.n
+        self.feel = feel if ok else None
+        self.feel_names = list(feel_names) if ok else []
+        self.feel_labels = list(feel_labels) if ok else []
         self.idx = {p: i for i, p in enumerate(paths)}
         self.by_relkey = {}
         for i, p in enumerate(paths):
@@ -541,7 +548,22 @@ class LibraryIndex:
             "sample_rate": self.sample_rate[i],
             "channels": self.channels[i],
             "brmode": self.brmode[i] or "",
+            # the five feel scores as 0 to 100 (where this song sits in the library), in
+            # the order /api/lib/stats names them; None without a feel file
+            "feel": ([int(round(float(v) * 100)) for v in self.feel[i]]
+                     if self.feel is not None else None),
         }
+
+    def feel_sort(self, sort):
+        """Sort key for a feel column ("feel:<name>"), highest first like BPM; None for
+        any other column or when there are no feel scores."""
+        if self.feel is None or not sort.startswith("feel:"):
+            return None
+        name = sort[5:]
+        if name not in self.feel_names:
+            return None
+        k = self.feel_names.index(name)
+        return lambda s, i: (-float(s.feel[i][k]), s.f_artist[i])
 
 
 # ----------------------------------------------------------------------- album art
@@ -678,7 +700,8 @@ def register(app, ctx):
     """ctx: dict(db_path, eng, labels, mapper, playlist_dir, engine_name, plex_configured,
                  active_mix_tracks=callable(i,size,field)->[paths])"""
     eng = ctx["eng"]
-    lib = LibraryIndex(ctx["db_path"], eng.paths, eng.meta)
+    lib = LibraryIndex(ctx["db_path"], eng.paths, eng.meta, getattr(eng, "feel", None),
+                       getattr(eng, "feel_names", ()), getattr(eng, "feel_labels", ()))
     art = ArtCache()
     bp = Blueprint("studio", __name__)
     playlist_dir = ctx.get("playlist_dir") or ""
@@ -737,6 +760,9 @@ def register(app, ctx):
             # rewrite. ok < total means the root is set but does not cover the library, so
             # some paths will silently keep their local form on every export.
             root_coverage=ctx.get("root_coverage") or {},
+            # the feel scores the song list can show as optional columns; empty without
+            # a feel file, so no column is offered
+            feel=[{"id": n, "label": l} for n, l in zip(lib.feel_names, lib.feel_labels)],
         )
 
     @bp.get("/api/lib/failures")
@@ -798,7 +824,8 @@ def register(app, ctx):
         q = request.args.get("q", "")
         smart = request.args.get("smart") or ""
         sort = request.args.get("sort", "artist")
-        if sort not in LibraryIndex.SORTS:
+        feel_key = lib.feel_sort(sort)
+        if sort not in LibraryIndex.SORTS and feel_key is None:
             sort = "artist"
         desc = (request.args.get("desc") or "").lower() in ("1", "true", "on")
         try:
@@ -816,7 +843,7 @@ def register(app, ctx):
                 sort, desc = SMART_SORT[smart]
         # `track` and `status` sorts need the tag read; only pay for it on the page we
         # return unless the sort itself needs it library-wide.
-        keyf = LibraryIndex.SORTS[sort]
+        keyf = feel_key or LibraryIndex.SORTS[sort]
         rows.sort(key=lambda i: keyf(lib, i), reverse=desc)
         page = rows[offset:offset + limit]
         secs = sum(lib.seconds[i] for i in rows)
