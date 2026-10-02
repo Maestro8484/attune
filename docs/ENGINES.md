@@ -7,12 +7,53 @@ they rank on.
 Pick one in Preferences, under Mixing, with the **Engine** field, or on the command line with
 `--engine`.
 
-## 1. V2, the default
+## 1. The default: the sound profile, or V2
 
-`src/engine.py`, class `V2Engine`, built on `src/hybrid.py`.
+`src/engine.py`, class `V2Engine`, built on `src/hybrid.py`. It starts from one of two
+recipes, and the library decides which. A library records which copy of the CLAP model made
+its fingerprints: one made by Attune 0.2 or later says the trained weights and gets the
+**sound profile**; one made by 0.1.x says nothing and keeps **V2**, scored exactly as before.
+The two kinds of fingerprint are unrelated numbers (every version up to 0.1.2 analysed with a
+copy of the model that had never been trained; [NOTICE.md](../NOTICE.md) section 8), so a
+library never holds both, and an older one is brought across under Preferences, Library,
+Sound fingerprints.
 
-Blends a music-trained **CLAP embedding**, the ears, with the librosa descriptor and a few
-plain musical facts:
+The window starts its five dials from the recipe the library gets, and the header says which:
+**Attune sound profile** or **Attune V2**.
+
+### The sound profile, for a library analysed by 0.2 or later
+
+Each ingredient is put on one common scale, its distance from its own average in units of
+its own spread, before its weight applies:
+
+```
+fingerprint through the trained head   1.0
+genre overlap                          0.2
+year gap                               1.5
+Earfeel                                0.25
+artist links                           0.12   (only in a library that holds that table)
+timbre descriptor, tempo               0
+```
+
+The **trained head** (`src/models/sound_head.npz`, 3 MB) reshapes the 512 numbers of a
+fingerprint into 256 so that songs by artists ListenBrainz listeners play together sit
+closer. **Earfeel** is five sensations measured from the sound itself, never from genre:
+Pulse, Glow, Heat, Voice and Grain (`src/models/earfeel.json`). The dials start at CLAP 1.0,
+Timbre 0, Genre 0.2, Tempo 0, Era 1.5, and Presets offers **Sound profile (default)**.
+
+**How it was chosen, and what that does not tell you.** Not by ear. On the owner's ruling for
+this work, over 150 versions were scored on two things that know nothing of the sound: which
+artists real listeners play together, and the catalog's styles, with the artists used for
+scoring held out of everything trained. On a library of about 21,000 songs, of the 50 songs
+each version picked by other artists, 48.8 in 100 were by an artist listeners play with the
+seed's artist for this profile, against 33.1 for Attune as released up to 0.1.2 and 16.3 for
+random picks. That is evidence it finds music people like together. It is not a listening
+test, and none has been sat on it yet.
+
+### V2, for a library analysed by 0.1.x
+
+Blends the **CLAP embedding**, the ears, with the librosa descriptor and a few plain musical
+facts:
 
 ```
 score = w_clap  * cosine(CLAP)
@@ -77,8 +118,12 @@ setting also switched off Radio, Blend, Adventure, thumbs-up steering and Explai
 learned engine does not provide. So it promised a different mix, delivered the same one, and
 quietly removed five things that worked.
 
-What it has never had is a blind listening test against V2, and in this project a retrieval
-number never decides what ships. Until somebody sits down and listens, V2 stays the default.
+What it has never had is a blind listening test against V2. Until somebody sits down and
+listens, it stays optional.
+
+**It does not start on a library analysed by 0.2 or later.** Its head was trained on
+fingerprints of the earlier kind, so `--engine learned` on a library with trained-weight
+fingerprints stops with a sentence saying so.
 
 ## The librosa-only engine
 
@@ -90,6 +135,8 @@ It is not one of the three engines the app offers. It is the from-source baselin
 you don't want to fetch the 267 MiB model, and it's what `attune-mix` runs.
 
 ## How we know V2 is the one
+
+This is V2's test. The sound profile has not been through one yet.
 
 This is the one round written up in full; the same test was sat about twenty times, five seeds
 a round, five to seven engines each, ranked by ear, and the README says how it was run. In the
@@ -110,13 +157,15 @@ statistics. It was learned perceptual similarity plus a few hard musical rules.
 Tempo-octave folding and key compatibility are cheap, interpretable, and did more for
 playlist coherence than any amount of spectral feature engineering.
 
-**And the metric never decides.** Retrieval scores are reported, never used to pick what
-ships. A number that rewards more-of-the-same is exactly the number that will tell you a
-boring playlist is a good one. That is why the learned engine is not the default yet.
+**And the metric never decides, with one stated exception.** Retrieval scores are reported,
+never used to pick what ships. A number that rewards more-of-the-same is exactly the number
+that will tell you a boring playlist is a good one. That is why the learned engine is not the
+default. The exception is the sound profile, picked on scores by the owner's ruling, and it
+stays provisional until it has been listened to.
 
 ## Which should you use?
 
-- **Just use V2.** It's the default for a reason.
+- **Just use the default.** Your library picks the recipe; you don't have to.
 - **Still running MusicIP?** Try the adapter and compare. They're genuinely different and
   the old one is genuinely good.
 - **Curious?** `--engine learned` and tell us what you hear.

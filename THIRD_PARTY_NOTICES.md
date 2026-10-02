@@ -223,10 +223,19 @@ Attune's own code is MIT, but a few files carry a port of somebody else's work. 
 
 - License: **Apache-2.0**
 - Upstream: https://github.com/huggingface/transformers
-- analyzer/_internal/attune/src/embed_onnx.py  (14,697 bytes, sha256 689155fbbbdb79dd)
+- analyzer/_internal/attune/src/embed_onnx.py  (25,221 bytes, sha256 a5f0e53542234b68)
 - attribution still in the shipped file: 'audio_utils.py (Apache-2.0)' in analyzer/_internal/attune/src/embed_onnx.py
 - The log-mel front-end in embed_onnx.py is a numpy port of the exact numeric path in transformers 5.13.0 (feature_extraction_clap.py and audio_utils.py), written so the analyzer can produce the same features as the CLAP model expects without importing torch. The port is bit-exact by design and the attribution is in the file's own comments. Attune's code around it is MIT.
 - License text: [LICENSE](licenses/hugging-face-transformers-log-mel-front-end/LICENSE)
+
+### Hugging Face Transformers (checkpoint key renaming)
+
+- License: **Apache-2.0**
+- Upstream: https://github.com/huggingface/transformers
+- _internal/attune/src/embed.py  (14,233 bytes, sha256 ae054db6bd021a17)
+- attribution still in the shipped file: 'convert_clap_original_pytorch_to_hf.py' in _internal/attune/src/embed.py
+- embed.py loads the CLAP model's trained checkpoint, whose tensors are named the way its makers' code names them. The table and the loop that rename them for the transformers ClapModel are ported from the conversion script the transformers project publishes for these checkpoints. embed.py runs only when someone points Attune at their own Python with torch installed; the attribution is in the file's own comments. Attune's code around it is MIT.
+- License text: [LICENSE](licenses/hugging-face-transformers-checkpoint-key-renaming/LICENSE)
 
 ## What the generator could not account for
 

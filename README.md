@@ -37,15 +37,15 @@ Attune listens to every track in your music folder once, then lets you point at 
 and say "more like this". It's a desktop app. You install it, point it at a folder, and
 leave it running the first time. After that, mixing is instant.
 
-It matches on the actual **sound** of a track, not on genre tags and not on what other
-people listened to. Two songs tagged "rock" can sound nothing alike, and Attune knows the
+It matches on the actual **sound** of a track, with genre tags and release years to keep the
+result on course. Two songs tagged "rock" can sound nothing alike, and Attune knows the
 difference because it listened to both.
 
 Everything happens on your machine. Nothing is uploaded and there is no account to make.
 
 ## Get it
 
-1. Download **AttuneSetup-0.1.2.exe** from the [Releases page](https://github.com/Maestro8484/attune/releases).
+1. Download **AttuneSetup-0.2.0.exe** from the [Releases page](https://github.com/Maestro8484/attune/releases).
 2. Run it. It installs for you alone, in your own user folder, so Windows won't ask for an
    administrator password.
 3. Windows will show a blue box saying **"Windows protected your PC"**. Click **More info**,
@@ -61,7 +61,7 @@ Everything happens on your machine. Nothing is uploaded and there is no account 
 To check your download against `SHA256SUMS.txt`, in PowerShell:
 
 ```
-Get-FileHash .\AttuneSetup-0.1.2.exe -Algorithm SHA256
+Get-FileHash .\AttuneSetup-0.2.0.exe -Algorithm SHA256
 ```
 
 ### First run
@@ -101,8 +101,10 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 - **Recipes.** Save a set of mix settings under a name and use it again.
 - **Auto-Playlists.** Rules instead of a starting song: artist, genre, year, rating, tempo and more.
 - **The list is the playlist.** Every mix, queue and playlist is numbered in play order.
-  Drag songs to re-order them, then **Play**, **Save as new**, **Save**, **Copy to USB** or
-  **Export** from the bar above the list, and what you see is exactly what you get.
+  Drag songs to re-order them, then **Play**, **Save as new** or **Save** from the bar above
+  the list, or send it from the **SEND TO** bar beneath it: **Plex playlist** or
+  **USB / car folder**, one click each, and **More...** for playlist files. What you see is
+  exactly what you get.
 - **Browse and play.** Search, album and folder views, album art, ratings, loved tracks, tags.
 - **Help on hover.** Rest the pointer on any button, dial or setting and it says what it does.
 - **Copy a mix to a USB stick.** Numbered filenames so a car stereo plays them in order, tags
@@ -245,14 +247,37 @@ model, and it is the best explanation of it I have seen.
 - A **79-number acoustic descriptor** from classic signal processing: timbre (MFCC), harmony
   (chroma), spectral contrast, texture, and tempo.
 
-The default **engine**, meaning the part that picks the songs, ranks candidates mostly on
-the CLAP embedding, then adjusts with the descriptor and a few plain musical facts:
-timbre, genre overlap, how far apart the tempos are, and how far apart the years are.
-Those adjustments are what stop an ears-only neural match from jumping across tempo and
-decade in a way that sounds wrong.
+The **engine**, meaning the part that picks the songs, has two recipes, and your library
+decides which one it gets.
 
-That combination came out ahead of genuine MusicIP in a listening test I sat myself, and it
-was more than a quick listen. Think of a multiple-choice exam. Each question is one song. The
+- **A library analysed by Attune 0.2 or later gets the sound profile.** The fingerprint goes
+  through a small extra layer trained on which artists ListenBrainz listeners play together,
+  then genre tags, how far apart the years are, and five sensations measured from the sound
+  itself (Pulse, Glow, Heat, Voice and Grain) adjust the order. Tempo and the 79 numbers take
+  no part: with a properly trained model they added nothing that could be measured.
+- **A library analysed by 0.1.x keeps the V2 recipe.** It ranks mostly on the CLAP
+  embedding, then adjusts with the descriptor and a few plain musical facts: timbre, genre
+  overlap, how far apart the tempos are, and how far apart the years are. Those adjustments
+  are what stop an ears-only neural match from jumping across tempo and decade in a way that
+  sounds wrong.
+
+Why two: every version up to 0.1.2 analysed with a copy of the CLAP model that, it turned
+out, had never been trained. 0.2.0 carries the trained one, and its fingerprints and the old
+ones are unrelated numbers, so a library can't mix the two. [NOTICE.md](NOTICE.md) section 8
+has the details, and [Status and limits](#status-and-limits) says how to bring an older
+library across.
+
+**Nobody has judged the sound profile by ear yet, me included.** It was picked without
+listening, by scoring over 150 versions on which artists real listeners play together, with the
+artists used for scoring kept out of everything it learned from. On my library, of the 50
+songs each version picks by other artists, 49 in 100 were by an artist listeners play with
+the starting song's artist, against 33 for Attune as it was up to 0.1.2 and 16 for random
+picks. That says it's
+better at finding music people like together. Whether it sounds better is a different
+question, and the listening test for it is still to be sat.
+
+V2 came out ahead of genuine MusicIP in a listening test I sat myself, and it was more than
+a quick listen. Think of a multiple-choice exam. Each question is one song. The
 answer choices are the playlists that five to seven different song-matchers built from that
 song, the real MusicIP among them, and instead of ticking one you rank them all, best to
 worst, by ear. A paper is five questions. I sat about twenty papers: over a hundred questions,
@@ -261,8 +286,8 @@ every paper was blind: MusicIP and the other outside matchers were shuffled and 
 my own were labelled, so this is a partly blind test and I say so. One paper is written up in
 full on the [engines page](docs/ENGINES.md); the rest were sat the same way. Five songs on
 one paper is not enough to call a winner, so I don't; twenty papers was enough that I stopped
-needing MusicIP. The exact weights it comes with are the ones that came out ahead. Two ideas that sound clever and lost by ear are deliberately
-switched off in the default: matching keys around the circle of fifths, and folding tempo
+needing MusicIP. V2's exact weights are the ones that came out ahead. Two ideas that sound
+clever and lost by ear are deliberately switched off in it: matching keys around the circle of fifths, and folding tempo
 octaves so that 87 and 174 BPM count as the same. Both are in the code and both are off. The
 reasoning is written into `src/hybrid.py` beside the weights themselves.
 
@@ -283,8 +308,17 @@ Details, with the file and line behind each claim, in [docs/PRIVACY.md](docs/PRI
 
 ## Status and limits
 
-Attune is v0.1.2. It's the app its author uses every day on a library of over twenty thousand
-tracks, and this is the first release anybody else can install. Expect rough edges.
+Attune is v0.2.0. It's the app its author uses every day on a library of over twenty thousand
+tracks. Expect rough edges.
+
+- **Coming from 0.1?** Install over the top. Your library, playlists and settings carry on,
+  and your mixes keep working exactly as they did. New songs wait until the library has been
+  fingerprinted again with the trained model: Preferences, Library, **Sound fingerprints**,
+  then **Fingerprint every song again**. It makes a copy of your library first, takes about
+  1.6 seconds a song on my desktop PC's processor (so hours for a big library), and can be
+  stopped and continued. When it finishes, **Load now** brings your library up under the
+  sound profile.
+- **The sound profile hasn't been judged by ear.** See [How it works](#how-it-works).
 
 - **Windows 10 or 11 only** for now. The engine is plain Python and portable, but the app,
   the installer and the USB drive detection are not. The window needs Microsoft's WebView2

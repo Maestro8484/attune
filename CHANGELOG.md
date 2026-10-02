@@ -3,7 +3,29 @@
 All notable changes to Attune are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [0.2.0] - 2026-10-02
+
+### Fixed (2026-10-02)
+
+- **The window mixes a new library the new way.** The five mix dials and the two fit lines
+  were written into the page with the old recipe's numbers, and the window sends them with
+  every mix, so a library under the sound profile was mixed with era 0.1 instead of 1.5,
+  timbre and tempo at 0.4 and 0.3 instead of off, and a sound-alike line of 0.990. On a copy
+  of a 21,000-song library with trained-weight fingerprints, five Blends of two songs each
+  came back with no songs at all, and a mix shared 9 to 19 of 25 songs with the sound
+  profile's own. The window now starts its dials and both lines from the engine's numbers
+  for the library loaded, the header says "Attune sound profile", and the presets offer
+  "Sound profile (default)" in place of the two V2 ones. After "Load now" brings a library
+  across, the dials and lines move with it. A library on the old recipe sees no change.
+- **The Timbre dial is switched off under the sound profile,** where the engine leaves the
+  timbre descriptor out and the dial changed nothing. A fit line you typed is kept with the
+  recipe it was typed under: when the library comes up under the other one, including after
+  a crossing finished with the window closed, the line starts from the engine's again.
+- **The download no longer carries numba's compile cache.** `--collect-all librosa` copied
+  95 cache files from the build machine into the analyzer, every release up to 0.1.2
+  included, and they named the build machine's folders, user name and all. The build now
+  removes them and the release script refuses a folder that still holds one. Nothing about
+  how the app runs changes: numba compiles on first use.
 
 ### Changed (2026-10-02, the model file carries the trained weights)
 

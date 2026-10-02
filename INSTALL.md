@@ -18,24 +18,39 @@ the window; it is part of Windows 11 and of most up-to-date Windows 10 machines.
 missing, Attune says so when it starts and points you at
 [Microsoft's download page](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-1. Download **AttuneSetup-0.1.2.exe** from the
+1. Download **AttuneSetup-0.2.0.exe** from the
    [Releases page](https://github.com/Maestro8484/attune/releases).
 2. Run it. Windows shows **"Windows protected your PC"** because the file isn't
    code-signed. Click **More info**, then **Run anyway**.
 3. It installs into `%LOCALAPPDATA%\Programs\Attune` and adds an **Attune** entry to the
    Start menu. A desktop shortcut is offered as a tick box and is off by default.
 
-Prefer not to install anything? Take **Attune-0.1.2-win64.zip** from the same page instead,
+Prefer not to install anything? Take **Attune-0.2.0-win64.zip** from the same page instead,
 unzip it anywhere, and run `Attune.exe` from the folder.
 
 Either way, what happens next is in [docs/FIRST_RUN.md](docs/FIRST_RUN.md).
+
+### Coming from 0.1
+
+Install over the top. Your library, playlists and settings live in `%APPDATA%\Attune` and
+carry on, and your mixes keep working exactly as they did.
+
+A library analysed by 0.1.0 to 0.1.2 was made with a copy of the listening model that had
+never been trained, and 0.2.0 carries the trained one. The two kinds of fingerprint are
+unrelated numbers, so new songs are not added to an older library until it has been
+fingerprinted again. A scan says so instead of mixing the two. To bring it across: open
+Preferences, Library, find **Sound fingerprints**, and press **Fingerprint every song again**.
+It asks once, makes a copy of the library beside it, and does every song again, about 1.6
+seconds a song on one desktop PC's processor, so hours for a large library. **Stop** halts
+it and **Continue** picks it up where it left off. When it finishes, **Load now** brings the
+library up under the new recipe. That row only appears when there is something to do.
 
 ### Checking the download
 
 `SHA256SUMS.txt` on the Releases page carries a checksum for both files.
 
 ```
-Get-FileHash .\AttuneSetup-0.1.2.exe -Algorithm SHA256
+Get-FileHash .\AttuneSetup-0.2.0.exe -Algorithm SHA256
 ```
 
 With Git Bash, WSL, macOS or Linux, `sha256sum -c SHA256SUMS.txt` checks both at once.
@@ -103,6 +118,11 @@ and puts it in `src/models/`. `--check` verifies what's already there and downlo
 
 Without the model the librosa engine still works, and the CLAP-based default does not.
 
+A checkout that still has the model from 0.1.2 or earlier: `fetch_model.py` recognises the
+earlier file and replaces it. A library made with that earlier file is brought across with
+`python tools/refingerprint.py --db <library> --yes`, the same steps as the Preferences
+button in the app (see [Coming from 0.1](#coming-from-01)).
+
 ### Use it
 
 ```
@@ -152,7 +172,8 @@ pip install -e .[dev]
 pytest tests -q -rs
 ```
 
-On a clean clone this gives **97 passed, 40 skipped** (measured 2026-09-21). The 40 skips
+On a clean clone this gives **390 passed, 40 skipped** (measured 2026-10-02 by the automated
+checks, which run on a fresh clone of every change). The 40 skips
 are all in `test_key_compat.py` and are correct: those cases exercise a module that lives in
 the author's private research workspace, not in this repository, so they can't run anywhere
 else and skip loudly rather than failing.

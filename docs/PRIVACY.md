@@ -25,8 +25,8 @@ an error message it is testing for, not on a call.
 
 **1. Your own Plex server.** `src/export.py:301-331` and `src/export.py:757-790`. The
 address is whatever you typed into Preferences, under Plex, in the **Server address** field.
-Nothing is sent there until you press **Test connection**, **Create Plex playlist**, or one
-of the mirror buttons. Your Plex key goes in the request header, because that's how Plex
+Nothing is sent there until you press **Test connection**, **Plex playlist** in the SEND TO
+bar, **Create Plex playlist** under More..., or one of the mirror buttons. Your Plex key goes in the request header, because that's how Plex
 authenticates; it goes nowhere else.
 
 **2. A MusicIP Mixer on this machine.** `src/musicip_engine.py:45`, default

@@ -48,16 +48,22 @@ you. Rescan later from Preferences, under Library, with **Rescan library**.
 Five sliders sit above the mix. Each one says how much that thing is allowed to matter:
 
 - **CLAP** is the sound itself, the neural judgement of what the track is like. It starts at
-  1.0 and it is the biggest term by design.
+  1.0.
 - **Timbre** is the classic acoustic description: the texture and the colour of the sound.
 - **Genre** rewards overlapping genre tags.
 - **Tempo** penalises a big gap in BPM.
 - **Era** penalises a big gap in years.
 
-**Presets** sets them all at once. **V2 (default)** is the combination that came out ahead
-in a partly blind listening test, about twenty rounds of five songs, five to seven song-matchers
-ranked by ear each time, and it is what the sliders are already set
-to when you open the app.
+Where they start depends on which version analysed your library, and the name beside the
+dials says which recipe you're on.
+
+- **Attune sound profile**, for a library analysed by 0.2 or later: CLAP 1.0, Timbre 0,
+  Genre 0.2, Tempo 0, Era 1.5. **Presets** offers **Sound profile (default)** to put them
+  back. It was picked by how well it finds songs listeners play together, and nobody has
+  judged it by ear yet.
+- **Attune V2**, for a library analysed by 0.1.x: **V2 (default)** is the combination that
+  came out ahead in a partly blind listening test, about twenty rounds of five songs, five to
+  seven song-matchers ranked by ear each time.
 
 Two tick boxes underneath:
 
@@ -89,30 +95,33 @@ engine actually takes.
 
 ## 2. A mix onto a USB stick for the car
 
-This is the one that made Attune exist. Make a mix first, then:
+This is the one that made Attune exist. Make a mix first. Under the list sits the
+**SEND TO** bar, with the song count and running time at its left.
 
-1. Press **Export**. The export panel opens.
-2. Beside **Folder / USB**, press **Browse...** and pick the stick.
-3. **Layout** decides how the files are arranged on the stick:
-   - **Flat**, which plays in mix order, writes everything into one folder with numbered
-     filenames like `01 - Artist - Title.mp3`. This is the one for a car stereo or any
-     simple player that sorts by filename.
-   - **Folders**, Artist then Album, rebuilds the tree instead. Better for a player with a
-     proper browser.
-4. **Name** is optional. Leave it and Attune picks one.
-5. Press **Copy to folder / USB**.
+1. Press **USB / car folder**. A folder picker opens, starting at the folder you used last.
+2. Pick the stick, or a folder on it, and press **Choose this folder**. The copy starts
+   straight away, with its progress in the same bar.
 
-While it runs the panel shows **Copying 12/25...** and the track it's on, and a **Cancel**
-button that really does stop it. At the end you get **Copied 25 tracks** and the folder it
-wrote to.
+How the files are arranged on the stick is set under **More...**, with **Layout**:
+
+- **Flat**, which plays in mix order, writes everything into one folder with numbered
+  filenames like `01 - Artist - Title.mp3`. This is the one for a car stereo or any simple
+  player that sorts by filename.
+- **Folders**, Artist then Album, rebuilds the tree instead. Better for a player with a
+  proper browser.
+
+The layout it starts on is set in Preferences, under **Playlists and export**, as
+**USB copy layout**. **More...** also has **Name**, **Copy to folder / USB** and a **Cancel**
+button that really does stop a copy.
 
 Your original files are never moved or changed. Tags travel with the copies.
 
 ### Saving a playlist file instead
 
-Same panel. **Name** sets the filename, **Path style** decides how the paths inside the file
-are written, and the button saves an `.m3u8` into your playlist folder. MusicBee,
-foobar2000, Plex and most things else will read it.
+Press **More...** in the SEND TO bar. **Name** sets the filename, **Path style** decides how
+the paths inside the file are written, and **Save to playlist folder** saves an `.m3u8` into
+your playlist folder (**Download .m3u8** hands you the file instead). MusicBee, foobar2000,
+Plex and most things else will read it.
 
 **Path style** matters if the playlist is going to be read by something other than this PC.
 The three choices are **Local drive**, for this PC; **UNC share**, for other players on your
@@ -154,12 +163,14 @@ Attune serves.
 
 ### Push a mix into Plex
 
-Make a mix, then press **Create Plex playlist**. You get back a line like
-**"Plex: 23 added, 2 missed"**. "Missed" means Plex doesn't have those tracks, usually
-because it hasn't scanned them yet.
+Make a mix, then press **Plex playlist** in the SEND TO bar. One click, nothing to fill in.
+The bar answers with **On Plex now**, the playlist's name and a count like
+**23 of 25 songs, 2 not found on Plex**. "Not found" means Plex doesn't have those tracks,
+usually because it hasn't scanned them yet. If Plex isn't set up yet, the button opens
+Preferences, Plex, instead.
 
-Plex only knows about files it has scanned. **Rescan Plex library**, in the export panel,
-asks it to go and look.
+Plex only knows about files it has scanned. **Rescan Plex library**, under **More...**, asks
+it to go and look.
 
 ### Mirror a folder onto a Plex playlist
 
@@ -173,7 +184,7 @@ picked one:
 - **Mirror name**: the Plex playlist it writes to.
 - **Mirror order**: how the playlist is ordered.
 
-Then, from the export panel, under **Mirror a folder to a Plex playlist**:
+Then press **More...** in the SEND TO bar, and under **Mirror a folder to a Plex playlist**:
 
 1. Press **Check the folder**. Nothing is written. It reports what it found and what it
    would do.
@@ -193,6 +204,11 @@ happens.
   point the library at where the files went.
 - **The mix ignores a track you know is there.** It probably hasn't been analysed yet, or it
   failed to decode. The scan panel lists failures with the reason.
+- **New songs aren't being added, and the scan says the library was made by an earlier
+  version.** Your library came from Attune 0.1, which used a copy of the listening model that
+  had never been trained. Open Preferences, Library, and press **Fingerprint every song
+  again** under **Sound fingerprints**. [INSTALL.md](../INSTALL.md#coming-from-01) has the
+  details.
 - **Plex says a lot of tracks were missed.** Press **Rescan Plex library** and try again once
   Plex has caught up.
 - **You changed a setting and nothing happened.** Preferences applies on **Save**. The path
