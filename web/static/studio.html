@@ -122,6 +122,7 @@
       <input id="era" type="range" min="0" max="2" step="0.05" value="0.1"></label>
     <div class="presets">
       <span class="k">Presets</span>
+      <button data-preset="sound" class="chip" hidden>Sound profile (default)</button>
       <button data-preset="v2" class="chip">V2 (default)</button>
       <button data-preset="nobpm" class="chip">bpm = 0 <span class="tag">measured</span></button>
     </div>
@@ -175,9 +176,9 @@
   </div>
   <label class="chk" title="On: a mix stops when the next-best song no longer fits, so asking for 50 can return 12, or none with a reason. Off: the count is a quota and the list is padded with the nearest songs however poor"><input id="fitMax" type="checkbox" checked> Stop when songs stop fitting (count is a maximum)</label>
   <label class="row"><span class="k">Fit line <span class="tag">provisional</span></span>
-    <input id="fitLine" type="number" min="0" max="1" step="0.01" value="0.70" title="A song fits when its score is at least this fraction of a perfect twin's score under the current recipe. 0.70 is a starting value, not a tuned one; where the line belongs is judged by ear"></label>
+    <input id="fitLine" type="number" min="0" max="1" step="0.01" value="0.70" title="A song fits when its score is at least this fraction of a perfect twin's score under the current recipe. It starts at the value set for this library's recipe, not a tuned one; where the line belongs is judged by ear"></label>
   <label class="row"><span class="k">Sound-alike line <span class="tag">provisional</span></span>
-    <input id="clapLine" type="number" min="0" max="1" step="0.001" value="0.990" title="The same idea for Blend, steering and Adventure, which compare sound alone: the closeness a song needs to its target, 1.000 being identical. 0.990 is a starting value"></label>
+    <input id="clapLine" type="number" min="0" max="1" step="0.001" value="0.990" title="The same idea for Blend, steering and Adventure, which compare sound alone: the closeness a song needs to its target, 1.000 being identical. It starts at the value set for this library's fingerprints"></label>
 
   <!-- Recipes: named presets for the sliders/toggles above. Hidden entirely under the
        MusicIP engine (recipes are v2-param shaped) -- see initRecipes() in studio.js. -->

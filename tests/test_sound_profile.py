@@ -20,7 +20,9 @@ Locks in:
  10. the listening-test versions are built from V2: a base loaded any other way is refused, and
      the named version "sound-lab" scores as the profile does;
  11. the fit line the app's switch draws sits where the library's profile puts it;
- 12. neither fingerprint stage writes its kind of fingerprint into a library made with the other kind.
+ 12. neither fingerprint stage writes its kind of fingerprint into a library made with the other kind;
+ 13. the window is told the engine's five dials and two fit lines for the library loaded, and a
+     mix sent with them is the mix the engine makes left alone.
 
 Synthetic library: thirty tracks, unique artists.
 """
@@ -257,6 +259,56 @@ def test_the_app_draws_the_fit_line_where_the_engine_says(tmp_path, monkeypatch)
                        client.get("/api/mix/blend?i=0&i=1&size=20&max=1").get_json()["stop"]["line"])
     assert lines["plain"] == (hybrid.FIT_LINE_DEFAULT, hybrid.CLAP_LINE_DEFAULT)
     assert lines["trained"] == (hybrid.FIT_LINE_SOUND, hybrid.CLAP_LINE_TRAINED)
+
+
+def test_the_window_is_told_the_engines_dials_and_lines(tmp_path, monkeypatch):
+    """The window sends its five dials and its fit line with every mix, and the server applies
+    what it is sent. So /api/lib/stats has to say the engine's own numbers for the library
+    loaded, and a mix sent with them has to be the mix the engine makes left alone. Until
+    2026-10-02 the window sent the V2 numbers written into the page, and a sound-profile
+    library was mixed with era 0.1 instead of 1.5 and a sound-alike line of 0.990 that left
+    every Blend empty on trained-weight fingerprints."""
+    import importlib.util
+    from urllib.parse import urlencode
+    app_py = os.path.join(ROOT, "web", "app.py")
+    cfg_home = tmp_path / "config"
+    cfg_home.mkdir()
+    empty_env = tmp_path / "empty.env"
+    empty_env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("APPDATA", str(cfg_home))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(cfg_home))
+    monkeypatch.setenv("ATTUNE_ENV", str(empty_env))
+    monkeypatch.syspath_prepend(os.path.dirname(app_py))
+    seen = {}
+    for kind in ("plain", "trained"):
+        d = tmp_path / kind
+        d.mkdir()
+        dbp = build_db(str(d), trained=(kind == "trained"))
+        try:
+            spec = importlib.util.spec_from_file_location(f"attune_app_dials_{kind}", app_py)
+            appmod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(appmod)
+            client = appmod.create_app(dbp, engine_name="v2", playlist_dir=str(tmp_path)).test_client()
+        except Exception as e:          # pragma: no cover - environment-dependent
+            pytest.skip(f"the app could not be stood up: {type(e).__name__}: {e}")
+        st = client.get("/api/lib/stats").get_json()
+        seen[kind] = st
+        told = dict(st["weights"], max=1, min_fit=st["fit_line"])
+        as_window = client.get("/api/mix?i=0&size=20&" + urlencode(told)).get_json()
+        alone = client.get("/api/mix?i=0&size=20&max=1").get_json()
+        assert [t["i"] for t in as_window["tracks"]] == [t["i"] for t in alone["tracks"]]
+        assert as_window["weights"] == alone["weights"]
+        blend = client.get(f"/api/mix/blend?i=0&i=1&size=20&max=1&min_fit={st['clap_line']}").get_json()
+        assert blend["stop"]["line"] == st["clap_line"]
+    v2 = {k: hybrid.DEFAULT_WEIGHTS[k] for k in ("clap", "lib", "genre", "bpm", "era")}
+    sound = dict(v2, **{k: hybrid.SOUND_PROFILE["weights"][k] for k in v2})
+    assert (seen["plain"]["profile"], seen["plain"]["weights"]) == ("v2", v2)
+    assert (seen["plain"]["fit_line"], seen["plain"]["clap_line"]) == (hybrid.FIT_LINE_DEFAULT,
+                                                                     hybrid.CLAP_LINE_DEFAULT)
+    assert (seen["trained"]["profile"], seen["trained"]["weights"]) == ("sound", sound)
+    assert (seen["trained"]["fit_line"], seen["trained"]["clap_line"]) == (hybrid.FIT_LINE_SOUND,
+                                                                         hybrid.CLAP_LINE_TRAINED)
+    # What the window does with these numbers is held by tests/test_dials_js.py.
 
 
 @pytest.mark.parametrize("module", ["embed_onnx", "embed"])

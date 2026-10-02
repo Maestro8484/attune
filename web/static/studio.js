@@ -134,9 +134,18 @@ async function pollReload() {
               : 'Library reloaded');
   // refresh everything the reload just changed underneath us
   try {
+    const was = S.stats && S.stats.profile;
     S.stats = await jget('/api/lib/stats');
     paintStats(S.stats);
     addEarfeelCols(S.stats.earfeel); renderHead();
+    // A library brought across to the trained fingerprints comes back under the sound
+    // profile: the dials move to its numbers (a recipe's own numbers stay), the name says so.
+    if (S.stats.profile !== was) {
+      paintEngineName(S.stats);
+      captureEngineDefaults();
+      if (curRecipe) selectRecipe(curRecipe, { persist: false }); else applyEngineDefaults();
+      applyFitDefaults(true);
+    }
   } catch (e) { console.error('[reload] stats refresh', e); }
   try {
     if (S.view === 'library') await loadLibrary(false);
@@ -245,17 +254,46 @@ function facetQS() {
 let RECIPES = [];             // [{id,name,params,builtin}], server order (builtins first)
 let RECIPE_DEFAULT = '';      // name of the server-configured default recipe, '' = none
 let curRecipe = '';           // name of the currently applied recipe, '' = Dials (manual)
-let ENGINE_DEFAULTS = null;   // {clap,lib,genre,bpm,era} captured from the DOM at boot --
-                               // BEFORE any recipe ever touches the sliders. The HTML's
-                               // slider value= attributes already mirror hybrid.py's
-                               // DEFAULT_WEIGHTS (verified against recipes.py's own
-                               // BUILTINS comment, web/recipes.py:103-106); reading them
-                               // from the DOM instead of re-typing the numbers here means
-                               // this file never hardcodes an engine weight.
+let ENGINE_DEFAULTS = null;   // {clap,lib,genre,bpm,era}: the engine's own numbers for
+                               // the library loaded, from /api/lib/stats `weights`. The
+                               // HTML's slider value= attributes mirror hybrid.py's
+                               // DEFAULT_WEIGHTS (the V2 recipe) and are the fallback when
+                               // the server does not say. Never hardcoded here.
 
 function captureEngineDefaults() {
   ENGINE_DEFAULTS = {};
-  for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) ENGINE_DEFAULTS[k] = $(k).value;
+  const w = (S.stats && S.stats.weights) || {};
+  for (const k of ['clap', 'lib', 'genre', 'bpm', 'era'])
+    ENGINE_DEFAULTS[k] = (w[k] != null) ? String(w[k]) : $(k).getAttribute('value');
+}
+
+/* Put the engine's numbers on the dials. The window sends the dials with every mix and
+   the server applies what it is sent, so dials left at the page's V2 numbers on a library
+   the engine mixes by the sound profile replaced its weights on every mix (2026-10-02).
+   Writes only a dial whose number differs: on a V2 library nothing is written and every
+   request stays exactly as it was. */
+function applyEngineDefaults() {
+  for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) {
+    if (+$(k).value === +ENGINE_DEFAULTS[k]) continue;
+    $(k).value = ENGINE_DEFAULTS[k];
+    $(k).dispatchEvent(new Event('input'));
+  }
+}
+
+/* The engine's name and the preset chips say which recipe the library is mixed by. The
+   V2 chips set V2's numbers, which on a sound-profile library would not give V2 (the
+   scale and the trained head stay), so there they give way to the sound profile's own. */
+function paintEngineName(s) {
+  const sound = s.profile === 'sound';
+  $('engineName').textContent = s.engine === 'musicip' ? 'MusicIP Mixer (live)'
+    : sound ? 'Attune sound profile' : 'Attune V2';
+  for (const b of document.querySelectorAll('.chip[data-preset]'))
+    b.hidden = (b.dataset.preset === 'sound') !== sound;
+  // The engine decides at load whether the timbre descriptor takes part (hybrid.py
+  // use_lib); under the sound profile it does not, so the dial would move and change
+  // nothing. Say so instead of offering it.
+  $('lib').disabled = sound;
+  $('lib').title = sound ? 'Timbre takes no part under the sound profile.' : '';
 }
 
 function findRecipe(name) {
@@ -532,13 +570,32 @@ async function openCollection(id) {
   } catch (e) { toast(e.message, true); }
 }
 
+/* The two fit lines start where the engine draws them for the library loaded, unless the
+   person typed their own. The boxes are sent with every mix, so a box left at the page's
+   V2 starting value overrode the engine's line for a library on another scale. A typed
+   line is kept with the recipe it was typed under (fitLineProfile) and dropped when the
+   library comes up under another one, whether that happens on a reload (`reset`) or while
+   the window was closed: a line typed for one scale means something else on the other. */
+function applyFitDefaults(reset) {
+  const s = S.stats || {};
+  const typedFor = store.get('fitLineProfile', 'v2');
+  if (reset || (s.profile && typedFor !== s.profile)) {
+    try { localStorage.removeItem('attune.fitLine'); localStorage.removeItem('attune.clapLine'); }
+    catch {}
+  }
+  const fl = store.get('fitLine', null), cl = store.get('clapLine', null);
+  if (fl != null) $('fitLine').value = fl;
+  else if (s.fit_line != null) $('fitLine').value = (+s.fit_line).toFixed(2);
+  if (cl != null) $('clapLine').value = cl;
+  else if (s.clap_line != null) $('clapLine').value = (+s.clap_line).toFixed(3);
+}
+
 async function initCollections() {
   const isMip = S.stats && S.stats.engine === 'musicip';
   // the fit line needs a score; the MusicIP engine exposes none, so the switch is
   // hidden there and only the collection choice stays
   $('fitMax').checked = store.get('fitMax', true) !== false;
-  const fl = store.get('fitLine', null); if (fl != null) $('fitLine').value = fl;
-  const cl = store.get('clapLine', null); if (cl != null) $('clapLine').value = cl;
+  applyFitDefaults(false);
   for (const id of ['fitMax', 'fitLine', 'clapLine']) {
     $(id).closest('label').hidden = !!isMip;
   }
@@ -547,8 +604,12 @@ async function initCollections() {
   $('btnCollSave').onclick = saveCollectionFromScreen;
   $('btnCollDelete').onclick = deleteCollection;
   $('fitMax').addEventListener('change', () => store.set('fitMax', $('fitMax').checked));
-  $('fitLine').addEventListener('change', () => store.set('fitLine', $('fitLine').value));
-  $('clapLine').addEventListener('change', () => store.set('clapLine', $('clapLine').value));
+  const typed = id => () => {
+    store.set(id, $(id).value);
+    store.set('fitLineProfile', (S.stats && S.stats.profile) || 'v2');
+  };
+  $('fitLine').addEventListener('change', typed('fitLine'));
+  $('clapLine').addEventListener('change', typed('clapLine'));
   $('fromPill').onclick = () => $('btnOptions').click();
   $('collList').addEventListener('click', e => {
     const use = e.target.closest('.cuse');
@@ -588,7 +649,8 @@ async function initRecipes() {
   } else {
     curRecipe = '';
     $('recipeSel').value = '';
-    paintRecipeActions();      // no DOM write beyond this -- dials stay exactly as authored
+    paintRecipeActions();
+    applyEngineDefaults();     // writes nothing on a V2 library: dials stay as authored
   }
 }
 
@@ -3296,7 +3358,8 @@ function bindEvents() {
   });
 
   document.querySelectorAll('.chip[data-preset]').forEach(b => b.onclick = () => {
-    const w = b.dataset.preset === 'nobpm'
+    const w = b.dataset.preset === 'sound' ? ENGINE_DEFAULTS
+      : b.dataset.preset === 'nobpm'
       ? { clap: 1.0, lib: 0.4, genre: 0.3, bpm: 0.0, era: 0.1 }
       : { clap: 1.0, lib: 0.4, genre: 0.3, bpm: 0.3, era: 0.1 };
     for (const [k, v] of Object.entries(w)) { $(k).value = v; $(k).dispatchEvent(new Event('input')); }
@@ -3533,7 +3596,7 @@ async function initCore() {
 
   try {
     const s = S.stats;
-    $('engineName').textContent = s.engine === 'musicip' ? 'MusicIP Mixer (live)' : 'Attune V2';
+    paintEngineName(s);
     $('mipControls').hidden = s.engine !== 'musicip';
     $('v2Controls').hidden = s.engine === 'musicip';
     $('btnPlex').disabled = !s.plex;

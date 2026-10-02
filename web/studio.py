@@ -763,6 +763,20 @@ def register(app, ctx):
             # the Earfeel scores the song list can show as optional columns; empty without
             # an Earfeel file, so no column is offered
             earfeel=[{"id": n, "label": l} for n, l in zip(lib.earfeel_names, lib.earfeel_labels)],
+            # the engine's own numbers for the five mix dials, for the library loaded, and
+            # which recipe it starts from ("v2", or "sound" for a library with
+            # trained-weight fingerprints). The window starts its dials from these. The page
+            # is written with the V2 numbers and the window sends the dials with every mix,
+            # so without this a sound-profile library was mixed in the window with V2's
+            # numbers on top of the sound profile's scale, a recipe nobody chose.
+            weights={k: eng.w.get(k, 0.0) for k in ("clap", "lib", "genre", "bpm", "era")},
+            profile=getattr(eng, "profile", "v2"),
+            # where "count as a maximum" draws its line for this library, for the same
+            # reason: the window sends its two boxes with every mix, and a box left at the
+            # V2 starting value (0.990 for the sound-alike walks) cuts a library with
+            # trained-weight fingerprints to almost nothing
+            fit_line=getattr(eng, "fit_line", None),
+            clap_line=getattr(eng, "clap_line", None),
         )
 
     @bp.get("/api/lib/failures")

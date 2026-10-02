@@ -38,6 +38,7 @@
     ['#bpm, #v2Controls .slider:nth-of-type(4) .k', 'Tempo: how much matching beats per minute counts.'],
     ['#era, #v2Controls .slider:nth-of-type(5) .k', 'Era: how much the release year counts. Higher keeps the mix near the seed\'s decade.'],
     ['#v2Controls .presets > .k', 'Ready-made dial settings. Click one to set all five dials at once.'],
+    ['[data-preset="sound"]', 'Set the five dials to the default for this library: the sound profile, chosen from what listeners play together and not yet judged by ear.'],
     ['[data-preset="v2"]', 'Set the five dials to the default: the combination that won the listening test.'],
     ['[data-preset="nobpm"]', 'The default dials with Tempo at 0, so tempo is ignored.'],
     ['#v2Controls .expsep', 'Radio: a mix that never ends. Turn it on here or with the Radio button in the player.'],
