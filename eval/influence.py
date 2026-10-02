@@ -42,7 +42,7 @@ for _p in (_SRC, _HERE):
 
 import variants as V   # noqa: E402
 
-TERMS = ("clap", "lib", "genre", "bpm", "era", "feel")
+TERMS = ("clap", "lib", "genre", "bpm", "era", "artist", "feel")
 K = 100
 HUB_SEEDS = 200
 HUB_SHARE = 0.02

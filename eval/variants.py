@@ -14,6 +14,10 @@ FUSED_CLAP_WEIGHT  Once every ingredient is ranked onto one scale, a weight is a
     when it is removed. The target for this work is 30 to 60. Measured with
     eval/influence.py on the reference library 2026-10-01 (pool 21,215): 0.3 gives 49,
     the middle of that band, and level with the descriptor, genre and tempo ingredients.
+    MOVED TO 0.5 the same day for the corrected fingerprints (the makers' trained weights,
+    ISSUES.md row 81): there 0.3 gives 29, just under the band, 0.4 gives 33 at its edge
+    and 0.5 gives 39 (pool 21,098, audit-sonic/influence_sweep_fixed.txt). Moved only to
+    stay inside the band, not tuned; on the old fingerprints 0.5 would give about 60.
 FEEL_WEIGHT  The same weight the sound-descriptor term carries, so the two "what it
     sounds like" ingredients beside the fingerprint start level.
 """
@@ -21,7 +25,7 @@ from __future__ import annotations
 
 import copy
 
-FUSED_CLAP_WEIGHT = 0.3
+FUSED_CLAP_WEIGHT = 0.5
 FEEL_WEIGHT = 0.4
 # Provisional, like the two above: the genre ingredient's own weight, so listener-based
 # artist closeness starts level with tag-based genre closeness.
