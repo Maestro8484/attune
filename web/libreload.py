@@ -123,8 +123,8 @@ class ReloadJob:
             # relative to the engine load above, but still done off-lock -- no reason
             # to make readers wait for it when the eng build already dwarfs it.
             tmp_lib = ctx["studio_mod"].LibraryIndex(
-                ctx["db_path"], hybrid_eng.paths, hybrid_eng.meta, getattr(hybrid_eng, "feel", None),
-                getattr(hybrid_eng, "feel_names", ()), getattr(hybrid_eng, "feel_labels", ()))
+                ctx["db_path"], hybrid_eng.paths, hybrid_eng.meta, getattr(hybrid_eng, "earfeel", None),
+                getattr(hybrid_eng, "earfeel_names", ()), getattr(hybrid_eng, "earfeel_labels", ()))
 
             with ctx["engine_lock"]:
                 eng = ctx["eng"]

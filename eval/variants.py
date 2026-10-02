@@ -18,7 +18,7 @@ FUSED_CLAP_WEIGHT  Once every ingredient is ranked onto one scale, a weight is a
     ISSUES.md row 81): there 0.3 gives 29, just under the band, 0.4 gives 33 at its edge
     and 0.5 gives 39 (pool 21,098, audit-sonic/influence_sweep_fixed.txt). Moved only to
     stay inside the band, not tuned; on the old fingerprints 0.5 would give about 60.
-FEEL_WEIGHT  The same weight the sound-descriptor term carries, so the two "what it
+EARFEEL_WEIGHT  The same weight the sound-descriptor term carries, so the two "what it
     sounds like" ingredients beside the fingerprint start level.
 FAMILY_CREDIT  The two-tier genre term's credit for a family-only match (Punk against
     Grunge, both Rock): half of what the same value gets. Half is the plain midpoint
@@ -29,7 +29,7 @@ from __future__ import annotations
 import copy
 
 FUSED_CLAP_WEIGHT = 0.5
-FEEL_WEIGHT = 0.4
+EARFEEL_WEIGHT = 0.4
 # Provisional, like the two above: the genre ingredient's own weight, so listener-based
 # artist closeness starts level with tag-based genre closeness.
 ARTIST_WEIGHT = 0.3
@@ -43,14 +43,14 @@ VARIANTS = {
     # B: every ingredient ranked before its weight applies, fingerprint with the
     #    library's average removed
     "v2-fused":  {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT}},
-    # C: B plus closeness in the five feel scores
-    "v2-feel":   {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "feel": FEEL_WEIGHT}},
+    # C: B plus closeness in the five Earfeel scores
+    "v2-earfeel":   {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "earfeel": EARFEEL_WEIGHT}},
     # D: the shipped default with the fingerprint given no say at all
     "v2-noclap": {"weights": {"clap": 0.0}},
-    # C with the feel scores read from a file named on the command line (--feel-file)
+    # C with the Earfeel scores read from a file named on the command line (--earfeel-file)
     # instead of the shipped one; for trying a different set of scores without shipping it
-    "v2-feel-file": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "feel": FEEL_WEIGHT},
-                     "feel_file": True},
+    "v2-earfeel-file": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "earfeel": EARFEEL_WEIGHT},
+                     "earfeel_file": True},
     # The catalog test (2026-10-01). "v2" reads the catalog tables when a library has them;
     # this is the engine as it was before them: no catalog, "covers" counted as a genre.
     "v2-before-catalog": {"catalog": False},
@@ -58,14 +58,14 @@ VARIANTS = {
     "v2-catalog-artist": {"weights": {"artist": ARTIST_WEIGHT}},
     # The follow-up to the sitting of 2026-10-01: each of its two finalists with the genre
     # term in two tiers (needs a library with the genre_family table; without one these
-    # score exactly as v2 and v2-feel-file).
+    # score exactly as v2 and v2-earfeel-file).
     "v2-tiers": {"family_credit": FAMILY_CREDIT},
-    "v2-feel-file-tiers": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "feel": FEEL_WEIGHT},
-                           "feel_file": True, "family_credit": FAMILY_CREDIT},
+    "v2-earfeel-file-tiers": {**_FUSED, "weights": {"clap": FUSED_CLAP_WEIGHT, "earfeel": EARFEEL_WEIGHT},
+                           "earfeel_file": True, "family_credit": FAMILY_CREDIT},
 }
 
 
-def variant_engine(base, name, feel_file=None, **override):
+def variant_engine(base, name, earfeel_file=None, **override):
     """A HybridEngine that scores as the named version, sharing `base`'s loaded library.
     `base` is not changed. `override` replaces or adds settings (fusion=, clap_space=,
     weights={...}) on top of the named version, for the influence report's grid."""
@@ -79,11 +79,11 @@ def variant_engine(base, name, feel_file=None, **override):
     e.fusion = spec.get("fusion", "raw")
     e.clap_space = spec.get("clap_space", "raw")
     e.family_credit = float(spec.get("family_credit", 0.0))
-    if spec.get("feel_file"):
-        if not feel_file:
-            raise SystemExit(f"version '{name}' needs --feel-file")
-        e.feel, e.feel_names, e.feel_labels = None, [], []
-        e._load_feel(feel_file)
-        if e.feel is None:
-            raise SystemExit(f"no feel scores could be read from {feel_file}")
+    if spec.get("earfeel_file"):
+        if not earfeel_file:
+            raise SystemExit(f"version '{name}' needs --earfeel-file")
+        e.earfeel, e.earfeel_names, e.earfeel_labels = None, [], []
+        e._load_earfeel(earfeel_file)
+        if e.earfeel is None:
+            raise SystemExit(f"no Earfeel scores could be read from {earfeel_file}")
     return e

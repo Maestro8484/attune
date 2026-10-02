@@ -20,8 +20,8 @@ so they describe the score and not the walk):
 The read is read-only (HybridEngine opens the database mode=ro).
 
     python eval/influence.py --db <mixer.db> [--key eval/abtest_key_*.json]
-        [--versions v2,v2-fused,v2-feel,v2-noclap] [--grid] [--geometry] [--learned]
-        [--feel-file path] [--out report.txt]
+        [--versions v2,v2-fused,v2-earfeel,v2-noclap] [--grid] [--geometry] [--learned]
+        [--earfeel-file path] [--out report.txt]
 """
 from __future__ import annotations
 
@@ -42,7 +42,7 @@ for _p in (_SRC, _HERE):
 
 import variants as V   # noqa: E402
 
-TERMS = ("clap", "lib", "genre", "bpm", "era", "artist", "feel")
+TERMS = ("clap", "lib", "genre", "bpm", "era", "artist", "earfeel")
 K = 100
 HUB_SEEDS = 200
 HUB_SHARE = 0.02
@@ -56,13 +56,13 @@ def top_k(eng, si, k=K):
 
 def influence(eng, seed_idx, k=K):
     """{ingredient: [songs of k changed, per seed]} for every ingredient with a weight,
-    plus 'fingerprint' = the fingerprint and everything derived from it (clap and feel)
+    plus 'fingerprint' = the fingerprint and everything derived from it (clap and earfeel)
     taken out together."""
     base = dict(eng.w)
     live = [t for t in TERMS if base.get(t)]
     groups = {t: (t,) for t in live}
-    if base.get("feel") and base.get("clap"):
-        groups["fingerprint"] = ("clap", "feel")
+    if base.get("earfeel") and base.get("clap"):
+        groups["fingerprint"] = ("clap", "earfeel")
     out = {g: [] for g in groups}
     try:
         for si in seed_idx:
@@ -123,8 +123,8 @@ def _fmt_hubs(h):
             f"skew {h['skew']:.2f}")
 
 
-def report_version(base, name, seeds, hseeds, out, feel_file=None, label=None, **override):
-    eng = V.variant_engine(base, name, feel_file=feel_file, **override)
+def report_version(base, name, seeds, hseeds, out, earfeel_file=None, label=None, **override):
+    eng = V.variant_engine(base, name, earfeel_file=earfeel_file, **override)
     n = len(eng.paths)
     lab = label or name
     w = "  ".join(f"{t} {eng.w[t]:g}" for t in TERMS if eng.w.get(t))
@@ -224,12 +224,12 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--db", required=True)
     ap.add_argument("--key", default=None, help="a sealed abtest key whose seeds lead the seed list")
-    ap.add_argument("--versions", default="v2,v2-fused,v2-feel,v2-noclap")
+    ap.add_argument("--versions", default="v2,v2-fused,v2-earfeel,v2-noclap")
     ap.add_argument("--grid", action="store_true",
                     help="every fusion mode against every fingerprint space, shipped weights")
     ap.add_argument("--geometry", action="store_true", help="the fingerprint alone, by space")
     ap.add_argument("--learned", action="store_true", help="the learned engine's hubs and spread")
-    ap.add_argument("--feel-file", default=None)
+    ap.add_argument("--earfeel-file", default=None)
     ap.add_argument("--out", default=None)
     a = ap.parse_args()
 
@@ -247,10 +247,10 @@ def main():
     seeds = std_seeds(base, a.key)
     hseeds = hub_seeds(n)
     for name in [v.strip() for v in a.versions.split(",") if v.strip()]:
-        if name == "v2-feel" and base.feel is None:
-            out(f"\n== {name}: skipped, no feel scores file")
+        if name == "v2-earfeel" and base.earfeel is None:
+            out(f"\n== {name}: skipped, no Earfeel scores file")
             continue
-        report_version(base, name, seeds, hseeds, out, feel_file=a.feel_file)
+        report_version(base, name, seeds, hseeds, out, earfeel_file=a.earfeel_file)
     if a.grid:
         for fu in hy.FUSIONS:
             for sp in hy.CLAP_SPACES:

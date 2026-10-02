@@ -206,7 +206,7 @@ def test_listening_versions(tiered):
     assert t.family_credit == V.FAMILY_CREDIT and t.fusion == "raw" and t.w == base.w
     assert base.family_credit == 0.0               # the shared engine is not changed
     assert t._genre_closeness(0)[2] == V.FAMILY_CREDIT
-    assert "v2-feel-file-tiers" in V.VARIANTS
+    assert "v2-earfeel-file-tiers" in V.VARIANTS
     # the engine as it was before the catalog has no families, whatever the switch says
     before = base.without_catalog()
     before.family_credit = 0.5

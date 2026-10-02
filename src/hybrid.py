@@ -35,10 +35,10 @@ import numpy as np
 # the key idea was sound but lost by ear (and its code was reversed until fixed). The key
 # term remains available (set "key">0) now that _key_compat is correct, but ships off.
 DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1, "key": 0.0,
-                   "feel": 0.0}
+                   "earfeel": 0.0}
 
 # Scoring switches (2026-10-01). ALL OFF BY DEFAULT: with fusion "raw", clap_space "raw"
-# and the feel weight at 0, _score() runs the V2 code it always ran and the byte-identical
+# and the Earfeel weight at 0, _score() runs the V2 code it always ran and the byte-identical
 # regression gate holds it there. None of them becomes a default on a number (LAW 1); each
 # waits on a blind listening test.
 #
@@ -56,10 +56,16 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 #               "abtt1..3"  centered, then the 1 to 3 strongest shared directions removed
 #                           ("all-but-the-top", Mu and Viswanath 2018).
 #               Computed in memory at load from the stored vectors; nothing is written.
-#   feel        weight of the feel-closeness ingredient: how near a candidate's five feel
-#               scores (danceable, happy, intense, instrumental, acoustic) sit to the
-#               seed's. The scores come from the stored fingerprints and a small file of
-#               text directions, models/feel_prompts.json; see _load_feel().
+#   earfeel     weight of the Earfeel-closeness ingredient: how near a candidate's Earfeel
+#               scores sit to the seed's. Earfeel is the owner's name (2026-10-01) for the
+#               framework of sound sensations a song is measured on, never to be read as
+#               genre. Its five units, each a two-ended scale:
+#                   Pulse  still to driving          Glow   somber to bright
+#                   Heat   cool to fiery             Voice  wordless to sung
+#                   Grain  circuit to wood
+#               The scores come from the stored fingerprints and a small file of text
+#               directions, models/earfeel.json; see _load_earfeel(). That file is made
+#               for the fingerprint model's trained weights and ships only with them.
 #   family_credit  the genre ingredient in two tiers. 0 (the default) is the genre term as it
 #               always was: shared tags over all tags. Above 0, two songs whose tags differ
 #               but sit in the same broad family (Punk and Grunge are both Rock) get that
@@ -71,8 +77,8 @@ DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1
 #               term is unchanged whatever this is set to.
 FUSIONS = ("raw", "z", "rank")
 CLAP_SPACES = ("raw", "centered", "abtt1", "abtt2", "abtt3")
-FEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
-                         "feel_prompts.json")
+EARFEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
+                         "earfeel.json")
 
 # The fit line: the count becomes a MAXIMUM, not a quota, when a walk is given `min_fit`.
 # Both values are PROVISIONAL starting points (LAW 1: where "fits" ends is judged by ear,
@@ -268,7 +274,7 @@ class HybridEngine:
     ARC_PERIOD = 20         # tracks per full rise/fall/wave cycle
     ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
 
-    def __init__(self, db_path, weights=None, fusion=None, clap_space=None, feel_file=None,
+    def __init__(self, db_path, weights=None, fusion=None, clap_space=None, earfeel_file=None,
                  catalog=True, family_credit=None):
         """`catalog=False` ignores the catalog tables (src/enrich.py) even when present: the
         A side of an ear test. The optional `artist` weight (not in DEFAULT_WEIGHTS, so 0
@@ -473,10 +479,10 @@ class HybridEngine:
             self._energy_lo, self._energy_hi = -1.0, 1.0   # unreachable: no energy data
 
         # The other forms of the fingerprint, built on first use and kept; and the five
-        # feel scores, one 0..1 percentile per song, or None when the file is absent.
+        # Earfeel scores, one 0..1 percentile per song, or None when the file is absent.
         self._spaces = {}
-        self.feel, self.feel_names, self.feel_labels = None, [], []
-        self._load_feel(feel_file)
+        self.earfeel, self.earfeel_names, self.earfeel_labels = None, [], []
+        self._load_earfeel(earfeel_file)
 
     def _clap_matrix(self, name):
         """The fingerprint matrix in the named space (see CLAP_SPACES): unit rows, same
@@ -500,8 +506,10 @@ class HybridEngine:
             self._spaces[name] = M
         return M
 
-    def _load_feel(self, path=None):
-        """Five listener-meaningful scores per song, from the stored fingerprints alone.
+    def _load_earfeel(self, path=None):
+        """The Earfeel scores: one per unit per song (Pulse, Glow, Heat, Voice, Grain in the
+        file as designed; the code takes whatever units the file names), from the stored
+        fingerprints alone.
 
         The fingerprint model was trained on sound and text together, so a description
         such as "dance beat, steady tempo" has a direction in the same space as the
@@ -513,9 +521,9 @@ class HybridEngine:
         The file holds the directions already computed, so no text model is ever loaded
         or shipped. Each score carries either "pos"/"neg" (lists of text embeddings,
         averaged per side) or a ready direction "w"; "space" names the form of the
-        fingerprint they are compared with. A missing or unreadable file means no feel
-        scores, which is not an error: the feel weight then has nothing to act on."""
-        path = path or FEEL_FILE
+        fingerprint they are compared with. A missing or unreadable file means no Earfeel
+        scores, which is not an error: the Earfeel weight then has nothing to act on."""
+        path = path or EARFEEL_FILE
         try:
             with open(path, encoding="utf-8") as fh:
                 spec = json.load(fh)
@@ -539,20 +547,20 @@ class HybridEngine:
             names.append(sc["name"]); labels.append(sc.get("label", sc["name"]))
             cols.append(_pct(M @ wv))
         if cols:
-            self.feel = np.column_stack(cols).astype(np.float32)
-            self.feel_names, self.feel_labels = names, labels
+            self.earfeel = np.column_stack(cols).astype(np.float32)
+            self.earfeel_names, self.earfeel_labels = names, labels
         if space != self.clap_space:
             self._spaces.pop(space, None)     # only needed for this pass; do not hold it
 
     def _switched(self):
         """True when any scoring switch is on, i.e. when _score() leaves the V2 path."""
         return (self.fusion != "raw" or self.clap_space != "raw"
-                or bool(self.w.get("feel") and self.feel is not None))
+                or bool(self.w.get("earfeel") and self.earfeel is not None))
 
     def _terms(self, si):
         """The active ingredients of a switched score, in the order they are added: each
         as (name, weight, an array over the pool where BIGGER IS BETTER). The gaps (tempo,
-        year, feel) are therefore negated here, which under "raw" fusion gives exactly the
+        year, earfeel) are therefore negated here, which under "raw" fusion gives exactly the
         subtraction V2 writes."""
         w, out = self.w, []
         if w.get("clap"):
@@ -575,10 +583,10 @@ class HybridEngine:
                         -np.where((self.year > 0) & (sy > 0), np.abs(self.year - sy) / 25.0, 0.5)))
         if w.get("artist") and self.artist_ids[si]:
             out.append(("artist", w["artist"], self._artist_affinity(si)))
-        if w.get("feel") and self.feel is not None:
+        if w.get("earfeel") and self.earfeel is not None:
             # mean gap across the five scores, each already 0..1
-            out.append(("feel", w["feel"],
-                        -np.abs(self.feel - self.feel[si]).mean(axis=1).astype(np.float64)))
+            out.append(("earfeel", w["earfeel"],
+                        -np.abs(self.earfeel - self.earfeel[si]).mean(axis=1).astype(np.float64)))
         return out
 
     def _genre_closeness(self, si):
@@ -1202,7 +1210,7 @@ class HybridEngine:
         if self._switched():
             # same ingredients, same order, same adds as _score_switched(), so the total
             # here is that score to the last bit
-            comp["feel"] = 0.0
+            comp["earfeel"] = 0.0
             total = 0.0
             for name, wk, g in self._terms(si):
                 comp[name] = float(wk * self._fuse(g)[ci])

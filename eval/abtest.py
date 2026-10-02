@@ -21,7 +21,7 @@ This script only READS the db (HybridEngine opens it read-only). It writes
 only under attune/eval/ and the playlist output folder.
 
 Engines: v2, musicip, learned, and the scoring versions in eval/variants.py (v2-fused,
-v2-feel, v2-noclap, v2-feel-file). A name may end in @<label> to run that version over a
+v2-earfeel, v2-noclap, v2-earfeel-file). A name may end in @<label> to run that version over a
 second copy of the library named with --db-alt label=path (same songs, different stored
 fingerprints), so two analyses of one library can be heard side by side.
 
@@ -74,7 +74,7 @@ def _load_engine_iface():
 # Engine construction
 # ---------------------------------------------------------------------------
 
-def build_engines(names, db_path, musicip_url, feel_file=None, db_alt=None):
+def build_engines(names, db_path, musicip_url, earfeel_file=None, db_alt=None):
     """Build each requested engine over ONE shared HybridEngine pool (the db load is
     the expensive part; every Engine subclass resolves results to this pool anyway).
     A name ending in @<label> is built over the library copy `db_alt[label]` instead,
@@ -102,7 +102,7 @@ def build_engines(names, db_path, musicip_url, feel_file=None, db_alt=None):
             base = alt_engines[label]
         if kind in variantmod.VARIANTS:
             hv = base if (kind == "v2" and not label) else variantmod.variant_engine(
-                base, kind, feel_file=feel_file)
+                base, kind, earfeel_file=earfeel_file)
             obj = eiface.V2Engine(hybrid_engine=hv)
             pool = len(hv.paths)
         elif label:
@@ -233,7 +233,7 @@ def run_generate(args):
         if not label or not os.path.exists(path):
             raise SystemExit(f"--db-alt wants label=<existing path>, got {spec!r}")
         db_alt[label] = path
-    eng, engines = build_engines(names, db, musicip_url, feel_file=args.feel_file,
+    eng, engines = build_engines(names, db, musicip_url, earfeel_file=args.earfeel_file,
                                  db_alt=db_alt)
     seed_paths = None
     if args.seeds:
@@ -381,8 +381,8 @@ def main():
     ap.add_argument("--key", default=None, help="key file to score (default: newest)")
     ap.add_argument("--rank", action="append", default=None, metavar="TestN=B>A=C",
                     help="with --score: one test's ranking, best first; repeat per test")
-    ap.add_argument("--feel-file", default=None,
-                    help="feel scores file for the v2-feel-file version")
+    ap.add_argument("--earfeel-file", default=None,
+                    help="Earfeel scores file for the v2-earfeel-file version")
     ap.add_argument("--db-alt", action="append", default=None, metavar="LABEL=PATH",
                     help="a second copy of the library for engines named <version>@LABEL")
     args = ap.parse_args()

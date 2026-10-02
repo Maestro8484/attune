@@ -1,4 +1,4 @@
-"""The scoring switches (2026-10-01): fusion, the fingerprint space, the feel ingredient.
+"""The scoring switches (2026-10-01): fusion, the fingerprint space, the Earfeel ingredient.
 
 Everything here defends one promise and three properties:
 
@@ -8,7 +8,7 @@ Everything here defends one promise and three properties:
                 have wildly different raw spreads, influence falls in weight order;
   centering     the centered fingerprints no longer share one direction, and the stored
                 ones are not touched;
-  feel          the scores are a fixed function of the stored fingerprints and a small
+  earfeel          the scores are a fixed function of the stored fingerprints and a small
                 file of directions, computed with no model loaded.
 """
 from __future__ import annotations
@@ -102,13 +102,13 @@ def _v2_score(eng, si):
     return s
 
 
-def _feel_file(dirpath, space="raw", dims=(0, 1)):
-    """A feel file whose directions are plain axes, so the expected score is known."""
+def _earfeel_file(dirpath, space="raw", dims=(0, 1)):
+    """A Earfeel file whose directions are plain axes, so the expected score is known."""
     scores = []
     for k, d in enumerate(dims):
         w = np.zeros(512); w[d] = 1.0
         scores.append({"name": f"axis{k}", "label": f"Axis {k}", "w": w.tolist()})
-    p = os.path.join(dirpath, "feel.json")
+    p = os.path.join(dirpath, "earfeel.json")
     with open(p, "w", encoding="utf-8") as fh:
         json.dump({"model": "test", "space": space, "scores": scores}, fh)
     return p
@@ -118,7 +118,7 @@ def _feel_file(dirpath, space="raw", dims=(0, 1)):
 
 def test_switches_are_off_by_default(small):
     assert small.fusion == "raw" and small.clap_space == "raw"
-    assert small.w["feel"] == 0.0
+    assert small.w["earfeel"] == 0.0
     assert not small._switched()
 
 
@@ -130,10 +130,10 @@ def test_switches_off_is_the_v2_score_to_the_bit(fixture, request):
         assert a.dtype == b.dtype and a.tobytes() == b.tobytes()
 
 
-def test_feel_scores_present_but_unweighted_change_nothing(small, tmp_path):
+def test_earfeel_scores_present_but_unweighted_change_nothing(small, tmp_path):
     e = variants.variant_engine(small, "v2")
-    e._load_feel(_feel_file(str(tmp_path)))
-    assert e.feel is not None and not e._switched()
+    e._load_earfeel(_earfeel_file(str(tmp_path)))
+    assert e.earfeel is not None and not e._switched()
     assert e._score(3).tobytes() == _v2_score(small, 3).tobytes()
 
 
@@ -203,10 +203,10 @@ def test_explain_adds_up_to_the_switched_score(spread, tmp_path):
         s = e._score(5)
         for ci in (0, 99, 417):
             assert e.explain(5, ci)["total"] == s[ci]
-    e = variants.variant_engine(spread, "v2", fusion="rank", weights={"feel": 0.4})
-    e._load_feel(_feel_file(str(tmp_path)))
+    e = variants.variant_engine(spread, "v2", fusion="rank", weights={"earfeel": 0.4})
+    e._load_earfeel(_earfeel_file(str(tmp_path)))
     comp = e.explain(5, 99)
-    assert comp["total"] == e._score(5)[99] and comp["feel"] != 0.0
+    assert comp["total"] == e._score(5)[99] and comp["earfeel"] != 0.0
 
 
 def test_fit_line_still_reads_the_seed_as_a_perfect_fit(spread):
@@ -238,46 +238,46 @@ def test_all_but_the_top_removes_the_strongest_direction(spread):
     spread._spaces.clear()
 
 
-# ------------------------------------------------------------------ feel
+# ------------------------------------------------------------------ earfeel
 
-def test_feel_scores_are_fixed_and_need_no_model(spread, tmp_path):
-    f = _feel_file(str(tmp_path), space="raw", dims=(3, 10))
-    a = variants.variant_engine(spread, "v2"); a._load_feel(f)
-    b = variants.variant_engine(spread, "v2"); b._load_feel(f)
-    assert a.feel_names == ["axis0", "axis1"] and a.feel.shape == (N, 2)
-    assert (a.feel == b.feel).all()
+def test_earfeel_scores_are_fixed_and_need_no_model(spread, tmp_path):
+    f = _earfeel_file(str(tmp_path), space="raw", dims=(3, 10))
+    a = variants.variant_engine(spread, "v2"); a._load_earfeel(f)
+    b = variants.variant_engine(spread, "v2"); b._load_earfeel(f)
+    assert a.earfeel_names == ["axis0", "axis1"] and a.earfeel.shape == (N, 2)
+    assert (a.earfeel == b.earfeel).all()
     expect = hybrid._pct(spread.X[:, 3].astype(np.float64)).astype(np.float32)
-    assert np.allclose(a.feel[:, 0], expect)
-    assert a.feel.min() == 0.0 and a.feel.max() == 1.0
+    assert np.allclose(a.earfeel[:, 0], expect)
+    assert a.earfeel.min() == 0.0 and a.earfeel.max() == 1.0
     assert "torch" not in sys.modules and "transformers" not in sys.modules
 
 
-def test_feel_from_text_pairs_matches_its_direction(spread, tmp_path):
+def test_earfeel_from_text_pairs_matches_its_direction(spread, tmp_path):
     rng = np.random.default_rng(5)
     pos, neg = rng.normal(size=(2, 512)), rng.normal(size=(3, 512))
     p = os.path.join(str(tmp_path), "pairs.json")
     with open(p, "w") as fh:
         json.dump({"space": "centered", "scores": [
             {"name": "x", "pos": pos.tolist(), "neg": neg.tolist()}]}, fh)
-    e = variants.variant_engine(spread, "v2"); e._load_feel(p)
+    e = variants.variant_engine(spread, "v2"); e._load_earfeel(p)
     M = spread._clap_matrix("centered").astype(np.float64)
-    assert np.allclose(e.feel[:, 0], hybrid._pct(M @ (pos.mean(0) - neg.mean(0))), atol=1e-6)
+    assert np.allclose(e.earfeel[:, 0], hybrid._pct(M @ (pos.mean(0) - neg.mean(0))), atol=1e-6)
     spread._spaces.clear()
 
 
-def test_missing_feel_file_is_not_an_error(small, tmp_path):
-    e = variants.variant_engine(small, "v2", weights={"feel": 0.4})
-    e.feel = None
-    e._load_feel(os.path.join(str(tmp_path), "nope.json"))
-    assert e.feel is None and not e._switched()
+def test_missing_earfeel_file_is_not_an_error(small, tmp_path):
+    e = variants.variant_engine(small, "v2", weights={"earfeel": 0.4})
+    e.earfeel = None
+    e._load_earfeel(os.path.join(str(tmp_path), "nope.json"))
+    assert e.earfeel is None and not e._switched()
     assert e._score(0).tobytes() == _v2_score(small, 0).tobytes()
 
 
-def test_feel_closeness_prefers_songs_that_feel_alike(spread, tmp_path):
+def test_earfeel_closeness_prefers_songs_that_earfeel_alike(spread, tmp_path):
     e = variants.variant_engine(spread, "v2", weights={
-        "clap": 0.0, "lib": 0.0, "genre": 0.0, "bpm": 0.0, "era": 0.0, "feel": 1.0})
-    e._load_feel(_feel_file(str(tmp_path)))
+        "clap": 0.0, "lib": 0.0, "genre": 0.0, "bpm": 0.0, "era": 0.0, "earfeel": 1.0})
+    e._load_earfeel(_earfeel_file(str(tmp_path)))
     s = e._score(0)
-    gap = np.abs(e.feel - e.feel[0]).mean(axis=1)
+    gap = np.abs(e.earfeel - e.earfeel[0]).mean(axis=1)
     assert np.argmax(s) == 0
     assert np.corrcoef(s, -gap)[0, 1] > 0.999

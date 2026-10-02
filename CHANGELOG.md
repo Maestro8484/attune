@@ -5,6 +5,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-01, engine fuel)
+
+- **The genre ingredient can work in two tiers. Off by default.** With the switch on,
+  two songs with the same genre still get full credit, two songs in the same broad
+  family but with different genres (Punk and Grunge are both Rock) get a set share of
+  it, and a song from another family gets none. A shared style still grades in between.
+  The families come from a small table of genre values, loaded with
+  `tools/import_catalog.py --families`; a library without that table is unchanged
+  whatever the switch says. Set in `engine_v2.json` as `scoring.family_credit`, 0 to 1.
+  Nothing about a mix changes until a listening test rules on it.
+- **A scan can read what a tagger wrote into the files. Off by default.** With the
+  setting `read_catalog_tags` on, a scan also reads each file's MusicBrainz recording
+  and artist ids, its original release date and its STYLE tag, under the standard names
+  MusicBrainz Picard uses, so the facts above arrive with the music and survive a
+  rescan with no import step. MP3 (both ID3 versions), FLAC, Ogg, MP4 and WAV. Reading
+  them from the files and importing them from a file give the same result.
+
+### Changed (2026-10-01, engine fuel)
+
+- **The code says Earfeel.** The engine setting, the data file (`models/earfeel.json`),
+  the page's column ids and the listening-test names said `feel`; they now say
+  `earfeel`, and the five units are Pulse, Glow, Heat, Voice and Grain throughout.
+  Voice runs from wordless to sung. Nothing you see changes: the download still
+  carries no Earfeel file, so no such column is offered yet.
+
 ### Added (2026-10-01, catalog enrichment)
 
 - **What a tagger knows about each song can inform a mix.** `tools/import_catalog.py`
