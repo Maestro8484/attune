@@ -134,6 +134,7 @@ async function pollReload() {
   try {
     S.stats = await jget('/api/lib/stats');
     paintStats(S.stats);
+    addFeelCols(S.stats.feel); renderHead();
   } catch (e) { console.error('[reload] stats refresh', e); }
   try {
     if (S.view === 'library') await loadLibrary(false);
@@ -635,10 +636,11 @@ function shownCols() {
    sits in this library. Offered only when the engine has a feel file (stats.feel is
    empty otherwise), off until turned on from the header menu like BPM. */
 function addFeelCols(feel) {
-  (feel || []).forEach((f, k) => {
-    const id = 'feel:' + f.id;
-    if (!COLS.some(c => c.id === id)) COLS.push({ id, label: f.label, cls: 'c-feel', feel: k });
-  });
+  // rebuilt from scratch each time stats arrive, so a library reload that adds, drops or
+  // reorders the scores never leaves a column pointing at the wrong score
+  for (let i = COLS.length - 1; i >= 0; i--) if (COLS[i].feel !== undefined) COLS.splice(i, 1);
+  (feel || []).forEach((f, k) =>
+    COLS.push({ id: 'feel:' + f.id, label: f.label, cls: 'c-feel', feel: k }));
 }
 
 function starsHtml(r, cls = 'stars') {
@@ -2859,7 +2861,8 @@ function bindEvents() {
         album: r => r.album.toLowerCase(), year: r => r.year || 0,
         genre: r => (r.genre || '').toLowerCase(),
         rating: r => r.rating || 0, plays: r => r.plays || 0,
-        status: r => r.status }[s] || (fc ? r => (r.feel ? r.feel[fc.feel] : -1) : null);
+        // feel: highest first like the library's server-side sort; no score sorts last
+        status: r => r.status }[s] || (fc ? r => (r.feel ? -r.feel[fc.feel] : Infinity) : null);
       if (!keyf) return;
       const sortNow = () => {
         const rows = S.rows.slice().sort((a, b) =>

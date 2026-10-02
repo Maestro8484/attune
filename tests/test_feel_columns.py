@@ -95,6 +95,7 @@ def test_the_page_offers_them_only_from_stats_and_never_by_default():
     js = open(STUDIO_JS, encoding="utf-8").read()
     default = re.search(r"store\.get\('cols',\s*\[([^\]]*)\]", js).group(1)
     assert "feel" not in default
-    assert re.search(r"addFeelCols\(S\.stats\.feel\)", js)
+    # at boot and again after a library reload, which may add, drop or reorder the scores
+    assert len(re.findall(r"addFeelCols\(S\.stats\.feel\)", js)) >= 2
     static_cols = js[js.index("const COLS = ["):js.index("];", js.index("const COLS = ["))]
     assert "feel" not in static_cols
