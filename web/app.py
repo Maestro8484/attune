@@ -605,6 +605,30 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return None
         return max(1, int(math.ceil(size * share)))
 
+    def _scale_floor(floor, size, want):
+        """The walk's floor when it is asked for `want` songs so that `size` survive
+        bans and dedup: the floor plus the same headroom, never more than the ask. The
+        songs carried past the line are a TAIL the caller uses only when too few
+        fitting songs survive; see _build_mix."""
+        if floor is None or want <= size:
+            return floor
+        return min(want, floor + (want - size))
+
+    def _split_carried(report, picks):
+        """(fitting picks, carried picks): the walk's list split by its own past_line."""
+        carried_ids = {j for j, _ in (report.get("past_line") or [])}
+        if not carried_ids:
+            return picks, []
+        return ([p for p in picks if eng.idx.get(p) not in carried_ids],
+                [p for p in picks if eng.idx.get(p) in carried_ids])
+
+    def _past_delivered(report, picks):
+        """Keep only the carried (past the line) songs that are on the list delivered,
+        so the sentence and the window's marks describe the list on screen."""
+        delivered = {eng.idx[p] for p in picks if p in eng.idx}
+        report["past_line"] = [(j, f) for j, f in (report.get("past_line") or [])
+                               if j in delivered]
+
     def _seed_outside(mask, *seeds):
         """The first seed index that is not in the collection, or None. A seed becomes
         row one of the playlist, so a seed from outside the collection would put a
@@ -681,11 +705,16 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         if past:
             first = _song(past[0])
             fit_n = max(0, returned - len(past))
+            thinned = report.get("coin_skipped") or 0
+            back = report.get("coin_taken") or 0
             out["reason"] = "floor"
             out["sentence"] = (f"{fit_n} of {requested} fit the line of {min_fit:.2f} in {where}; "
                                f"{len(past)} more past it keep the mix going, marked in the list"
                                + (f" (the first, {first['label']}, at {first['fit']:.3f})" if first else "")
-                               + ".")
+                               + "."
+                               + (f" Radio's variety passed over {thinned} that fit"
+                                  + (f", {back} of them taken back for the floor" if back else "")
+                                  + "." if thinned else ""))
             return out
         # The walk over-fetches for dedup, bans and the near-twin re-pick, so it can
         # meet the line AFTER it already had enough: that is a full list, not a short
@@ -781,11 +810,22 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         else:
             pool_size = size
         pool_size = _banned_headroom(pool_size, ban_i, ban_art)
+        # The floor is a share of the count delivered; the walk is asked for more than
+        # the count (dedup, bans, variety), so the floor it is given scales the same
+        # way, or bans and dedup strip the carried songs with nothing to backfill
+        # them (cold reader, 2026-10-02).
+        walk_floor = _scale_floor(floor, size, pool_size)
+        rep = report if report is not None else {}
         picks = eng.mix(seed, size=pool_size, allowed=mask, min_fit=min_fit,
-                        report=report, floor=floor) or []
+                        report=rep, floor=walk_floor) or []
+        # The songs carried past the line are a tail: bans, dedup, variety and flow run
+        # over the fitting songs alone, and the tail is appended, best first, only when
+        # fewer than the floor survive. So a carried song never displaces a fitting one.
+        picks, carried = _split_carried(rep, picks)
         picks = _drop_banned(picks, ban_i, ban_art)
+        seen = {_dupkey(seed, field)} if field else None
         if field:
-            seen, uniq = {_dupkey(seed, field)}, []
+            uniq = []
             for p in picks:
                 k = _dupkey(p, field)
                 if k in seen:
@@ -799,11 +839,24 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             picks = picks[:size]
         if flow:
             picks = eng.order_by_flow(picks)
+        if floor and len(picks) < floor and carried:
+            tail = []
+            for p in _drop_banned(carried, ban_i, ban_art):
+                if field:
+                    k = _dupkey(p, field)
+                    if k in seen:
+                        continue
+                    seen.add(k)
+                tail.append(p)
+                if len(picks) + len(tail) >= floor:
+                    break
+            picks = picks + tail
         # The walk's "weakest kept" is the last song IT took; dedup, bans and the
         # near-twin re-pick above can drop that song, so the boundary the listener
         # gets is recomputed over the songs actually delivered (both auditors, round
         # one, 2026-09-30). `walked` is how many fitting songs the walk looked at.
         if report is not None and report.get("fit"):
+            _past_delivered(report, picks)
             report["walked"] = len(report["fit"])
             kept = [(eng.idx[p], report["fit"][eng.idx[p]]) for p in picks
                     if eng.idx.get(p) in report["fit"]]
@@ -1093,6 +1146,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         try:
             mask, cinfo = _collection_arg()
             min_fit = _fit_arg()
+            floor = _floor_arg(None, n, min_fit)
         except ValueError as e:
             return jsonify(error=str(e)), 400
         report = {}
@@ -1100,8 +1154,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         try:
             refs = _with_weights(overrides, lambda: active.radio_next(
                 i, n=n, exclude=exclude, variety=variety, arc=arc, pos=pos, rng=rng,
-                allowed=mask, min_fit=min_fit, report=report,
-                floor=_floor_arg(None, n, min_fit)))
+                allowed=mask, min_fit=min_fit, report=report, floor=floor))
         except AttributeError:
             return jsonify(error=f"radio not supported by the '{active.name}' engine"), 501
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
@@ -1342,13 +1395,19 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             # Over-fetch when bans are active so a removal is BACKFILLED rather than
             # leaving the mix short (same rule as _banned_headroom on the /api/mix path).
             want = _banned_headroom(size, ban_i, ban_art)
+            floor = _floor_arg(data, size, min_fit)
             picks = eng.mix_from_vector(
                 q, size=want, exclude=[i] + blend_seeds + liked + disliked + sorted(ban_i),
                 allowed=mask, min_fit=min_fit, report=report,
-                floor=_floor_arg(data, size, min_fit))
+                floor=_scale_floor(floor, size, want))
+            # carried songs are a tail, as in _build_mix
+            picks, carried = _split_carried(report, picks)
             picks = _drop_banned(picks, ban_i, ban_art)[:size]
+            if floor and len(picks) < floor and carried:
+                picks = picks + _drop_banned(carried, ban_i, ban_art)[:floor - len(picks)]
             if report.get("fit"):        # boundary over the songs delivered, as in _build_mix
                 report["walked"] = len(report["fit"])
+                _past_delivered(report, picks)
                 kept = [(eng.idx[p], report["fit"][eng.idx[p]]) for p in picks]
                 report["weakest_kept"] = min(kept, key=lambda t: t[1]) if kept else None
         except ValueError as e:

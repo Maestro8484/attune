@@ -903,10 +903,30 @@ class HybridEngine:
         """
         out, recent = [], []
         past = []                   # songs taken past the line so the list is not empty
+        passed = []                 # fitting songs the coins passed over, in order
+        coin_taken = 0              # of those, how many the floor took back
+        last_k = None               # where in `order` the last song taken sat
+
+        def _take(j, fit, is_past):
+            a = self.artist[j]
+            if a and a in recent[-artist_spacing:]:
+                return False
+            rec = self.recording[j]
+            if rec and rec in recs:
+                return False
+            if rec:
+                recs.add(rec)
+            out.append(self.paths[j]); recent.append(a)
+            if fit is not None:
+                fit_of[j] = fit
+                if is_past:
+                    past.append((j, fit))
+            return True
         # one recording once: the seed, anything excluded, and every pick block their own
         # recording id (only libraries with a catalog_ids table have any)
         recs = {self.recording[j] for j in excl if 0 <= int(j) < len(self.recording)} - {None}
         fit_of = {}
+        fit_of_passed = {}
         stopped = "exhausted"
         strongest_left = None
         coin_skipped = 0            # songs that fit but radio's coins passed over
@@ -919,40 +939,51 @@ class HybridEngine:
             if allowed is not None and not allowed[j]:
                 continue
             below = False
-            if min_fit is not None:
-                fit = float(scores[j]) / ceiling
-                if fit < min_fit:
-                    if stopped != "fit":        # the first song below the line
-                        strongest_left = (j, fit)
-                        stopped = "fit"
-                        pos = k
-                    if floor is None or len(out) >= floor:
-                        break
-                    below = True                # the floor: keep going, best first
+            fit = float(scores[j]) / ceiling if min_fit is not None else None
+            if min_fit is not None and fit < min_fit:
+                if stopped != "fit":            # the first song below the line
+                    strongest_left = (j, fit)
+                    stopped = "fit"
+                    pos = k
+                    # The floor, part one: fitting songs the coins passed over come back
+                    # first, best first, before any song below the line is taken.
+                    if floor is not None and len(out) < floor:
+                        for pj in passed:
+                            if _take(pj, fit_of_passed[pj], False):
+                                coin_taken += 1
+                                if len(out) >= floor:
+                                    break
+                if floor is None or len(out) >= floor:
+                    break
+                below = True                    # the floor, part two: keep going, best first
             if not below and coin is not None and not coin(j, len(out)):
                 coin_skipped += 1
-                if coin_left is None and min_fit is not None:
-                    coin_left = (j, float(scores[j]) / ceiling)   # best song the coins passed over
+                passed.append(j)
+                if min_fit is not None:
+                    fit_of_passed[j] = fit
+                    if coin_left is None:
+                        coin_left = (j, fit)    # best song the coins passed over
                 continue
-            a = self.artist[j]
-            if a and a in recent[-artist_spacing:]:
+            if not _take(j, fit, below):
                 continue
-            rec = self.recording[j]
-            if rec and rec in recs:
-                continue
-            if rec:
-                recs.add(rec)
-            out.append(self.paths[j]); recent.append(a)
-            if min_fit is not None:
-                fit_of[j] = float(scores[j]) / ceiling
-                if below:
-                    past.append((j, fit_of[j]))
+            last_k = k
+            if below and len(out) >= floor:
+                break                           # the floor is met; the line ended the walk
             if len(out) >= size:
                 stopped = "size"
                 pos = k
                 break
-            if below and len(out) >= floor:
-                break                           # the floor is met; the line had already ended the walk
+        if past:
+            # The best song the line kept out is the next one the walk could have taken
+            # after the floor was met, not the first below-line song (that one is on
+            # the list now).
+            strongest_left = None
+            for j in order[(last_k + 1 if last_k is not None else 0):]:
+                j = int(j)
+                if j in excl or (allowed is not None and not allowed[j]):
+                    continue
+                strongest_left = (j, float(scores[j]) / ceiling)
+                break
         if report is not None:
             # A full list left out its next-best song for COUNT, not for the line; name
             # it too, so a reader can see what the 51st would have been. Found by
@@ -983,6 +1014,7 @@ class HybridEngine:
                 "fit": fit_of,
                 "past_line": past,
                 "floor": floor,
+                "coin_taken": coin_taken,
             })
         return out
 

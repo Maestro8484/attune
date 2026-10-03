@@ -199,7 +199,7 @@ const Player = (() => {
         // the dials, plus the collection and the fit line (2026-09-30): radio queues
         // only from the chosen collection and only songs that fit, and ends when
         // nothing else does
-        for (const k of ['clap', 'lib', 'genre', 'bpm', 'era', 'collection', 'max', 'min_fit']) {
+        for (const k of ['clap', 'lib', 'genre', 'bpm', 'era', 'collection', 'max', 'min_fit', 'floor']) {
           if (mp.has(k)) p.set(k, mp.get(k));
         }
       }

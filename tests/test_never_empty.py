@@ -147,6 +147,76 @@ def test_radio_keeps_playing_past_the_line(client):
     assert len(j["tracks"]) == 10 and j["stop"]["reason"] == "floor"
 
 
+# ------------------------------------------------------------------ the cold read of 2026-10-02
+
+def test_bans_do_not_eat_the_floor(client):
+    base = client.get(f"/api/mix?i={LONER}&size=50&max=1&min_fit=0.7").get_json()
+    ban = "&".join(f"ban={i}" for i in _ids(base)[:5])
+    j = client.get(f"/api/mix?i={LONER}&size=50&max=1&min_fit=0.7&{ban}").get_json()
+    assert len(j["tracks"]) == 25
+    # the sentence and the marks describe the list delivered, not the walk's take
+    assert {p["i"] for p in j["stop"]["past_line"]} == set(_ids(j))
+    assert "25 more past it" in j["stop"]["sentence"]
+
+
+def test_dedup_does_not_eat_the_floor(client):
+    j = client.get(f"/api/mix?i={LONER}&size=50&max=1&min_fit=0.7&dedup=title").get_json()
+    assert len(j["tracks"]) == 25
+    assert {p["i"] for p in j["stop"]["past_line"]} == set(_ids(j))
+
+
+def test_steering_with_bans_keeps_the_floor(client):
+    base = client.post("/api/refine", json={"i": LONER, "size": 50, "disliked": [],
+                                            "max": "1", "min_fit": "0.7"}).get_json()
+    bans = _ids(base)[:5]
+    j = client.post("/api/refine", json={"i": LONER, "size": 50, "ban": bans,
+                                         "max": "1", "min_fit": "0.7"}).get_json()
+    assert len(j["tracks"]) == 25 and not set(bans) & set(_ids(j))
+    assert {p["i"] for p in j["stop"]["past_line"]} == set(_ids(j))
+
+
+def test_radio_floor_takes_passed_over_fitting_songs_first(client):
+    """Seed 0 has 14 group-mates that fit at 0.7. With the variety coin passing most of
+    them over, the floor (10 of 20) is met by taking those back, never by a song below
+    the line; so no batch carries a past-line song, and none is short of the floor."""
+    saw_thinned = False
+    for r in range(30):
+        j = client.get(f"/api/radio/next?seed=0&n=20&variety=9&rng={r}&max=1&min_fit=0.7").get_json()
+        st = j["stop"]
+        assert len(j["tracks"]) >= 10, (r, st)
+        assert st["past_line"] == [], (r, st)
+        if st["passed_over"]:
+            saw_thinned = True
+            assert "passed over" in st["sentence"]
+    assert saw_thinned
+
+
+def test_radio_floor_carries_past_the_line_only_after_the_passed_over(client):
+    # the loner has nothing that fits, so its floor is all carried songs, and the
+    # sentence says so
+    j = client.get(f"/api/radio/next?seed={LONER}&n=20&variety=9&rng=3&max=1&min_fit=0.7").get_json()
+    assert len(j["tracks"]) == 10 and j["stop"]["reason"] == "floor"
+    assert len(j["stop"]["past_line"]) == 10
+
+
+def test_a_bad_floor_on_radio_is_a_400(client):
+    r = client.get(f"/api/radio/next?seed=0&n=20&max=1&min_fit=0.7&floor=nan")
+    assert r.status_code == 400
+
+
+def test_strongest_left_is_not_on_the_list_when_the_floor_carried(client):
+    j = client.get(f"/api/mix?i={LONER}&size=50&max=1&min_fit=0.7").get_json()
+    sl = j["stop"]["strongest_left"]
+    assert sl is None or sl["i"] not in _ids(j)
+
+
+def test_a_floor_of_the_whole_count_still_says_fit(eng):
+    rep = {}
+    picks = eng.mix(eng.paths[LONER], size=10, min_fit=0.7, report=rep, floor=10)
+    assert len(picks) == 10 and rep["stopped"] == "fit"
+    assert rep["strongest_left"] is not None and rep["strongest_left"][0] not in [eng.idx[p] for p in picks]
+
+
 def test_an_adventure_still_drops_a_stop_with_nothing_near(client):
     # the loner's end of the path has no song near it; the floor is not applied per stop
     j = client.get(f"/api/mix/adventure?a=0&b={LONER}&size=12&max=1&min_fit=0.9").get_json()
