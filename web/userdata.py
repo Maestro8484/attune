@@ -211,17 +211,22 @@ class UserData:
                 for i, path in enumerate(self.paths):
                     if job["cancelled"]:
                         break
-                    stars = tagfile.read_rating(path) if os.path.exists(path) else None
-                    if stars is None:
+                    try:
+                        stars = tagfile.read_rating(path) if os.path.exists(path) else None
+                        if stars is None:
+                            job["unreadable"] += 1
+                        elif stars > 0:
+                            job["with_rating"] += 1
+                            if stars != int(self.lib.rating[i] or 0):
+                                # the file already holds it; Plex is told below, in this
+                                # thread, one at a time, never a thread per song
+                                self.set_rating(i, stars, to_file=False, to_plex=False)
+                                changed.append((path, stars))
+                                job["changed"] += 1
+                    except Exception as e:           # one bad file never ends the pass
                         job["unreadable"] += 1
-                    elif stars > 0:
-                        job["with_rating"] += 1
-                        if stars != int(self.lib.rating[i] or 0):
-                            # the file already holds it; Plex is told below, in this
-                            # thread, one at a time, never a thread per song
-                            self.set_rating(i, stars, to_file=False, to_plex=False)
-                            changed.append((path, stars))
-                            job["changed"] += 1
+                        if job["unreadable"] <= 3:
+                            log.warning("ratings import skipped %s: %s", os.path.basename(path), e)
                     job["done"] = i + 1
                 if self.plex_rate is not None and not job["cancelled"]:
                     for path, stars in changed:

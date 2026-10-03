@@ -380,9 +380,12 @@ def write(path, new_fields):
 
 
 def read_rating(path):
+    """The file's own stars, or None when the file cannot be read at all (missing,
+    damaged, a format with no tags). A damaged MP3 raises mutagen's own error, not
+    ValueError, which ended a whole library pass at 10,830 of 21,118 on 2026-10-02."""
     try:
         f, kind = _open(path)
-    except ValueError:
+    except Exception:
         return None
     if kind == "other":
         return None

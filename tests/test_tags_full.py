@@ -182,6 +182,13 @@ def test_a_cover_is_written_read_and_removed(files, fmt):
     assert tagfile.read_cover(p) is None
 
 
+def test_a_damaged_file_reads_as_no_rating(tmp_path):
+    p = tmp_path / "broken.mp3"
+    p.write_bytes(b"ID3\x03\x00\x00\x00\x00\x00\x0a" + b"\x00" * 10 + b"not audio at all" * 50)
+    assert tagfile.read_rating(str(p)) is None
+    assert tagfile.read_rating(str(tmp_path / "missing.mp3")) is None
+
+
 # ------------------------------------------------------------------ through the server
 
 @pytest.fixture(scope="module")
