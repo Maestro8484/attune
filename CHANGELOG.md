@@ -3,6 +3,25 @@
 All notable changes to Attune are documented here.
 Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Fixed (2026-10-02, a mix is never empty)
+
+- **One Less Like This can no longer empty a mix.** A Blend of three songs, then Less Like
+  This on a fourth, came back with no songs at all. A disliked song was pushed away with the
+  same force a liked song pulls (0.75), which moved the mix's target to a sound no song in
+  the library came close to; the textbook weights for this kind of feedback make the push
+  a fifth of the pull (0.15), and that is what Attune uses now. On a 21,000-song library
+  the same vote now keeps 71 of the Blend's 100 songs instead of 8, and the sound-alike
+  line still finds 100 that fit.
+- **A mix keeps at least half the count asked for, even when songs stop fitting.** With
+  "Stop when songs stop fitting" on, the walk now carries on past the line until it has
+  that share, best first, and marks those songs in the list (dimmed, with a tilde) so you
+  can see where the line fell. The share is a box under the two lines in Mix options, "But
+  never fewer than ... % of the count"; 0 brings back the old behaviour, which stopped dead
+  at the line with a reason. Radio keeps playing the same way. An Adventure still leaves
+  out a stop that has no song near the path.
+
 ## [0.2.0] - 2026-10-02
 
 ### Fixed (2026-10-02)

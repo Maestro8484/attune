@@ -159,6 +159,27 @@ FIT_LINE_SOUND = 0.54          # the sound profile
 FIT_LINE_V2_TRAINED = 0.50     # the V2 recipe on trained-weight fingerprints
 CLAP_LINE_TRAINED = 0.79       # the CLAP-only walks on trained-weight fingerprints
 
+# The floor under the line (2026-10-02, Joe: "the recipe shall always produce results").
+# With a line on, a walk still takes at least this share of the count asked for, best
+# first, and reports which of them sit past the line, so the window can mark them instead
+# of showing nothing. The line still decides where "fits" ends; the floor decides that a
+# mix is never empty. A caller that wants the old behaviour (an Adventure judging each
+# stop on its own) passes no floor. Not a tuned value: one half, so that "count as a
+# maximum" still means something and the list is never shorter than half of it.
+FLOOR_SHARE = 0.5
+
+# Relevance feedback weights (refine, adventure). Rocchio's textbook values: Manning,
+# Raghavan and Schutze, Introduction to Information Retrieval, section 9.1.1, "Reasonable
+# values might be alpha = 1, beta = 0.75, and gamma = 0.15", and "positive feedback also
+# turns out to be much more valuable than negative feedback, and so most IR systems set
+# gamma < beta". Until 2026-10-02 a dislike was subtracted at beta, five times the
+# textbook gamma: on the reference library one Less Like This on a three-song Blend moved
+# the query to where no song came within the sound-alike line, and kept 8 of the Blend's
+# 100 songs even with the line off (ISSUES.md row 95, audit-sonic/harness/never_empty.py).
+# At gamma the same vote keeps 71 of the 100 and the line still has 100 to take.
+ROCCHIO_BETA = 0.75            # a liked song's pull
+ROCCHIO_GAMMA = 0.15           # a disliked song's push
+
 # Krumhansl-Schmuckler key profiles (major / minor) for key estimation from chroma.
 _KRUM_MAJ = np.array([6.35,2.23,3.48,2.33,4.38,4.09,2.52,5.19,2.39,3.66,2.29,2.88])
 _KRUM_MIN = np.array([6.33,2.68,3.52,5.38,2.60,3.53,2.54,4.75,3.98,2.69,3.34,3.17])
@@ -841,7 +862,7 @@ class HybridEngine:
         return hits[0] if len(hits) == 1 else None
 
     def _walk(self, order, scores, size, artist_spacing, excl, allowed=None, min_fit=None,
-              ceiling=1.0, report=None, coin=None):
+              ceiling=1.0, report=None, coin=None, floor=None):
         """The one best-first walk every list in this engine is built by.
 
         `order` is pool indices best-first, `scores` the number each was ranked by.
@@ -852,6 +873,13 @@ class HybridEngine:
         everything after it is below the line too. That is what makes the count a
         maximum instead of a quota. Without `min_fit` the walk is exactly the loop
         mix() has always run, and the byte-identical regression gate holds it there.
+
+        `floor` (2026-10-02): with a line, the walk still takes at least this many songs,
+        best first, past the line if it must, so a list is never empty while the pool has
+        songs. The line still says where "fits" ends: every song taken past it is listed
+        in the report under `past_line`, for the window to mark. `stopped` stays 'fit',
+        because the line was met; the floor only decided how far past it to go. The
+        coins do not run past the line: there the walk simply takes the next best.
 
         `coin(j)`, when given, is radio's variety and energy-corridor thinning: it says
         whether to keep candidate j, and runs AFTER the line check so the coins only
@@ -870,8 +898,11 @@ class HybridEngine:
           weakest_kept:   (pool index, fit) of the last song taken
           strongest_left: (pool index, fit) of the best song the line kept out
           fit:            {pool index: fit} for every song taken
+          past_line:      [(pool index, fit)] taken past the line to keep the floor
+          floor:          the floor the walk was given, or None
         """
         out, recent = [], []
+        past = []                   # songs taken past the line so the list is not empty
         # one recording once: the seed, anything excluded, and every pick block their own
         # recording id (only libraries with a catalog_ids table have any)
         recs = {self.recording[j] for j in excl if 0 <= int(j) < len(self.recording)} - {None}
@@ -887,14 +918,18 @@ class HybridEngine:
                 continue
             if allowed is not None and not allowed[j]:
                 continue
+            below = False
             if min_fit is not None:
                 fit = float(scores[j]) / ceiling
                 if fit < min_fit:
-                    strongest_left = (j, fit)
-                    stopped = "fit"
-                    pos = k
-                    break
-            if coin is not None and not coin(j, len(out)):
+                    if stopped != "fit":        # the first song below the line
+                        strongest_left = (j, fit)
+                        stopped = "fit"
+                        pos = k
+                    if floor is None or len(out) >= floor:
+                        break
+                    below = True                # the floor: keep going, best first
+            if not below and coin is not None and not coin(j, len(out)):
                 coin_skipped += 1
                 if coin_left is None and min_fit is not None:
                     coin_left = (j, float(scores[j]) / ceiling)   # best song the coins passed over
@@ -910,10 +945,14 @@ class HybridEngine:
             out.append(self.paths[j]); recent.append(a)
             if min_fit is not None:
                 fit_of[j] = float(scores[j]) / ceiling
+                if below:
+                    past.append((j, fit_of[j]))
             if len(out) >= size:
                 stopped = "size"
                 pos = k
                 break
+            if below and len(out) >= floor:
+                break                           # the floor is met; the line had already ended the walk
         if report is not None:
             # A full list left out its next-best song for COUNT, not for the line; name
             # it too, so a reader can see what the 51st would have been. Found by
@@ -942,13 +981,17 @@ class HybridEngine:
                 "coin_skipped": coin_skipped,
                 "coin_left": coin_left,
                 "fit": fit_of,
+                "past_line": past,
+                "floor": floor,
             })
         return out
 
-    def mix(self, seed, size=25, artist_spacing=3, allowed=None, min_fit=None, report=None):
+    def mix(self, seed, size=25, artist_spacing=3, allowed=None, min_fit=None, report=None,
+            floor=None):
         """Best-first playlist for one seed. See _walk() for `allowed` (a collection
-        mask), `min_fit` (the count becomes a maximum) and `report` (why it stopped).
-        With neither, this is the walk that has shipped since V2, unchanged."""
+        mask), `min_fit` (the count becomes a maximum), `floor` (but never fewer than
+        this many) and `report` (why it stopped). With none of them, this is the walk
+        that has shipped since V2, unchanged."""
         canon = self.resolve(seed)
         if canon is None:
             return None
@@ -959,10 +1002,11 @@ class HybridEngine:
         # active weights, so fit = score / that is 1.0 for a perfect twin.
         ceiling = float(s[si]) if min_fit is not None and s[si] > 1e-9 else 1.0
         return self._walk(order, s, size, artist_spacing, {si}, allowed=allowed,
-                          min_fit=min_fit, ceiling=ceiling, report=report)
+                          min_fit=min_fit, ceiling=ceiling, report=report, floor=floor)
 
     def radio_next(self, seed, n=20, exclude=None, variety=0.0, artist_spacing=3,
-                   arc="flat", pos=0, rng=None, allowed=None, min_fit=None, report=None):
+                   arc="flat", pos=0, rng=None, allowed=None, min_fit=None, report=None,
+                   floor=None):
         """Journey/Radio mode: one batch of the next `n` tracks for an infinite queue,
         stateless (caller tracks `exclude` + `pos` across calls).
 
@@ -1048,7 +1092,8 @@ class HybridEngine:
 
         ceiling = float(s[si]) if min_fit is not None and s[si] > 1e-9 else 1.0
         return self._walk(order, s, n, artist_spacing, excl, allowed=allowed,
-                          min_fit=min_fit, ceiling=ceiling, report=report, coin=coin)
+                          min_fit=min_fit, ceiling=ceiling, report=report, coin=coin,
+                          floor=floor)
 
     # ------------------------------------------------------------------
     # Relevance-feedback / re-ranking helpers (additive; V2's mix()/_score()
@@ -1076,7 +1121,7 @@ class HybridEngine:
         return v / n if n > 1e-9 else v
 
     def mix_from_vector(self, q, size=25, artist_spacing=3, exclude=None, allowed=None,
-                        min_fit=None, report=None):
+                        min_fit=None, report=None, floor=None):
         """Rank the pool by cosine similarity to an arbitrary CLAP-space query vector
         `q` (e.g. a Rocchio-refined vector from refine()), instead of a library seed.
         Same top-K + artist-spacing behaviour as mix(). `exclude` is an optional
@@ -1094,16 +1139,19 @@ class HybridEngine:
             if ei is not None:
                 excl.add(ei)
         return self._walk(order, s, size, artist_spacing, excl, allowed=allowed,
-                          min_fit=min_fit, ceiling=1.0, report=report)
+                          min_fit=min_fit, ceiling=1.0, report=report, floor=floor)
 
-    def refine(self, seed_or_vec, liked_idx=None, disliked_idx=None, alpha=1.0, beta=0.75):
-        """Rocchio relevance feedback: q' = alpha*q0 + beta*mean(liked) - beta*mean(disliked),
+    def refine(self, seed_or_vec, liked_idx=None, disliked_idx=None, alpha=1.0,
+               beta=ROCCHIO_BETA, gamma=ROCCHIO_GAMMA):
+        """Rocchio relevance feedback: q' = alpha*q0 + beta*mean(liked) - gamma*mean(disliked),
         re-normalized to unit length (all CLAP rows in self.X are already unit vectors, so
         this keeps q' comparable to them via plain dot product / mix_from_vector()).
 
         seed_or_vec: a library path/index (used as-is, i.e. its raw CLAP row) or an
         already-CLAP-space vector to start from.
         liked_idx / disliked_idx: iterables of paths or pool indices (thumbs-up/down).
+        beta / gamma: the pull of a liked song and the push of a disliked one; the
+        textbook values at ROCCHIO_BETA / ROCCHIO_GAMMA, and why gamma is the smaller.
         """
         if isinstance(seed_or_vec, (str, int, np.integer)):
             i0 = self._as_index(seed_or_vec)
@@ -1122,11 +1170,11 @@ class HybridEngine:
         if liked:
             q = q + beta * self.X[liked].mean(axis=0)
         if disliked:
-            q = q - beta * self.X[disliked].mean(axis=0)
+            q = q - gamma * self.X[disliked].mean(axis=0)
         return self._unit(q)
 
     def mix_multi(self, seeds, size=25, artist_spacing=3, allowed=None, min_fit=None,
-                  report=None):
+                  report=None, floor=None):
         """Blend mix: rank the pool against the unit-mean of 2+ seeds' CLAP rows --
         refine()'s liked-centroid math with no starting seed -- via the same
         mix_from_vector() walk. Returns (paths, cohesion). `cohesion` is the seeds'
@@ -1149,12 +1197,13 @@ class HybridEngine:
         cohesion = float((sims.sum() - np.trace(sims)) / (n * (n - 1)))
         picks = self.mix_from_vector(V.mean(axis=0), size=size,
                                      artist_spacing=artist_spacing, exclude=idxs,
-                                     allowed=allowed, min_fit=min_fit, report=report)
+                                     allowed=allowed, min_fit=min_fit, report=report,
+                                     floor=floor)
         return picks, cohesion
 
     def adventure(self, a, b, size=25, artist_spacing=3, allowed=None, min_fit=None,
                   report=None, liked=None, disliked=None, keep=None, exclude=None,
-                  beta=0.75):
+                  beta=ROCCHIO_BETA, gamma=ROCCHIO_GAMMA):
         """Ordered path FROM a TO b: normalized-lerp waypoints along the CLAP-space
         segment between the two seeds, each snapped to the nearest not-yet-used
         track (mix_from_vector over a shortlist). Returns the full ordered path
@@ -1176,7 +1225,7 @@ class HybridEngine:
         walk is exactly the one above.
           liked / disliked: pool indices whose CLAP rows bend every waypoint, by the same
             Rocchio step refine() takes: wp' = unit(wp) + beta*mean(liked)
-            - beta*mean(disliked). The ends stay where they are.
+            - gamma*mean(disliked). The ends stay where they are.
           keep: pool indices that must be on the path (songs voted "more like this").
             Each sits right after the stop whose waypoint it is closest to.
           exclude: pool indices never picked (removed songs, blocked artists' songs,
@@ -1199,7 +1248,7 @@ class HybridEngine:
             if lk:
                 steer = steer + beta * self.X[lk].astype(np.float64).mean(axis=0)
             if dk:
-                steer = steer - beta * self.X[dk].astype(np.float64).mean(axis=0)
+                steer = steer - gamma * self.X[dk].astype(np.float64).mean(axis=0)
         used, middle = [ia, ib] + keep, []
         for x in (exclude or []):
             xi = self._as_index(x)

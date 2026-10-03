@@ -118,7 +118,7 @@ class V2Engine(Engine):
         return out
 
     def similar(self, seed_ref, size=25, artist_spacing=3, allowed=None, min_fit=None,
-                report=None, **_ignored):
+                report=None, floor=None, **_ignored):
         """`allowed` (a boolean mask over the pool: a collection), `min_fit` (the count
         becomes a maximum) and `report` (why the walk stopped) go straight through to
         hybrid.HybridEngine.mix(); see its _walk() for what each means."""
@@ -126,21 +126,23 @@ class V2Engine(Engine):
         if not (0 <= i < len(self.eng.paths)):
             return []
         picks = self.eng.mix(self.eng.paths[i], size=size, artist_spacing=artist_spacing,
-                             allowed=allowed, min_fit=min_fit, report=report)
+                             allowed=allowed, min_fit=min_fit, report=report, floor=floor)
         if not picks:
             return []
         return [self._ref(self.eng.idx[p]) for p in picks]
 
     # ---- thin pass-throughs for the V2-only capabilities (no logic duplicated) ----
 
-    def refine(self, seed_ref, liked=(), disliked=(), size=25, alpha=1.0, beta=0.75,
-               allowed=None, min_fit=None, report=None):
+    def refine(self, seed_ref, liked=(), disliked=(), size=25, alpha=1.0, beta=None,
+               allowed=None, min_fit=None, report=None, floor=None):
         i = _as_pool_i(seed_ref)
         liked_i = [_as_pool_i(x) for x in liked]
         disliked_i = [_as_pool_i(x) for x in disliked]
-        q = self.eng.refine(i, liked_idx=liked_i, disliked_idx=disliked_i, alpha=alpha, beta=beta)
+        kw = {} if beta is None else {"beta": beta}
+        q = self.eng.refine(i, liked_idx=liked_i, disliked_idx=disliked_i, alpha=alpha, **kw)
         picks = self.eng.mix_from_vector(q, size=size, exclude=[i] + liked_i + disliked_i,
-                                         allowed=allowed, min_fit=min_fit, report=report)
+                                         allowed=allowed, min_fit=min_fit, report=report,
+                                         floor=floor)
         return [self._ref(self.eng.idx[p]) for p in picks]
 
     def mmr(self, candidate_refs, k=None, lambda_=0.5, query_ref=None):
@@ -161,22 +163,25 @@ class V2Engine(Engine):
         self.eng.w.update(weights)
 
     def radio_next(self, seed_ref, n=20, exclude=(), variety=0.0, artist_spacing=3,
-                    arc="flat", pos=0, rng=None, allowed=None, min_fit=None, report=None):
+                    arc="flat", pos=0, rng=None, allowed=None, min_fit=None, report=None,
+                    floor=None):
         i = _as_pool_i(seed_ref)
         excl_i = [_as_pool_i(x) for x in exclude]
         picks = self.eng.radio_next(self.eng.paths[i], n=n, exclude=excl_i, variety=variety,
                                     artist_spacing=artist_spacing, arc=arc, pos=pos, rng=rng,
-                                    allowed=allowed, min_fit=min_fit, report=report)
+                                    allowed=allowed, min_fit=min_fit, report=report,
+                                    floor=floor)
         if not picks:
             return []
         return [self._ref(self.eng.idx[p]) for p in picks]
 
     def mix_multi(self, seed_refs, size=25, artist_spacing=3, allowed=None, min_fit=None,
-                  report=None):
+                  report=None, floor=None):
         idxs = [_as_pool_i(r) for r in seed_refs]
         picks, cohesion = self.eng.mix_multi(idxs, size=size,
                                              artist_spacing=artist_spacing,
-                                             allowed=allowed, min_fit=min_fit, report=report)
+                                             allowed=allowed, min_fit=min_fit, report=report,
+                                             floor=floor)
         if picks is None:
             return None, None
         return [self._ref(self.eng.idx[p]) for p in picks], cohesion

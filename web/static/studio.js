@@ -233,6 +233,11 @@ function fitParams(clapOnly) {
     const raw = clapOnly ? $('clapLine').value : $('fitLine').value;
     const v = parseFloat(raw);
     if (!Number.isNaN(v)) out.min_fit = String(Math.min(1, Math.max(0, v)));
+    // the floor under the line: the share of the count a list keeps even past the
+    // line, so it is never empty (2026-10-02). Sent as 0..1; the box shows a percent.
+    const fe = $('fitFloor');
+    const f = fe ? parseFloat(fe.value) : NaN;
+    if (!Number.isNaN(f)) out.floor = String(Math.min(1, Math.max(0, f / 100)));
   }
   return out;
 }
@@ -596,9 +601,11 @@ async function initCollections() {
   // hidden there and only the collection choice stays
   $('fitMax').checked = store.get('fitMax', true) !== false;
   applyFitDefaults(false);
-  for (const id of ['fitMax', 'fitLine', 'clapLine']) {
+  for (const id of ['fitMax', 'fitLine', 'clapLine', 'fitFloor']) {
     $(id).closest('label').hidden = !!isMip;
   }
+  const ff = store.get('fitFloor', null);
+  if (ff != null) $('fitFloor').value = ff;
   await loadCollections();
   $('collSel').addEventListener('change', () => selectCollection($('collSel').value));
   $('btnCollSave').onclick = saveCollectionFromScreen;
@@ -610,6 +617,7 @@ async function initCollections() {
   };
   $('fitLine').addEventListener('change', typed('fitLine'));
   $('clapLine').addEventListener('change', typed('clapLine'));
+  $('fitFloor').addEventListener('change', () => store.set('fitFloor', $('fitFloor').value));
   $('fromPill').onclick = () => $('btnOptions').click();
   $('collList').addEventListener('click', e => {
     const use = e.target.closest('.cuse');
@@ -895,6 +903,8 @@ function rowsHtml(rows, opts = {}) {
     if (S.view === 'mix' && !seedRow && S.liked.includes(r.i)) cls.push('pinned');
     if (r.missing) cls.push('missing');
     if (r.unmixable) cls.push('unmixable');
+    // songs the walk took past the fit line to keep the mix from being empty
+    if (S.view === 'mix' && S.stop && S.stop.past_line && S.stop.past_line.some(p => p.i === r.i)) cls.push('pastline');
     const tune = S.view === 'mix' && S.stats.engine === 'v2' &&
                  r.i >= 0 && !seedRow;
     const tds = cols.map(c => {
@@ -1575,7 +1585,7 @@ async function mixFrom(seedI, opts) {
    full sentence stays on the mix header (#mixStop) for as long as the mix is open. */
 function noteStop(stop) {
   if (!stop || !stop.sentence) return;
-  if (['fit', 'none_fit', 'empty', 'exhausted', 'trimmed'].includes(stop.reason)) {
+  if (['fit', 'floor', 'none_fit', 'empty', 'exhausted', 'trimmed'].includes(stop.reason)) {
     toast(stop.sentence, stop.reason === 'none_fit' || stop.reason === 'empty');
   }
 }
@@ -1749,7 +1759,7 @@ async function showMix(opts = {}) {
     ? S.stop.sentence + (extra > 0 && S.stop.reason !== 'quota' ? ` Plus the ${extra === 1 ? 'seed' : extra + ' seeds'}, ${S.mix.length} on screen.` : '')
     : '';
   stopEl.hidden = !stopEl.textContent;
-  stopEl.classList.toggle('short', !!(S.stop && ['fit', 'none_fit', 'empty', 'exhausted'].includes(S.stop.reason)));
+  stopEl.classList.toggle('short', !!(S.stop && ['fit', 'floor', 'none_fit', 'empty', 'exhausted'].includes(S.stop.reason)));
   if (!S.mix.length) {
     renderRows([]);
     $('viewSub').textContent = '0 tracks';      // the sentence is on #mixStop beside it

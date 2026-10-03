@@ -20,6 +20,7 @@ analyze/embed) — newly-added tracks only appear after a restart.
 import argparse
 import functools
 import importlib.util
+import math
 import mimetypes
 import os
 import re
@@ -586,6 +587,24 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             raise ValueError("min_fit must be a number between 0 and 1")
         return max(0.0, min(1.0, v))
 
+    def _floor_arg(source, size, min_fit):
+        """How many songs a walk with a line still takes, past the line if it must, so
+        a list is never empty (2026-10-02, TODO.md row 51). `floor=<0..1>` is the share
+        of the count asked for; absent, hybrid.FLOOR_SHARE. None without a line: a
+        quota walk has no floor to keep. floor=0 switches it off, which is the
+        behaviour before 2026-10-02 (none with a reason)."""
+        if min_fit is None:
+            return None
+        src = source if source is not None else request.args
+        raw = src.get("floor")
+        share = hybrid.FLOOR_SHARE if raw in (None, "") else float(raw)
+        if share != share or share in (float("inf"), float("-inf")):
+            raise ValueError("floor must be a number between 0 and 1")
+        share = max(0.0, min(1.0, share))
+        if share <= 0:
+            return None
+        return max(1, int(math.ceil(size * share)))
+
     def _seed_outside(mask, *seeds):
         """The first seed index that is not in the collection, or None. A seed becomes
         row one of the playlist, so a seed from outside the collection would put a
@@ -652,6 +671,22 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 out["sentence"] = (f"All {requested} stops, from {where}"
                                    + (f"; the farthest stop kept sits at {wk['fit']:.3f}, line {min_fit:.2f} (provisional)." if wk else "."))
             return out
+        # The floor (2026-10-02): songs taken past the line so the list is never empty.
+        # Listed by index for the window to mark; the sentence says how many fit and
+        # how many were carried past the line.
+        past = report.get("past_line") or []
+        out["past_line"] = [{"i": int(j), "fit": round(float(f), 3)} for j, f in past]
+        out["floor"] = report.get("floor")
+        out["passed_over"] = report.get("coin_skipped") or 0
+        if past:
+            first = _song(past[0])
+            fit_n = max(0, returned - len(past))
+            out["reason"] = "floor"
+            out["sentence"] = (f"{fit_n} of {requested} fit the line of {min_fit:.2f} in {where}; "
+                               f"{len(past)} more past it keep the mix going, marked in the list"
+                               + (f" (the first, {first['label']}, at {first['fit']:.3f})" if first else "")
+                               + ".")
+            return out
         # The walk over-fetches for dedup, bans and the near-twin re-pick, so it can
         # meet the line AFTER it already had enough: that is a full list, not a short
         # one, and is judged first.
@@ -711,7 +746,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         return out
 
     def _build_mix(i, size, field=None, variety=False, flow=False, bans=None,
-                   mask=None, min_fit=None, report=None):
+                   mask=None, min_fit=None, report=None, floor=None):
         """Return (seed_path, picks). With a dedup field, over-fetch then collapse
         same-key tracks (and any that duplicate the seed), so you still get `size`.
 
@@ -747,7 +782,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             pool_size = size
         pool_size = _banned_headroom(pool_size, ban_i, ban_art)
         picks = eng.mix(seed, size=pool_size, allowed=mask, min_fit=min_fit,
-                        report=report) or []
+                        report=report, floor=floor) or []
         picks = _drop_banned(picks, ban_i, ban_art)
         if field:
             seen, uniq = {_dupkey(seed, field)}, []
@@ -789,7 +824,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 report["left_for"] = "count"
         return seed, picks
 
-    def _active_mix_indices(i, size, field=None, mask=None, min_fit=None, report=None):
+    def _active_mix_indices(i, size, field=None, mask=None, min_fit=None, report=None,
+                            floor=None):
         """Pool indices of the mix picks for seed index `i` via the ACTIVE engine, applying
         the same controls /api/mix parses from the request. Does NOT include the seed.
         Raises ValueError on bad control args (caller returns 400).
@@ -831,7 +867,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         _seed, picks = _with_weights(
             overrides, lambda: _build_mix(i, size, field, variety, flow,
                                           bans=(ban_i, ban_art), mask=mask,
-                                          min_fit=min_fit, report=report))
+                                          min_fit=min_fit, report=report, floor=floor))
         return [eng.idx[p] for p in picks]
 
     def _active_mix_tracks(i, size, field=None):
@@ -850,7 +886,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         min_fit = _fit_arg(src)
         if _seed_outside(mask, i) is not None:
             raise ValueError(f"the seed is not in the collection {cinfo['name']!r}")
-        picks_i = _active_mix_indices(i, size, field, mask=mask, min_fit=min_fit)
+        picks_i = _active_mix_indices(i, size, field, mask=mask, min_fit=min_fit,
+                                      floor=_floor_arg(src, size, min_fit))
         return [eng.paths[i]] + [eng.paths[pi] for pi in picks_i]
 
     def _dedup_arg():
@@ -973,7 +1010,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         report = {}
         try:
             picks_i = _active_mix_indices(i, size, field, mask=mask, min_fit=min_fit,
-                                          report=report)
+                                          report=report, floor=_floor_arg(None, size, min_fit))
         except ValueError:
             return jsonify(error="bad request"), 400
         tracks = [{"i": pi, "label": labels[pi]} for pi in picks_i]
@@ -1063,7 +1100,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         try:
             refs = _with_weights(overrides, lambda: active.radio_next(
                 i, n=n, exclude=exclude, variety=variety, arc=arc, pos=pos, rng=rng,
-                allowed=mask, min_fit=min_fit, report=report))
+                allowed=mask, min_fit=min_fit, report=report,
+                floor=_floor_arg(None, n, min_fit)))
         except AttributeError:
             return jsonify(error=f"radio not supported by the '{active.name}' engine"), 501
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
@@ -1107,7 +1145,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         report = {}
         try:
             refs, cohesion = active.mix_multi(seeds, size=size, allowed=mask,
-                                              min_fit=min_fit, report=report)
+                                              min_fit=min_fit, report=report,
+                                              floor=_floor_arg(None, size, min_fit))
         except ValueError as e:
             return jsonify(error=str(e)), 400
         except AttributeError:
@@ -1305,7 +1344,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             want = _banned_headroom(size, ban_i, ban_art)
             picks = eng.mix_from_vector(
                 q, size=want, exclude=[i] + blend_seeds + liked + disliked + sorted(ban_i),
-                allowed=mask, min_fit=min_fit, report=report)
+                allowed=mask, min_fit=min_fit, report=report,
+                floor=_floor_arg(data, size, min_fit))
             picks = _drop_banned(picks, ban_i, ban_art)[:size]
             if report.get("fit"):        # boundary over the songs delivered, as in _build_mix
                 report["walked"] = len(report["fit"])

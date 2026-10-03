@@ -274,7 +274,9 @@ def test_mix_without_the_flag_returns_the_quota(client):
 
 
 def test_mix_with_the_flag_stops_short_and_says_why(client):
-    j = client.get("/api/mix?i=0&size=50&max=1&min_fit=0.7").get_json()
+    # floor=0: the walk before 2026-10-02, which stopped dead at the line; the floor that
+    # keeps a list from being empty has its own tests in test_never_empty.py
+    j = client.get("/api/mix?i=0&size=50&max=1&min_fit=0.7&floor=0").get_json()
     assert 0 < len(j["tracks"]) < 50
     s = j["stop"]
     assert s["reason"] == "fit" and s["requested"] == 50 and s["returned"] == len(j["tracks"])
@@ -284,7 +286,7 @@ def test_mix_with_the_flag_stops_short_and_says_why(client):
 
 
 def test_mix_with_nothing_fitting_is_empty_with_a_reason(client):
-    j = client.get(f"/api/mix?i={LONER}&size=50&max=1&min_fit=0.7").get_json()
+    j = client.get(f"/api/mix?i={LONER}&size=50&max=1&min_fit=0.7&floor=0").get_json()
     assert j["tracks"] == []
     assert j["stop"]["reason"] == "none_fit"
     assert j["stop"]["sentence"].startswith("No song in Full library (40 songs) fits")
@@ -323,8 +325,8 @@ def test_a_seed_outside_the_collection_is_refused(client, coll):
 
 
 def test_same_fit_answer_in_both_pools_through_the_routes(client, coll):
-    full = client.get("/api/mix?i=0&size=50&max=1&min_fit=0").get_json()
-    small = client.get(f"/api/mix?i=0&size=50&max=1&min_fit=0&collection={coll}").get_json()
+    full = client.get("/api/mix?i=0&size=50&max=1&min_fit=0&floor=0").get_json()
+    small = client.get(f"/api/mix?i=0&size=50&max=1&min_fit=0&floor=0&collection={coll}").get_json()
     # the weakest song the small pool kept has the same fit when the full pool ranks it:
     # read both through /api/explain, the same per-pair breakdown either way
     wk = small["stop"]["weakest_kept"]["i"]
@@ -391,7 +393,7 @@ def test_radio_route_says_when_variety_thinned_the_batch(client):
     fitting songs says 'passed over', never 'none fit'."""
     seen = set()
     for r in range(40):
-        j = client.get(f"/api/radio/next?seed={LONER}&n=50&variety=9&rng={r}&max=1&min_fit=0.7").get_json()
+        j = client.get(f"/api/radio/next?seed={LONER}&n=50&variety=9&rng={r}&max=1&min_fit=0.7&floor=0").get_json()
         seen.add(j["stop"]["reason"])
         if j["stop"]["reason"] == "none_fit":
             assert j["stop"]["passed_over"] == 0
@@ -399,7 +401,7 @@ def test_radio_route_says_when_variety_thinned_the_batch(client):
             assert j["stop"]["passed_over"] > 0 and "passed over" in j["stop"]["sentence"]
     # the loner's pool holds no fitting song at all under any coin, so this seed can only
     # ever be none_fit; a group seed with variety shows the thinned reason
-    j = client.get("/api/radio/next?seed=0&n=50&variety=9&rng=1&max=1&min_fit=0.7").get_json()
+    j = client.get("/api/radio/next?seed=0&n=50&variety=9&rng=1&max=1&min_fit=0.7&floor=0").get_json()
     assert j["stop"]["reason"] in ("fit", "thinned", "exhausted", "size")
     if j["tracks"] == []:
         assert j["stop"]["reason"] == "thinned"
@@ -452,7 +454,7 @@ def test_radio_names_the_best_song_its_variety_passed_over(client):
     """When the coins passed over songs that fit, the strongest song left out is the best
     of those, not the first song below the line (Codex, round two)."""
     for r in range(30):
-        j = client.get(f"/api/radio/next?seed=0&n=50&variety=9&rng={r}&max=1&min_fit=0.7").get_json()
+        j = client.get(f"/api/radio/next?seed=0&n=50&variety=9&rng={r}&max=1&min_fit=0.7&floor=0").get_json()
         st = j["stop"]
         if st["passed_over"]:
             assert st["strongest_left"] is not None

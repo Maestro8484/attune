@@ -510,6 +510,9 @@ tbody tr.rowOut { transition: opacity .18s ease, transform .18s ease;
 tbody tr.playing td.c-title::before { content:"▶ "; color:var(--accent); }
 tbody tr.seed td.c-title::before { content:"✦ "; color:var(--accent2); }
 tbody tr.missing, tbody tr.unmixable { opacity:.45; font-style:italic; }
+/* songs the walk took past the fit line so the mix is never empty: kept, but marked */
+tbody tr.pastline { opacity:.6; }
+tbody tr.pastline td.c-title::before { content:"~ "; color:var(--muted); }
 /* "Hide missing files" toggle (client-side only -- the query behind the row is
    unchanged, this purely hides the row; see #hideMissing in studio.js).
    NOT inside the Missing Files view itself: every row there is missing by definition, so

@@ -174,11 +174,13 @@
     <button id="btnCollSave" class="chip" title="Save the songs on screen (or the selected ones) as a new named collection, up to 500 songs">Save what's on screen as a collection…</button>
     <button id="btnCollDelete" class="chip" hidden title="Delete the chosen collection. The songs stay in the library">Delete collection</button>
   </div>
-  <label class="chk" title="On: a mix stops when the next-best song no longer fits, so asking for 50 can return 12, or none with a reason. Off: the count is a quota and the list is padded with the nearest songs however poor"><input id="fitMax" type="checkbox" checked> Stop when songs stop fitting (count is a maximum)</label>
+  <label class="chk" title="On: a mix stops when the next-best song no longer fits, so asking for 50 can return 12; it still keeps the share below, marked, so it is never empty. Off: the count is a quota and the list is padded with the nearest songs however poor"><input id="fitMax" type="checkbox" checked> Stop when songs stop fitting (count is a maximum)</label>
   <label class="row"><span class="k">Fit line <span class="tag">provisional</span></span>
     <input id="fitLine" type="number" min="0" max="1" step="0.01" value="0.70" title="A song fits when its score is at least this fraction of a perfect twin's score under the current recipe. It starts at the value set for this library's recipe, not a tuned one; where the line belongs is judged by ear"></label>
   <label class="row"><span class="k">Sound-alike line <span class="tag">provisional</span></span>
     <input id="clapLine" type="number" min="0" max="1" step="0.001" value="0.990" title="The same idea for Blend, steering and Adventure, which compare sound alone: the closeness a song needs to its target, 1.000 being identical. It starts at the value set for this library's fingerprints"></label>
+  <label class="row"><span class="k">But never fewer than</span>
+    <input id="fitFloor" type="number" min="0" max="100" step="5" value="50" title="Percent of the count asked for that a mix keeps even when songs stop fitting: the walk goes on past the line, best first, and marks those songs in the list. So one Less Like This can never empty a mix. 0 means stop dead at the line, none with a reason"> <span class="k">% of the count</span></label>
 
   <!-- Recipes: named presets for the sliders/toggles above. Hidden entirely under the
        MusicIP engine (recipes are v2-param shaped) -- see initRecipes() in studio.js. -->
