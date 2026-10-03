@@ -2004,9 +2004,38 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         "attune_userdata", os.path.join(HERE, "userdata.py"))
     userdata = importlib.util.module_from_spec(ud_spec)
     ud_spec.loader.exec_module(userdata)
+    _plex_rate_lock = threading.Lock()
+
+    def _plex_rate(path, stars):
+        """Send a star rating to the Plex server, when one is set up and the switch in
+        Preferences is on (TODO.md row 54). Plex rates 0 to 10 over PUT /:/rate (the
+        Plex developer docs and forum, read 2026-10-02); a cleared rating is sent as -1,
+        which is what Plex's own apps send. Runs off the request thread; a failure is a
+        log line, never an error in the window."""
+        s = cfgmod.load()
+        if s.get("ratings_to_plex") is False or not _plex_configured():
+            return
+        with _plex_rate_lock:                     # one index build, however many ratings land at once
+            if "plex" not in plex_holder:
+                plex_holder["plex"] = export.plex_from_settings(s, cfg, mapper)
+            px = plex_holder["plex"]
+            if px._index is None:
+                px.build_index()
+        keys, _missed = px.match([path])
+        if not keys:
+            raise ValueError("not in the Plex library: " + os.path.basename(path))
+        px._put("/:/rate", {"identifier": "com.plexapp.plugins.library", "key": keys[0],
+                            "rating": stars * 2 if stars else -1})
+
+    def _art_changed(path):
+        cache = getattr(lib, "art_cache", None)
+        if cache is not None:
+            cache.drop(os.path.dirname(path).lower())
+
     ud = userdata.register(app, {"db_path": db_path, "eng": eng, "lib": lib,
                                  "engine_lock": engine_lock, "locked": _locked,
-                                 "on_tags_changed": _on_tags_changed})
+                                 "on_tags_changed": _on_tags_changed,
+                                 "plex_rate": _plex_rate, "on_art_changed": _art_changed})
 
     # ---- library verification: missing-file detection + manual relink (libverify.py).
     # Registered right after userdata, whose ud instance and read/write-tags path it

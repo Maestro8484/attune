@@ -808,7 +808,21 @@ input.fspath:focus { color:var(--fg); background:var(--panel2); border-color:var
 .chip.primary { border-color:var(--accent); color:var(--accent); font-weight:600; }
 
 /* tag editor grid */
-.taggrid { display:grid; grid-template-columns:110px 1fr; gap:8px 10px; align-items:center; }
+.taggrid { display:grid; grid-template-columns:110px 1fr; gap:8px 10px; align-items:center; align-content:start; }
+.tagbody { flex-direction:row; gap:16px; align-items:flex-start; }
+.tagbody .taggrid { flex:1; min-width:0; max-height:62vh; overflow:auto; padding-right:4px; }
+.taggrid textarea { background:var(--panel2); border:1px solid var(--line); border-radius:7px;
+  color:var(--fg); padding:6px 8px; font:inherit; font-size:13px; min-height:64px; resize:vertical; }
+.taggrid .multi { color:var(--dim); font-size:10px; display:block; }
+.tagside { width:200px; flex:0 0 auto; display:flex; flex-direction:column; gap:8px; }
+.tagcover { width:200px; height:200px; background:var(--panel2); border:1px solid var(--line);
+  border-radius:10px; display:flex; align-items:center; justify-content:center; overflow:hidden; }
+.tagcover img { max-width:100%; max-height:100%; display:none; }
+.tagcover.has img { display:block; }
+.tagcover.has span { display:none; }
+.tagstars { font-size:22px; letter-spacing:2px; cursor:pointer; user-select:none; }
+.tagstars i { font-style:normal; color:var(--dim); }
+.tagstars i.on { color:var(--accent); }
 .taggrid label { color:var(--muted); font-size:12px; text-align:right; }
 .taggrid input { background:var(--panel2); border:1px solid var(--line); border-radius:7px;
   padding:6px 8px; width:100%; }

@@ -731,6 +731,19 @@
             <!-- Shown only when there is something to do: a library made by an earlier
                  version of Attune, or one whose fingerprinting was stopped part way.
                  prefs.js paintFingerprints() fills it from /api/fingerprints/state. -->
+            <!-- Ratings in files (2026-10-02, TODO.md row 54): stars live in the library, in
+                 the file's own tags, and in Plex. One button reads the files' ratings into the
+                 library; one switch covers Plex. prefs.js paintRatings(). -->
+            <div class="prefrow" id="ratRow"><span class="k">Star ratings</span>
+              <div class="v">
+                <span class="hint">A star rating you set goes into the song file as well (the tag
+                  Windows Media Player, MusicBee, MediaMonkey and foobar2000 share), so every
+                  player sees it. Ratings other players wrote into your files can be read in here.</span>
+                <div class="btnrow"><button id="btnRatImport" class="primary">Read ratings from files</button>
+                  <span id="ratSay" class="hint"></span></div>
+                <label class="chk"><input type="checkbox" id="prefRatPlex">
+                  Also send ratings to Plex (when Plex is set up)</label>
+              </div></div>
             <div class="prefrow" id="fpRow" hidden><span class="k">Sound fingerprints</span>
               <div class="v">
                 <span id="fpSay"></span>
@@ -1018,26 +1031,28 @@
   </div>
 </div>
 
-<!-- Tag editor modal -->
+<!-- Tag editor modal. The fields come from the server (tagfile.FIELDS), so the window
+     and the file layer can never disagree about what is editable; prefs.js builds the
+     grid from GET /api/track/tags. Rating and cover save at once (each its own call);
+     the text fields save together with "Save to file". -->
 <div id="tagWrap" class="modalwrap" hidden>
-  <div class="modal" style="width:520px">
+  <div class="modal" style="width:760px">
     <div class="modalHead">Edit Tags
       <span id="tagFile" class="hint" style="font-weight:400"></span>
       <button class="x" data-close="tagWrap">✕</button></div>
-    <div class="modalBody">
-      <div class="taggrid">
-        <label>Title</label><input id="tgTitle">
-        <label>Artist</label><input id="tgArtist">
-        <label>Album</label><input id="tgAlbum">
-        <label>Album artist</label><input id="tgAlbumArtist">
-        <label>Genre</label><input id="tgGenre">
-        <label>Year</label><input id="tgDate">
-        <label>Track #</label><input id="tgTrack">
-        <label>Disc #</label><input id="tgDisc">
-        <label>Composer</label><input id="tgComposer">
-        <label>Comment</label><input id="tgComment">
+    <div class="modalBody tagbody">
+      <div class="tagside">
+        <div class="tagcover" id="tagCover" title="The cover stored inside this file"><img id="tagCoverImg" alt=""><span id="tagCoverNone" class="hint">No cover in the file</span></div>
+        <div class="btnrow">
+          <button class="chip" id="tagCoverPick" title="Choose a JPEG or PNG; it is written into the file at once">Replace cover…</button>
+          <button class="chip" id="tagCoverDrop" title="Remove the cover from the file at once">Remove</button>
+          <input type="file" id="tagCoverFile" accept="image/jpeg,image/png" hidden>
+        </div>
+        <div class="tagstars" id="tagStars" title="Stars are saved at once: to the library, into the file (so other players see them), and to Plex when it is set up"></div>
+        <span class="hint" id="tagStarsSay"></span>
+        <div class="techinfo" id="tagTech"></div>
       </div>
-      <div class="techinfo" id="tagTech"></div>
+      <div class="taggrid" id="tagGrid"></div>
     </div>
     <div class="modalFoot">
       <span id="tagMsg" class="msg"></span>

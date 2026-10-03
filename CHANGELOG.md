@@ -5,6 +5,34 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-02, every tag, and ratings that other players see)
+
+- **Edit Tags now edits everything a modern player does.** Twenty-two fields (title, artist,
+  album artist, album, track and disc numbers, year, original year, genre, composer,
+  performer, conductor, grouping, BPM, compilation, label, ISRC, copyright, encoded by,
+  website, comment and lyrics), the cover inside the file (shown, replaced from a JPEG or
+  PNG, or removed), and the star rating, with the tag format (ID3v2.3, Vorbis comments) and
+  the file's facts beside them. A field that holds several values, two genres say, shows
+  them joined with "; " and keeps them several. A write keeps the file's own tag version
+  (a v2.3 file stays v2.3, which Windows Media Player needs) and puts the file's modified
+  time back, so the song is not analyzed again for a tag change. Press F2 on a song, or
+  Edit Tags on the right-click menu.
+- **Star ratings go into the song file, and come out of it.** A rating set in Attune is now
+  written into the file as well, in the tag Windows Media Player, MusicBee, MediaMonkey and
+  foobar2000 share (POPM on MP3; RATING and FMPS_RATING on FLAC), so every player shows
+  the same stars; a frame another player already wrote is updated rather than doubled.
+  Preferences, Library has "Read ratings from files", which reads the rating every file
+  carries into the library (the file wins). On the reference library that found 3,536
+  rated files, 2,636 of them rated by MusicBee, where the library knew 15.
+- **Ratings reach Plex.** When Plex is set up, a rating set in Attune is sent to the Plex
+  server too (its 0 to 10 scale), including the ratings read in from files. A switch in
+  Preferences, Library turns this off.
+
+### Fixed (2026-10-02, every tag)
+
+- **Saving a comment in Edit Tags failed on every MP3** with "'comment' is not a valid
+  key". It saves now.
+
 ### Fixed (2026-10-02, a mix is never empty)
 
 - **One Less Like This can no longer empty a mix.** A Blend of three songs, then Less Like

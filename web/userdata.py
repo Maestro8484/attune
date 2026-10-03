@@ -13,8 +13,12 @@ Endpoints:
   POST /api/track/loved    {i, loved bool}          MusicBee-style heart
   POST /api/track/played   {i}                      play_count += 1, last_played = now
   POST /api/track/skipped  {i}                      skip_count += 1
-  GET  /api/track/tags?i=  full tag + tech readout (mutagen)
-  POST /api/track/tags     {i, title, artist, ...}  write tags to file + tracks + memory
+  GET  /api/track/tags?i=  every field a player edits, the rating, the cover (tagfile.py)
+  POST /api/track/tags     {i, tags:{key: text}}    write the fields given to the file + tracks + memory
+  GET  /api/track/cover?i= the embedded cover image, 404 when none
+  POST /api/track/cover    multipart {i, file}      replace the cover (JPEG or PNG); DELETE {i} removes it
+  POST /api/ratings/import                          read every file's own rating into Attune (a job)
+  GET  /api/ratings/import/status
   GET  /api/track/gain?i=  ReplayGain track/album gain from tags (cached)
   POST /api/reveal         {i}                      Explorer/select (local desktop only)
   POST /api/track/delete   {i}                      remove from tracks/features/clap/
@@ -29,17 +33,33 @@ Every id crossing the wire is a pool index into eng.paths — never a raw path.
 from __future__ import annotations
 
 import os
+import logging
 import re
+import threading
+import time
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
-_EASY_TAGS = ("title", "artist", "album", "albumartist", "genre", "date",
-              "tracknumber", "discnumber", "composer", "comment")
+_HERE = os.path.dirname(os.path.abspath(__file__))
+
+
+def _tagfile():
+    """web/tagfile.py, loaded the way app.py loads this module (by path, so it works
+    from the frozen exe and from a test alike)."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("attune_tagfile", os.path.join(_HERE, "tagfile.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+tagfile = _tagfile()
+log = logging.getLogger("attune.userdata")
 
 _RG_RE = re.compile(r"(-?\d+(?:\.\d+)?)")
 
@@ -86,12 +106,18 @@ def _ensure_schema(db_path):
 class UserData:
     """Write API over `usermeta` + the in-memory mirror the UI reads (via lib.row())."""
 
-    def __init__(self, db_path, eng, lib, on_tags_changed=None):
+    def __init__(self, db_path, eng, lib, on_tags_changed=None, plex_rate=None,
+                 on_art_changed=None):
         self.db_path = db_path
         self.eng = eng
         self.paths = eng.paths
         self.lib = lib
         self.on_tags_changed = on_tags_changed or (lambda i: None)
+        # plex_rate(path, stars): send the rating to the Plex server, or None when Plex is
+        # not set up (app.py decides). Called off the request thread, never waited for.
+        self.plex_rate = plex_rate
+        self.on_art_changed = on_art_changed or (lambda path: None)
+        self.import_job = None
         self.lock = threading.Lock()
         self._gain_cache = {}
         paths = self.paths
@@ -120,20 +146,105 @@ class UserData:
             con.close()
 
     def _write(self, sql, params):
+        # Thousands of rapid open/write/close cycles against a WAL database (the ratings
+        # import) hit, on Windows, a single transient "attempt to write a readonly
+        # database" (the -shm handle racing another opener), which ended the whole pass
+        # at 8,949 of 21,118 on 2026-10-02. Same three-attempt retry libverify.py and
+        # audioinfo.py already use for the same reason.
         with self.lock:
-            con = sqlite3.connect(self.db_path, timeout=30)
-            try:
-                con.execute("PRAGMA journal_mode=WAL")
-                con.execute(sql, params)
-                con.commit()
-            finally:
-                con.close()
+            for attempt in (1, 2, 3):
+                con = sqlite3.connect(self.db_path, timeout=30)
+                try:
+                    con.execute("PRAGMA journal_mode=WAL")
+                    con.execute(sql, params)
+                    con.commit()
+                    break
+                except sqlite3.OperationalError:
+                    if attempt == 3:
+                        raise
+                    time.sleep(0.2 * attempt)
+                finally:
+                    con.close()
 
-    def set_rating(self, i, rating):
+    def set_rating(self, i, rating, to_file=True, to_plex=True):
+        """The stars go three places: the library (always), the file's own tags (so
+        every other player sees them, TODO.md row 54) and, when Plex is set up and the
+        switch is on, the Plex server. A file that cannot be written (read-only, on an
+        unplugged drive) still gets the library rating; the answer says what happened."""
         self._write("""INSERT INTO usermeta(path, rating) VALUES(?,?)
                        ON CONFLICT(path) DO UPDATE SET rating=excluded.rating""",
                     (self.paths[i], rating))
         self.lib.rating[i] = rating
+        out = {"file": None, "plex": None}
+        if to_file:
+            try:
+                tagfile.write_rating(self.paths[i], rating)
+                out["file"] = "written"
+            except (OSError, ValueError) as e:
+                out["file"] = f"not written: {e}"
+        if to_plex and self.plex_rate is not None:
+            path = self.paths[i]
+            def _send():
+                try:
+                    self.plex_rate(path, rating)
+                except Exception as e:          # best effort, never the user's problem
+                    log.warning("Plex rating not sent for %s: %s", os.path.basename(path), e)
+            threading.Thread(target=_send, name="plex-rate", daemon=True).start()
+            out["plex"] = "sending"
+        return out
+
+    # ------------------------------------------------------------------ ratings in files
+    def start_import(self):
+        """Read every file's own rating (POPM, RATING) into the library, in a thread.
+        The file wins: pressing the button means "what my files say is right". Songs
+        whose file holds no rating are left as they are."""
+        if self.import_job and self.import_job.get("running"):
+            return self.import_job
+        job = {"running": True, "cancelled": False, "started": time.time(), "done": 0,
+               "total": len(self.paths), "changed": 0, "with_rating": 0, "unreadable": 0,
+               "plex_sent": 0, "plex_failed": 0, "finished": None, "error": None}
+        self.import_job = job
+
+        def _run():
+            changed = []
+            try:
+                for i, path in enumerate(self.paths):
+                    if job["cancelled"]:
+                        break
+                    stars = tagfile.read_rating(path) if os.path.exists(path) else None
+                    if stars is None:
+                        job["unreadable"] += 1
+                    elif stars > 0:
+                        job["with_rating"] += 1
+                        if stars != int(self.lib.rating[i] or 0):
+                            # the file already holds it; Plex is told below, in this
+                            # thread, one at a time, never a thread per song
+                            self.set_rating(i, stars, to_file=False, to_plex=False)
+                            changed.append((path, stars))
+                            job["changed"] += 1
+                    job["done"] = i + 1
+                if self.plex_rate is not None and not job["cancelled"]:
+                    for path, stars in changed:
+                        try:
+                            self.plex_rate(path, stars)
+                            job["plex_sent"] += 1
+                        except Exception as e:
+                            job["plex_failed"] += 1
+                            if job["plex_failed"] <= 3:
+                                log.warning("Plex rating not sent for %s: %s", os.path.basename(path), e)
+            except Exception as e:                   # pragma: no cover - defensive
+                job["error"] = str(e)
+            finally:
+                job["running"] = False
+                job["finished"] = time.time()
+
+        threading.Thread(target=_run, name="ratings-import", daemon=True).start()
+        return job
+
+    def cancel_import(self):
+        if self.import_job:
+            self.import_job["cancelled"] = True
+        return self.import_job
 
     def set_loved(self, i, loved):
         self._write("""INSERT INTO usermeta(path, loved) VALUES(?,?)
@@ -160,54 +271,26 @@ class UserData:
 
     # ------------------------------------------------------------------ tags
     def read_tags(self, i):
-        import mutagen
+        """Every field (tagfile.FIELDS), the rating as the FILE holds it beside the
+        library's, the cover's presence, the tag format and the file's facts."""
         path = self.paths[i]
-        f = mutagen.File(path, easy=True)
-        tags = {}
-        if f is not None and f.tags:
-            for k in _EASY_TAGS:
-                v = f.tags.get(k)
-                if v:
-                    tags[k] = str(v[0])
-        info = {}
-        if f is not None and f.info:
-            info = {
-                "length": round(getattr(f.info, "length", 0) or 0, 1),
-                "bitrate": getattr(f.info, "bitrate", 0) or 0,
-                "sample_rate": getattr(f.info, "sample_rate", 0) or 0,
-                "channels": getattr(f.info, "channels", 0) or 0,
-                "codec": type(f).__name__,
-            }
-        return {"tags": tags, "info": info,
-                "file": os.path.basename(path),
-                "folder": os.path.dirname(path),
-                "bytes": os.path.getsize(path) if os.path.exists(path) else 0}
+        r = tagfile.read(path)
+        r["file_rating"] = r.pop("rating", 0)
+        r["rating"] = int(self.lib.rating[i] or 0)
+        r.update({"file": os.path.basename(path), "folder": os.path.dirname(path),
+                  "bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+                  "modified": os.path.getmtime(path) if os.path.exists(path) else 0})
+        return r
 
     def write_tags(self, i, new_tags):
-        """Write the given easy-tag fields to the file, mirror them into `tracks`
-        and the in-memory LibraryIndex. Returns the updated row dict."""
-        import mutagen
+        """Write the fields given to the file (tagfile.write: the file's own tag
+        version kept, its modified time put back), mirror the columns the library has
+        into `tracks` and the in-memory LibraryIndex. Returns the updated row dict."""
         path = self.paths[i]
-        f = mutagen.File(path, easy=True)
-        if f is None:
-            raise ValueError("unsupported or unreadable audio file")
-        if f.tags is None:
-            f.add_tags()
-        for k in _EASY_TAGS:
-            if k not in new_tags:
-                continue
-            v = str(new_tags[k]).strip()
-            if v:
-                f.tags[k] = [v]
-            elif k in f.tags:
-                del f.tags[k]
-        f.save()
+        tagfile.write(path, new_tags)
 
         # mirror into tracks (the columns it has) + the live index
-        year = None
-        m = re.match(r"\s*(\d{4})", str(new_tags.get("date", "")))
-        if m:
-            year = int(m.group(1))
+        year = tagfile.year_of(new_tags.get("date", "")) if "date" in new_tags else None
         fields = {
             "artist": new_tags.get("artist"),
             "album": new_tags.get("album"),
@@ -227,6 +310,14 @@ class UserData:
             m.update(changed)
         self.on_tags_changed(i)
         return self.lib.row(i)
+
+    # ------------------------------------------------------------------ cover art
+    def read_cover(self, i):
+        return tagfile.read_cover(self.paths[i])
+
+    def write_cover(self, i, data):
+        tagfile.write_cover(self.paths[i], data)
+        self.on_art_changed(self.paths[i])
 
     # ------------------------------------------------------------------ replaygain
     def gain(self, i):
@@ -302,8 +393,10 @@ def register(app, ctx):
     eng = ctx["eng"]
     lib = ctx["lib"]
     locked = ctx["locked"]
-    ud = UserData(ctx["db_path"], eng, lib, ctx.get("on_tags_changed"))
+    ud = UserData(ctx["db_path"], eng, lib, ctx.get("on_tags_changed"),
+                  plex_rate=ctx.get("plex_rate"), on_art_changed=ctx.get("on_art_changed"))
     bp = Blueprint("userdata", __name__)
+    app.extensions["attune_userdata"] = ud      # reachable by tests and by other modules
 
     def _guard():
         # Deleting library rows is a this-machine action, same rule as
@@ -329,8 +422,8 @@ def register(app, ctx):
             return jsonify(error="unknown track"), 404
         if not (0 <= r <= 5):
             return jsonify(error="rating must be 0-5"), 400
-        ud.set_rating(i, r)
-        return jsonify(ok=True, i=i, rating=r)
+        where = ud.set_rating(i, r)
+        return jsonify(ok=True, i=i, rating=r, **where)
 
     @bp.post("/api/track/loved")
     @locked
@@ -402,6 +495,78 @@ def register(app, ctx):
         except (OSError, ValueError) as e:
             return jsonify(error=str(e)), 500
         return jsonify(ok=True, row=row)
+
+    @bp.get("/api/track/cover")
+    @locked
+    def get_cover():
+        try:
+            i = _idx(request.args)
+        except (TypeError, ValueError):
+            return jsonify(error="bad request"), 400
+        except IndexError:
+            return jsonify(error="unknown track"), 404
+        try:
+            c = ud.read_cover(i)
+        except (OSError, ValueError) as e:
+            return jsonify(error=str(e)), 500
+        if not c:
+            return Response(status=404)
+        return Response(c[0], mimetype=c[1], headers={"Cache-Control": "no-store"})
+
+    @bp.post("/api/track/cover")
+    @locked
+    def set_cover():
+        """Replace the embedded cover with the JPEG or PNG uploaded as `file`. A
+        this-machine action, like every other write to a song file."""
+        if not _guard():
+            return jsonify(error="only available on the Attune machine itself"), 403
+        try:
+            i = _idx(request.form)
+        except (TypeError, ValueError):
+            return jsonify(error="bad request"), 400
+        except IndexError:
+            return jsonify(error="unknown track"), 404
+        up = request.files.get("file")
+        if up is None:
+            return jsonify(error="expected a file"), 400
+        data = up.read()
+        if len(data) > 10 * 1024 * 1024:
+            return jsonify(error="the image is over 10 MB"), 400
+        try:
+            ud.write_cover(i, data)
+        except (OSError, ValueError) as e:
+            return jsonify(error=str(e)), 400
+        return jsonify(ok=True, i=i, bytes=len(data))
+
+    @bp.delete("/api/track/cover")
+    @locked
+    def drop_cover():
+        if not _guard():
+            return jsonify(error="only available on the Attune machine itself"), 403
+        body = request.get_json(silent=True) or {}
+        try:
+            i = _idx(body)
+        except (TypeError, ValueError):
+            return jsonify(error="bad request"), 400
+        except IndexError:
+            return jsonify(error="unknown track"), 404
+        try:
+            ud.write_cover(i, b"")
+        except (OSError, ValueError) as e:
+            return jsonify(error=str(e)), 400
+        return jsonify(ok=True, i=i)
+
+    @bp.post("/api/ratings/import")
+    def ratings_import():
+        if not _guard():
+            return jsonify(error="only available on the Attune machine itself"), 403
+        if (request.get_json(silent=True) or {}).get("cancel"):
+            return jsonify(ud.cancel_import() or {"running": False})
+        return jsonify(ud.start_import())
+
+    @bp.get("/api/ratings/import/status")
+    def ratings_import_status():
+        return jsonify(ud.import_job or {"running": False, "finished": None})
 
     @bp.get("/api/track/gain")
     @locked

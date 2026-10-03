@@ -102,6 +102,7 @@ const Prefs = (() => {
       $('prefPlexRoot').value = serverSettings.plex_library_root || '';
       $('prefScanLaunch').checked = !!serverSettings.scan_on_launch;
       $('prefWatch').checked = !!serverSettings.watch_folders;
+      $('prefRatPlex').checked = serverSettings.ratings_to_plex !== false;
       paintFolders(serverSettings.library_folders || []);
       paintFolders(serverSettings.exclude_folders || [], 'excludeFolders');
       paintEnvOverrides(j.env_overrides || {});
@@ -423,6 +424,7 @@ const Prefs = (() => {
       plex_library_root: $('prefPlexRoot').value.trim(),
       scan_on_launch: $('prefScanLaunch').checked,
       watch_folders: $('prefWatch').checked,
+      ratings_to_plex: $('prefRatPlex').checked,
       library_folders: collectFolders(),
       exclude_folders: collectFolders('excludeFolders'),
       theme: store.get('theme', 'bee'),
@@ -685,6 +687,43 @@ const Prefs = (() => {
       startScanPoll();
       $('scanDetail').hidden = false;
       setTimeout(paintFingerprints, 800);
+    } catch (e) { toast(e.message, true); }
+  }
+
+  /* ---------------------------------------------------------------- ratings in files
+
+     One button in Preferences, Library: read the rating every file holds in its own tags
+     (MusicBee, Windows Media Player, Winamp, foobar2000 all write one) into the library.
+     The file wins; songs whose file holds no rating are left alone. In-process, a minute
+     or two for twenty thousand songs; polled while it runs. */
+  let ratTimer = null;
+  async function paintRatings() {
+    let st;
+    try { st = await jget('/api/ratings/import/status'); } catch { return; }
+    const b = $('btnRatImport'), say = $('ratSay');
+    if (st.running) {
+      b.textContent = '⏹ Stop';
+      say.textContent = `${st.done.toLocaleString()} of ${st.total.toLocaleString()} read, ` +
+        `${st.with_rating.toLocaleString()} with a rating, ${st.changed.toLocaleString()} changed.`;
+      if (!ratTimer) ratTimer = setInterval(paintRatings, 1000);
+    } else {
+      b.textContent = 'Read ratings from files';
+      if (ratTimer) { clearInterval(ratTimer); ratTimer = null; }
+      if (st.finished) {
+        say.textContent = (st.cancelled ? 'Stopped. ' : 'Done. ') +
+          `${st.done.toLocaleString()} files read, ${st.with_rating.toLocaleString()} carry a rating, ` +
+          `${st.changed.toLocaleString()} ${st.changed === 1 ? 'song' : 'songs'} changed in the library` +
+          (st.unreadable ? `, ${st.unreadable.toLocaleString()} could not be read` : '') + '.';
+        if (st.changed && typeof refreshRows === 'function') refreshRows();
+      }
+    }
+  }
+  async function ratingsImportPress() {
+    try {
+      const st = await jget('/api/ratings/import/status');
+      if (st.running) { await jpost('/api/ratings/import', { cancel: true }); }
+      else { await jpost('/api/ratings/import', {}); }
+      setTimeout(paintRatings, 300);
     } catch (e) { toast(e.message, true); }
   }
 
@@ -967,32 +1006,101 @@ const Prefs = (() => {
     });
   }
 
-  /* ---------------------------------------------------------------- tag editor */
-  const TAGMAP = { tgTitle: 'title', tgArtist: 'artist', tgAlbum: 'album',
-    tgAlbumArtist: 'albumartist', tgGenre: 'genre', tgDate: 'date',
-    tgTrack: 'tracknumber', tgDisc: 'discnumber', tgComposer: 'composer',
-    tgComment: 'comment' };
+  /* ---------------------------------------------------------------- tag editor
+     Every field a modern player edits (2026-10-02, TODO.md row 52). The list of fields is
+     the server's (tagfile.FIELDS, sent by GET /api/track/tags), so the grid is built here
+     from that answer. A field that held several values (two genres, say) shows them joined
+     with "; " and says so under the box; typing "; " keeps them several. */
+  let tagFields = [];                      // [{key,label,kind,value,multi,supported}] as read
+  function tagInputId(key) { return 'tg_' + key; }
+  function buildTagGrid(fields) {
+    const g = $('tagGrid');
+    g.innerHTML = fields.map(f => {
+      const id = tagInputId(f.key);
+      const box = f.kind === 'multiline'
+        ? `<textarea id="${id}" ${f.supported ? '' : 'disabled'}></textarea>`
+        : `<input id="${id}" ${f.kind === 'number' ? 'type="number" min="0"' : ''} ${f.supported ? '' : 'disabled'}>`;
+      const note = f.multi ? `<span class="multi">several values, kept apart by "; "</span>` : '';
+      return `<label for="${id}">${esc(f.label)}</label><div>${box}${note}</div>`;
+    }).join('');
+    for (const f of fields) $(tagInputId(f.key)).value = f.value || '';
+  }
+  function paintTagCover(i, has) {
+    const wrap = $('tagCover');
+    wrap.classList.toggle('has', !!has);
+    $('tagCoverImg').src = has ? `/api/track/cover?i=${i}&t=${Date.now()}` : '';
+    $('tagCoverDrop').disabled = !has;
+  }
+  function paintTagStars(rating, fileRating) {
+    $('tagStars').innerHTML = [1, 2, 3, 4, 5].map(n =>
+      `<i data-s="${n}" class="${n <= rating ? 'on' : ''}">${n <= rating ? '★' : '☆'}</i>`).join('');
+    $('tagStarsSay').textContent = rating
+      ? (fileRating === rating ? 'In the library and in the file.'
+         : fileRating ? `Library ${rating} stars; the file says ${fileRating}. Click a star to write it.`
+         : 'In the library only; click a star to write it into the file.')
+      : (fileRating ? `The file says ${fileRating} stars; the library has none. Read ratings from files in Preferences, or click a star.`
+         : 'Not rated.');
+  }
 
   async function openTagEditor(i) {
-    tagI = i; tagOld = null;
+    tagI = i; tagOld = null; tagFields = [];
     $('tagWrap').hidden = false;
-    $('tagMsg').textContent = '';
-    for (const id of Object.keys(TAGMAP)) $(id).value = '';
+    $('tagMsg').className = 'msg'; $('tagMsg').textContent = '';
+    $('tagGrid').innerHTML = '';
     $('tagTech').textContent = 'Reading tags…';
     try {
       const j = await jget('/api/track/tags?i=' + i);
-      for (const [id, tag] of Object.entries(TAGMAP)) $(id).value = j.tags[tag] || '';
-      tagOld = Object.fromEntries(Object.values(TAGMAP).map(t => [t, j.tags[t] || '']));
+      tagFields = j.fields || [];
+      buildTagGrid(tagFields);
+      tagOld = Object.fromEntries(tagFields.map(f => [f.key, f.value || '']));
+      paintTagCover(i, !!j.cover);
+      paintTagStars(j.rating || 0, j.file_rating || 0);
       $('tagFile').textContent = j.file;
       const inf = j.info || {};
+      const when = j.modified ? new Date(j.modified * 1000).toLocaleDateString() : '?';
       $('tagTech').textContent =
-        `${j.folder}\n${inf.codec || '?'} · ${Math.round((inf.bitrate || 0) / 1000)} kbps · ` +
-        `${inf.sample_rate || '?'} Hz · ${inf.channels || '?'} ch · ` +
-        `${(j.bytes / 1048576).toFixed(1)} MB`;
+        `${j.folder}\n${inf.codec || '?'} · ${j.tag_format || '?'}\n` +
+        `${Math.round((inf.bitrate || 0) / 1000)} kbps · ${inf.sample_rate || '?'} Hz · ` +
+        `${inf.channels || '?'} ch\n${(j.bytes / 1048576).toFixed(1)} MB · modified ${when}`;
     } catch (e) {
       $('tagTech').textContent = '';
       $('tagMsg').className = 'msg err'; $('tagMsg').textContent = e.message;
     }
+  }
+  async function tagStarClick(e) {
+    const el = e.target.closest('i[data-s]');
+    if (!el || tagI == null) return;
+    const n = +el.dataset.s;
+    const cur = (knownRow(tagI) || {}).rating || 0;
+    await rateTrack(tagI, n === cur ? 0 : n);
+    const j = await jget('/api/track/tags?i=' + tagI).catch(() => null);
+    if (j) paintTagStars(j.rating || 0, j.file_rating || 0);
+  }
+  async function tagCoverPicked() {
+    const f = $('tagCoverFile').files[0];
+    if (!f || tagI == null) return;
+    const fd = new FormData();
+    fd.append('i', tagI); fd.append('file', f);
+    $('tagMsg').className = 'msg'; $('tagMsg').textContent = 'Writing cover…';
+    try {
+      const r = await fetch('/api/track/cover', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || r.statusText);
+      paintTagCover(tagI, true);
+      $('tagMsg').className = 'msg ok'; $('tagMsg').textContent = 'Cover written to the file.';
+    } catch (e) { $('tagMsg').className = 'msg err'; $('tagMsg').textContent = e.message; }
+    $('tagCoverFile').value = '';
+  }
+  async function tagCoverDrop() {
+    if (tagI == null) return;
+    try {
+      const r = await fetch('/api/track/cover', { method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ i: tagI }) });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || r.statusText);
+      paintTagCover(tagI, false);
+      $('tagMsg').className = 'msg ok'; $('tagMsg').textContent = 'Cover removed from the file.';
+    } catch (e) { $('tagMsg').className = 'msg err'; $('tagMsg').textContent = e.message; }
   }
   /* Write tags to the file and refresh the row wherever it shows. Shared by Save and by
      Undo / Redo of a save (history.js), which write the before / after tags back. */
@@ -1011,7 +1119,7 @@ const Prefs = (() => {
     if (tagI == null) return;
     const i = tagI, before = tagOld;
     const tags = {};
-    for (const [id, tag] of Object.entries(TAGMAP)) tags[tag] = $(id).value;
+    for (const f of tagFields) if (f.supported) tags[f.key] = $(tagInputId(f.key)).value;
     $('tagMsg').className = 'msg'; $('tagMsg').textContent = 'Writing…';
     const undoable = w => async () => { try { await writeTags(i, w); return true; }
                                         catch (e) { toast(e.message, true); return false; } };
@@ -1103,6 +1211,11 @@ const Prefs = (() => {
     $('btnRail').onclick = () => applyRail(document.body.classList.contains('norail'));
     $('miniExpand').onclick = () => toggleMini(false);
     $('tagSave').onclick = saveTags;
+    $('tagStars').addEventListener('click', tagStarClick);
+    $('tagCoverPick').onclick = () => $('tagCoverFile').click();
+    $('tagCoverFile').addEventListener('change', tagCoverPicked);
+    $('tagCoverDrop').onclick = tagCoverDrop;
+    $('btnRatImport').onclick = ratingsImportPress;
     $('btnRescan').onclick = rescan;
     $('btnFpRenew').onclick = fingerprintsPress;
     $('scanShow').onclick = () => { open(); };

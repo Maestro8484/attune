@@ -84,6 +84,9 @@ DEFAULTS = {
     "ml_venv_python": "",          # python.exe of the heavy analyze venv ('' = analysis off)
     "scan_on_launch": False,       # run an incremental rescan when the app starts
     "watch_folders": False,        # live-watch library_folders; new/changed audio triggers an incremental scan
+    "ratings_to_plex": True,       # a star rating set in Attune is also sent to the Plex
+                                   # server when one is set up (Preferences -> Plex); the
+                                   # file always gets it (POPM / RATING tags) whatever this says
     "read_catalog_tags": False,    # a scan also reads each file's MusicBrainz recording and
                                    # artist ids, original release date and STYLE tag into
                                    # catalog_ids (src/enrich.py). Off by default: those rows

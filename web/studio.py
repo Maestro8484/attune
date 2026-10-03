@@ -583,6 +583,11 @@ class ArtCache:
                 self.d.clear()
             self.d[key] = val
 
+    def drop(self, key):
+        """Forget one folder's art, after a cover was written into a song there."""
+        with self.lock:
+            self.d.pop(key, None)
+
 
 def _folder_art(path):
     d = os.path.dirname(path)
@@ -703,6 +708,7 @@ def register(app, ctx):
     lib = LibraryIndex(ctx["db_path"], eng.paths, eng.meta, getattr(eng, "earfeel", None),
                        getattr(eng, "earfeel_names", ()), getattr(eng, "earfeel_labels", ()))
     art = ArtCache()
+    lib.art_cache = art        # so a cover written by userdata.py can drop the folder's entry
     bp = Blueprint("studio", __name__)
     playlist_dir = ctx.get("playlist_dir") or ""
     locked = ctx["locked"]
