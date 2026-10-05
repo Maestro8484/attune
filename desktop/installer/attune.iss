@@ -196,6 +196,10 @@ Source: "{#SourcePath}..\..\licenses\*";              DestDir: "{app}\licenses";
 Source: "{#SourcePath}..\..\THIRD_PARTY_NOTICES.md";  DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\NOTICE.md";               DestDir: "{app}"; Flags: ignoreversion
 Source: "{#SourcePath}..\..\LICENSE";                 DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
+; The icon as a file beside the exe, for shortcuts whose picture Explorer had cached under
+; the exe's path (2026-10-05: the taskbar pin kept the stock floppy after the exe got its
+; own icon; a shortcut pointed at this file is a path the cache has never seen).
+Source: "{#SourcePath}attune.ico";                   DestDir: "{app}"; Flags: ignoreversion
 ; --- END third-party licence texts -----------------------------------------------------
 
 [Icons]
