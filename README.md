@@ -106,11 +106,15 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
   **USB / car folder**, one click each, and **More...** for playlist files. What you see is
   exactly what you get.
 - **Browse and play.** Search, album and folder views, album art, ratings, loved tracks, tags.
-- **See how a mix was made.** A strip above the list reads the stages the engine ran, with
-  the one that decided the list lit; a **Fit** column gives each song's fit; **Why this
-  pick** gives the numbers behind one song; the **Trace** drawer lists what was left out
-  and why, and what the last change kept, dropped and added. All of it from the engine's
-  own record, none of it written by a model.
+- **See how a mix was made, in words.** A card above the list says what decided it ("Only
+  9 songs you own sound enough like Sandstorm; the 41 marked ~ are past the cut-off") with
+  the controls that change it as buttons, over a sieve of the run's numbers; a **Fit**
+  column gives each song's fit; **Why this pick** gives the numbers behind one song;
+  **Show the magic**, under Mix in the side list, holds every song looked at and what
+  happened to it, the list as an arc, what the last change kept and dropped, the runs of a
+  session compared, and "why isn't this song here?". A three-second reveal plays it the
+  moment a list arrives. All of it from the engine's own record, none of it written by a
+  model.
 - **Help on hover.** Rest the pointer on any button, dial or setting and it says what it does.
 - **Copy a mix to a USB stick.** Numbered filenames so a car stereo plays them in order, tags
   intact, either flat or as Artist / Album folders.
@@ -160,13 +164,19 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 </p>
 
 <p align="center">
-  <img alt="A mix with the trace open (the morning build of 2026-10-05): the stages above the list with the fit line lit, the Fit column, and the drawer listing how the list was built. Since that evening the stages are a card in words over a sieve of bars, and the drawer is the Show the magic view" src="docs/img/trace-path.png" width="820">
+  <img alt="A fresh mix: the card over the list says only 4 songs you own sound enough like the seed and why, with the controls that change it as buttons; under it the sieve, the numbers of the run as bars with the deciding one lit; then the list with its Fit column" src="docs/img/trace-main.png" width="820">
 </p>
 <p align="center">
-  <img alt="Why this pick on one song: its place in the ranking, its fit, and what made its score, ingredient by ingredient" src="docs/img/trace-why.png" width="820">
+  <img alt="The reveal, two seconds after the list arrived: the sieve growing stage by stage over the dimmed window, the headline written" src="docs/img/trace-reveal.png" width="820">
 </p>
 <p align="center">
-  <img alt="What changed after one Less Like This: the songs kept, gone and new, named" src="docs/img/trace-changes.png" width="820">
+  <img alt="Show the magic: the card and the sieve, then the hill of every song looked at, closest first, its fit as height, the cut-off dashed, with the songs held back in red" src="docs/img/trace-magic.png" width="820">
+</p>
+<p align="center">
+  <img alt="Why this pick on one song: the 3rd closest song you own to the seed, 55% of what an identical song would score, and what made its score, ingredient by ingredient" src="docs/img/trace-why.png" width="820">
+</p>
+<p align="center">
+  <img alt="What changed after one Less Like This, on the Show the magic page: mostly a new list, 11 of 51 stayed, the songs gone and new named" src="docs/img/trace-changes.png" width="820">
 </p>
 <p align="center">
   <img alt="Hover help: resting the pointer on Auto-DJ explains what it does" src="docs/img/hover-help.png" width="820">
