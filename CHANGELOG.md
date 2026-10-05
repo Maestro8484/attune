@@ -5,6 +5,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (2026-10-05, the sound-alike cut-off after a vote, by ear)
+
+- **A voted list keeps far more of its songs.** After a More or Less Like This, a list is
+  judged on sound alone against a cut-off that was placed at 79% by a rule of thumb, and
+  it kept two or three of fifty. The cut-off now sits at 66%, placed by ear: four
+  playlists from one steered list, down to a song at 67%, all heard as still sounding like
+  the seed. One seed, one vote; a second seed would make it firmer.
+
 ### Changed (2026-10-05, the icon)
 
 - **Attune has its own icon on the taskbar, the desktop and in the Start menu.** The

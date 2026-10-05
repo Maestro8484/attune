@@ -157,7 +157,16 @@ CLAP_LINE_DEFAULT = 0.99
 # of seeds reach it within 10 songs. That is a property of a single line, not of where it sits.
 FIT_LINE_SOUND = 0.54          # the sound profile
 FIT_LINE_V2_TRAINED = 0.50     # the V2 recipe on trained-weight fingerprints
-CLAP_LINE_TRAINED = 0.79       # the CLAP-only walks on trained-weight fingerprints
+# CLAP_LINE_TRAINED was 0.79 from 2026-10-01, placed by the same 100th-song rule, and it kept
+# 2 or 3 of 50 after one vote (ISSUES.md row 97). Re-placed 2026-10-05 BY EAR (LAW 1): a
+# steered Sandstorm list (one Less Like This) was staged as four playlists at 0.79, 0.74 and
+# 0.70 and the ten songs just below 0.70, down to 0.668 (audit-collections/listening-set,
+# TODO.md row 56). Joe's words, one per list: "steer below 070 - all good, steer_line_070 -
+# all good, steer_line_074 - all pretty good, steer_line_079 - all good really". Every song
+# he heard sat at 0.668 or above and every one sounded like the seed, so the line sits just
+# under the lowest song heard. Nothing below 0.668 was heard; the line does not go lower on
+# this evidence. One seed, one vote: a second seed's ear test would make it firmer.
+CLAP_LINE_TRAINED = 0.66       # the CLAP-only walks on trained-weight fingerprints
 
 # The floor under the line (2026-10-02, Joe: "the recipe shall always produce results").
 # With a line on, a walk still takes at least this share of the count asked for, best

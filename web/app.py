@@ -834,6 +834,14 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         d = float(line) - float(f)
         return "by a hair" if d <= 0.02 else ("by a little" if d <= 0.10 else "by a long way")
 
+    def _against_line(f, line):
+        """A song's share beside the cut-off, or, when the two round to the same number,
+        one phrase that says which side it fell on."""
+        a, b = _share(f), _share(line)
+        if a == b:
+            return f"just under the cut-off of {b}" if float(f) < float(line) else f"right at the cut-off of {b}"
+        return f"{a} of a twin's score; the cut-off is {b}"
+
     def _title_of(j):
         """The song's title alone for a headline; the label carries the artist too."""
         try:
@@ -909,7 +917,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                     f"the {past_n} marked ~ {plural(past_n, 'is', 'are')} past the cut-off.")
             if first_past:
                 body += (f" The best of those, {first_past['label']}, missed it {_gap_words(first_past['fit'], min_fit)} "
-                         f"({_share(first_past['fit'])} of a twin's score; the cut-off is {line_pct}).")
+                         f"({_against_line(first_past['fit'], min_fit)}).")
             body += spacing
             lever("line", "Lower the cut-off")
             if delivered_n < requested:
@@ -926,7 +934,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 body = f"You asked for {requested}."
                 if sl:
                     body += (f" The next closest, {sl['label']}, missed the cut-off {_gap_words(sl['fit'], min_fit)} "
-                             f"({_share(sl['fit'])} of a twin's score; the cut-off is {line_pct}).")
+                             f"({_against_line(sl['fit'], min_fit)}).")
                 body += spacing
                 lever("line", "Lower the cut-off")
                 lever("count", f"Ask for {delivered_n} instead")
@@ -946,7 +954,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         elif reason in ("none_fit", "empty"):
             headline = f"Nothing {own} sounds enough like {like}."
             if sl:
-                body = f"The nearest, {sl['label']}, scores {_share(sl['fit'])} of a twin; the cut-off is {line_pct}."
+                body = f"The nearest, {sl['label']}, scores {_against_line(sl['fit'], min_fit)}."
             else:
                 body = "Nothing could be taken for this seed."
             if counts.get("variety") or counts.get("energy"):
