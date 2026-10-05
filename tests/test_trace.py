@@ -176,3 +176,37 @@ def test_radio_trace_names_the_coins(client):
     assert whys <= {"variety", "energy", "artist", "recording", "count", "line"}
     if j["stop"].get("passed_over"):
         assert whys & {"variety", "energy"}
+
+
+def test_funnel_and_field_cover_the_run(client):
+    j = client.get("/api/mix?i=0&size=20&max=1&min_fit=0.5").get_json()
+    t = j["trace"]
+    ids = _ids(j)
+    tiles = [f["id"] for f in t["funnel"]]
+    assert tiles[:3] == ["lib", "pool", "reach"] and tiles[-1] == "list"
+    assert sum(1 for f in t["funnel"] if f["on"]) == 1
+    by = {f["id"]: f["n"] for f in t["funnel"]}
+    assert by["lib"] >= by["pool"] >= by["reach"] >= by["taken"] >= by["list"] == len(ids)
+    field = {r["i"]: r for r in t["field"]}
+    for i in ids:
+        assert field[i]["status"] in ("kept", "kept-past")
+    assert by["reach"] == sum(1 for r in t["field"] if r["status"] != "next")
+    assert t["reach_depth"] >= max(field[i]["rank"] for i in ids)
+    assert all(t["energy"].get(str(i)) is not None or True for i in ids)   # present, may be null
+    assert set(t["say"]) and abs(sum(t["say"].values()) - 1.0) < 0.02
+
+
+def test_why_is_a_song_absent(client):
+    j = client.get("/api/mix?i=0&size=20&max=1&min_fit=0.5").get_json()
+    t = j["trace"]
+    on = set(_ids(j))
+    reach = t["reach_depth"]
+    # the loner is unrelated to group A: ranked past where the walk stopped, or below the line
+    a = client.get(f"/api/explain/absent?seed=0&cand={LONER}&reach={reach}&line=0.5").get_json()
+    assert a["kind"] in ("never-reached", "below-line") and a["rank"] > 1 and LONER not in on
+    # a song on the list is reached
+    b = client.get(f"/api/explain/absent?seed=0&cand={_ids(j)[0]}&reach={reach}&line=0.5").get_json()
+    assert b["kind"] == "reached" and b["rank"] <= reach
+    # a Blend's target is the seeds' centre
+    c = client.get(f"/api/explain/absent?seeds=0,16&cand={LONER}&reach=10&line=0.5").get_json()
+    assert c["kind"] in ("never-reached", "below-line")

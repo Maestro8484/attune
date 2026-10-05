@@ -371,6 +371,12 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         hybrid, eng_iface, db_path, engine_name, musicip_url, log=print)
     print(f"Ready — {len(eng.paths):,} songs in the mixable pool.")
     is_musicip = engine_name == "musicip"
+    # how many songs the library holds, pool or not, for the first tile of the funnel;
+    # the same number /api/lib/stats reports as db_tracks
+    try:
+        eng.library_total = len(getattr(eng, "meta", {}) or {})
+    except Exception:
+        eng.library_total = 0
     if is_musicip and not active.mip.alive():
         raise SystemExit(
             f"--engine musicip requires a live MusicIP Mixer at {musicip_url}; "
@@ -872,6 +878,43 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                        f=f)
         left.sort(key=lambda d: (-(d["fit"] if d["fit"] is not None else -9), d["rank"] or 1e9))
         left = left[:40]
+        # The field (2026-10-05, TODO.md row 58): every song the walk reached, in rank
+        # order, each with what happened to it, so the window can show the population
+        # behind each number instead of a count. Statuses: kept, kept-past (on the list,
+        # taken past the line), carried (taken past the line, not needed), then the
+        # walk's own reasons (artist, recording, variety, energy), the route's (removed,
+        # blocked, duplicate, near-twin), count (taken, cut for the count), next (the
+        # ten it would have reached next). Capped at 600 rows: the walk asks for at
+        # most 400 and passes over what it passes over; a run that reaches further is
+        # cut at the tail, which is the least fitting end.
+        status = {}
+        for j in rank:
+            status[int(j)] = "kept" if int(j) in dset else "carried"
+        for j in past:
+            status[j] = "kept-past" if j in dset else "carried"
+        for j, _place, _sc, why in (report.get("dropped") or []):
+            status[int(j)] = why
+        for j, why in (report.get("post") or []):
+            if j is not None and int(j) not in dset:
+                status[int(j)] = why
+        for j in rank:
+            if int(j) not in dset and status.get(int(j)) == "carried" and int(j) not in past:
+                status[int(j)] = "count"
+        field = []
+        for j, st in status.items():
+            sc = score.get(j)
+            f = _fit_of(j, sc)
+            field.append({"i": j, "label": labels[j], "rank": rank.get(j) or next(
+                (pl for jj, pl, _s, _w in (report.get("dropped") or []) if int(jj) == j), None),
+                "fit": round(f, 3) if f is not None else None, "status": st})
+        for j, place, sc in (report.get("next") or []):
+            if int(j) not in status:
+                f = _fit_of(int(j), sc)
+                field.append({"i": int(j), "label": labels[int(j)], "rank": place,
+                              "fit": round(f, 3) if f is not None else None, "status": "next"})
+        field.sort(key=lambda d: (d["rank"] or 1e9))
+        field = field[:600]
+        reach_depth = max([(d["rank"] or 0) for d in field if d["status"] != "next"] or [0])
         counts = {}
         for d in (report.get("dropped") or []):
             counts[d[3]] = counts.get(d[3], 0) + 1
@@ -964,7 +1007,52 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                       "sound_only": True}
         else:
             recipe = report.get("recipe") or _recipe()
-        out = {"kind": kind, "recipe": recipe,
+        # the loudness axis Radio's arc steers by, per song on the list, for the arc view;
+        # and for a plain mix, which ingredient carried the list: each term's mean weighted
+        # say over the delivered songs, as a share
+        energy = {}
+        if getattr(eng, "energy", None) is not None:
+            for j in [int(x) for x in head] + delivered:
+                if 0 <= j < len(eng.energy):
+                    e = float(eng.energy[j])
+                    energy[j] = None if e != e else round(e, 2)
+        say = {}
+        if kind == "mix" and seeds and delivered and hasattr(eng, "_terms"):
+            try:
+                si = int(seeds[0])
+                for name, wk, g in eng._terms(si):
+                    contrib = wk * eng._fuse(g)
+                    say[name] = float(np.mean(np.abs(contrib[delivered])))
+                tot = sum(say.values()) or 1.0
+                say = {k: round(v / tot, 3) for k, v in say.items()}
+            except Exception:
+                say = {}
+        n_lib = int(getattr(eng, "library_total", 0) or 0) or None
+        n_taken = len(rank)
+        n_fit = sum(1 for j, f in fit.items() if f >= min_fit) if min_fit is not None else n_taken
+        funnel = [{"id": "lib", "n": n_lib, "label": "in the library",
+                   "note": "everything Attune holds; the Library view"}] if n_lib else []
+        funnel += [
+            {"id": "pool", "n": pool, "label": "to choose from" if cinfo["name"] == "Full library" else f"in {cinfo['name']}",
+             "note": (f"{pool:,} mixable songs, every one scored against the seed" if cinfo["name"] == "Full library"
+                      else f"the collection {cinfo['name']}: {pool:,} songs, every one scored")},
+            {"id": "reach", "n": len([d for d in field if d["status"] != "next"]), "label": "looked at, best first",
+             "note": f"the walk stopped at #{reach_depth:,}; every song ranked past it was never considered"},
+            {"id": "taken", "n": n_taken, "label": "taken by the walk",
+             "note": "; ".join(walk_note) if walk_note else "nothing passed over on the way"},
+        ]
+        if min_fit is not None:
+            funnel.append({"id": "fit", "n": n_fit, "label": f"fit the line {min_fit:.2f}",
+                           "note": f"{len(past)} taken past the line so the list is not empty" if past else "the line ended the walk"})
+        funnel.append({"id": "list", "n": len(delivered), "label": f"on the list of {requested}",
+                       "note": (stop or {}).get("sentence") or ""})
+        lit = {"size": "list", "quota": "list", "fit": "fit", "floor": "fit", "none_fit": "fit",
+               "thinned": "taken", "exhausted": "pool", "trimmed": "list", "empty": "pool",
+               "no_line": "list"}.get(reason, "list")
+        for t in funnel:
+            t["on"] = t["id"] == lit
+        out = {"kind": kind, "recipe": recipe, "field": field, "reach_depth": reach_depth,
+               "energy": energy, "say": say, "funnel": funnel,
                "pool": pool, "collection": cinfo["name"], "line": min_fit,
                "floor": report.get("floor"), "ceiling": round(ceiling, 4),
                "requested": requested, "returned": len(delivered),
@@ -1734,6 +1822,81 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             centre = centre / max(float(np.linalg.norm(centre)), 1e-9)
             extras["to_centre"] = round(float(eng.X[ci].astype(np.float64) @ centre), 3)
         return jsonify(seed=labels[si], cand=labels[ci], **comp, **extras)
+
+    @app.get("/api/explain/absent")
+    @_locked
+    def explain_absent():
+        """Why a song is not on the list on screen (2026-10-05, TODO.md row 58). The
+        window first looks in its own trace (the field says if the walk reached the song
+        and what happened); this answers the rest from the same ranking: the song's place
+        and fit against the run's target, against how deep the walk reached. The target
+        is the seed (seed=), a Blend's seeds (seeds=), or a steer (seed= plus liked= and
+        disliked=), exactly as the routes build it. Nothing is re-walked.
+          kind: 'not-mixable' | 'outside' | 'never-reached' | 'below-line' | 'reached'
+        """
+        if "explain" not in active.capabilities:
+            return jsonify(error=f"explain not supported by the '{active.name}' engine"), 501
+        try:
+            ci = int(request.args.get("cand", ""))
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        if not (0 <= ci < len(eng.paths)):
+            return jsonify(kind="not-mixable", cand=None)
+
+        def _csv(key):
+            out = []
+            for raw in request.args.getlist(key):
+                for part in raw.split(","):
+                    part = part.strip()
+                    if part.isdigit() and 0 <= int(part) < len(eng.paths):
+                        out.append(int(part))
+            return out[:25]
+        seeds, liked, disliked = _csv("seeds"), _csv("liked"), _csv("disliked")
+        try:
+            si = int(request.args.get("seed", "")) if request.args.get("seed") else None
+        except ValueError:
+            return jsonify(error="bad request"), 400
+        try:
+            mask, cinfo = _collection_arg()
+        except ValueError as e:
+            return jsonify(error=str(e)), 400
+        if mask is not None and not mask[ci]:
+            return jsonify(kind="outside", cand=labels[ci], collection=cinfo["name"])
+        try:
+            reach = int(request.args.get("reach") or 0)
+        except ValueError:
+            reach = 0
+        line = request.args.get("line")
+        line = float(line) if line not in (None, "") else None
+        if len(seeds) >= 2 or liked or disliked:
+            # sound alone, as the Blend and the steer rank
+            if len(seeds) >= 2:
+                q = eng.X[seeds].astype(np.float64).mean(axis=0)
+            else:
+                if si is None or not (0 <= si < len(eng.paths)):
+                    return jsonify(error="bad request"), 400
+                q = eng.refine(si, liked_idx=liked, disliked_idx=disliked)
+            q = q / max(float(np.linalg.norm(q)), 1e-9)
+            sc = eng.X.astype(np.float64) @ q
+            ceiling = 1.0
+            excl = set(seeds) | set(liked) | set(disliked) | ({si} if si is not None else set())
+        else:
+            if si is None or not (0 <= si < len(eng.paths)):
+                return jsonify(error="bad request"), 400
+            sc = eng._score(si)
+            ceiling = float(sc[si]) if sc[si] > 1e-9 else 1.0
+            excl = {si}
+        order = np.argsort(-sc)
+        place = int(np.nonzero(order == ci)[0][0]) + 1
+        fit = float(sc[ci]) / ceiling
+        if reach and place > reach:
+            kind = "never-reached"
+        elif line is not None and fit < line:
+            kind = "below-line"
+        else:
+            kind = "reached"
+        return jsonify(kind=kind, cand=labels[ci], rank=place, pool=int(mask.sum()) if mask is not None else len(eng.paths),
+                       fit=round(fit, 3), reach=reach, line=line, excluded=ci in excl)
 
     @app.get("/audio")
     def audio():

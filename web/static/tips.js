@@ -105,7 +105,12 @@
     ['#mixRecipeTag', 'The recipe this mix was made with.'],
     // the trace (2026-10-05)
     ['#lTrace', 'Show or hide the trace: how this list was built, what was left out and why, and what changed since the last step. T does the same.'],
-    ['.tleft tr', 'A song the walk reached and did not keep. Click for the numbers behind it.'],
+    ['.fieldView tr', 'A song the walk reached, with what happened to it. Double-click to play; click the meter for the numbers behind it.'],
+    ['.ftile', 'One stage of the run and how many songs came through it. The lit one decided where the list ended. Click to see those songs.'],
+    ['.fcon', 'What changed between these two stages.'],
+    ['.runlist li', 'One run of this session. Click to compare it as A, shift-click as B.'],
+    ['#whyQ', 'Type part of a song name and press Enter.'],
+    ['#whyGo', 'Ask why the song is not on this list.'],
     ['.tchip', 'An ingredient of the score and its weight. The dials in Mix options set these.'],
     ['.tchain li', 'One stage the engine ran, in order. The lit one decided where the list ended.'],
     ['#btnVerifyCancel', 'Stop looking for missing files.'],

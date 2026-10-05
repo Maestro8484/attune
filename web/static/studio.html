@@ -424,7 +424,11 @@
           <button id="lSave" title="Write this list back into the playlist you opened" hidden>Save</button>
           <!-- The trace (2026-10-05): how this list was built, from the engine's own
                account. Mix view only, and only when the engine sent one. trace.js. -->
-          <button id="lTrace" title="Show or hide the trace: how this list was built, what was left out and why, and what changed since the last step (T)" hidden>Trace</button>
+          <button id="lTrace" title="Show or hide the trace: how this list was built, what changed since the last step, the runs this session, and why a song is not here (T)" hidden>Trace</button>
+          <!-- The list as a table, or as an arc: loudness along the sequence, the closeness
+               of each hand-off as the ground (TODO.md row 58). Mix view only. -->
+          <button id="mixViewList" class="on" title="The list as a table" hidden>☰ List</button>
+          <button id="mixViewArc" title="The list as an arc: how loud each song is along the sequence, Heat under it, and how closely each song hands off to the next; the weakest hand-off marked" hidden>∿ Arc</button>
           <!-- Copy to USB and Export left this row on 2026-09-28 for the SEND TO bar at the
                foot of the list (#sendBar), where both destinations are named on their own
                button. Both stay, hidden, because scripts and the capture tool reach them
@@ -471,6 +475,11 @@
             <tbody id="tbody"></tbody>
           </table>
           <div id="albumGrid" class="albumgrid" hidden></div>
+          <!-- The field (2026-10-05): one population of the run that made the mix, in
+               place of the list, when a number on the funnel is clicked. And the arc.
+               Both painted by trace.js; hidden by every other view like the grid is. -->
+          <div id="fieldView" class="fieldView" hidden></div>
+          <div id="arcView" class="arcView" hidden></div>
           <div id="empty" class="empty" hidden>Nothing here.</div>
         </div>
         <!-- A-Z jump bar (audit item 11) -- Library list only (see renderRows()'s hidden
@@ -514,15 +523,14 @@
            drawn by trace.js from the server's trace of the list on screen. -->
       <div id="traceDrawer" class="traceDrawer" hidden>
         <div class="traceTabs">
-          <button type="button" data-ttab="path" class="on" title="The stages the engine ran, in order, with the one that decided where the list ended lit; what the score is made of; and how each song leads into the next">How it was built</button>
-          <button type="button" data-ttab="left" title="Every song the walk reached and did not keep, best first, with the reason">Left out <b id="traceLeftN"></b></button>
+          <button type="button" data-ttab="built" class="on" title="The stages the engine ran, in order, with the one that decided where the list ended lit; what the score is made of and which ingredient carried the list; the boundary between the songs kept and the rest">How it was built</button>
           <button type="button" data-ttab="changes" title="What the last step kept, dropped and added, compared with the list before it">What changed</button>
+          <button type="button" data-ttab="runs" title="The runs of this session (a mix, a vote, a Blend, new dials), any two compared: inputs side by side, what was kept, dropped and added">Runs</button>
+          <button type="button" data-ttab="why" title="Type a song and learn why it is not on this list: never considered, considered and passed over, below the line, removed, not mixable, or outside the collection">Why isn't it here?</button>
           <span class="spacer"></span>
           <button type="button" id="traceClose" class="x" title="Close the trace">✕</button>
         </div>
-        <div id="tracePath" class="traceBody"></div>
-        <div id="traceLeft" class="traceBody" hidden></div>
-        <div id="traceChanges" class="traceBody" hidden></div>
+        <div id="traceBody" class="traceBody"></div>
       </div>
       <!-- SEND TO: the payoff of a playlist, where a Winamp playlist window keeps its
            bottom row of buttons. Shows only while the list on screen is a playlist (a

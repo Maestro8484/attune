@@ -830,6 +830,10 @@ function renderRows(rows, opts = {}) {
   document.querySelector('#tbl').hidden = false;
   $('albumGrid').hidden = true;
   $('tableWrap').classList.remove('gridmode');
+  // the field and the arc (trace.js) leave with any repaint; Trace.paint() brings the
+  // chosen one back for the mix view right after
+  const fv = $('fieldView'); if (fv) fv.hidden = true;
+  const av = $('arcView'); if (av) av.hidden = true;
   $('diagView').hidden = true;
   $('diagUnavailable').hidden = true;
   $('azBar').hidden = !(S.view === 'library' && !S.folder);

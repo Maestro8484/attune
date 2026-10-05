@@ -18,6 +18,30 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Genre tags, Year, Artist links, Earfeel, each with its weight applied). For a Blend it
   shows how close the song sits to each seed and to their shared centre; for a steered list
   how close it sits to the songs you voted on.
+- **The funnel: the numbers of the run, and the songs behind each one.** Above a mix the
+  stages read as numbers in the order the code ran them: in the library, to choose from,
+  looked at, taken by the walk, fit the line, on the list; the one that decided where the
+  list ended is lit. Click a number and the list becomes that population, best first, with
+  a column saying what happened to each song (on the list, taken past the line, passed over
+  for the same artist within 3, the same recording, a duplicate, set aside for variety, cut
+  for the count, or next in rank beyond where the walk stopped). Every song ranked past
+  where the walk stopped was never considered, and the view says so. Back to the list is
+  one click.
+- **The list as an arc.** A List / Arc switch above a mix: the arc draws how loud each song
+  is along the sequence (the same loudness Radio's energy arc steers by), Earfeel Heat
+  under it, and the closeness of each hand-off as the ground, with the weakest hand-off
+  marked and the shape said in words. It reports; whether it sounds right is your ear.
+- **Runs.** The drawer keeps this session's runs (a mix, a vote, a Blend, new dials), twenty
+  deep, and compares any two: the inputs side by side (seeds, recipe, line, collection,
+  votes, count), the songs kept, gone and new, and which kept songs moved. Where two runs
+  score on different scales (the recipe against sound alone) only places are compared, and
+  it says so.
+- **Why isn't this song here?** Type a song in the drawer: the answer comes from the same
+  ranking that built the list. The seed; here at #n; considered and passed over, with the
+  reason; never considered, with its rank and where the walk stopped; below the line; not
+  mixable; or outside the collection.
+- **What carried the list.** How it was built now shows each ingredient's share of the say
+  over the songs on the list, and a Blend shows how many songs lean to each seed.
 - **Radio shows how each batch was picked.** While Radio is on, Now Playing carries the
   same strip and drawer for the last batch it added, with the coins that passed a song
   over named in Left out.
