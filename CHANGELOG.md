@@ -89,6 +89,13 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   server too (its 0 to 10 scale), including the ratings read in from files. A switch in
   Preferences, Library turns this off.
 
+### Fixed (2026-10-05, the desktop build)
+
+- **A built Attune.exe could not start since 2026-10-02.** The tag editor's file layer was
+  not on the build's file list, so the app opened its splash and stopped with "Couldn't
+  start the engine". The published 0.2.0 is not affected. A test now holds every module
+  under web/ on the list.
+
 ### Fixed (2026-10-02, every tag)
 
 - **Saving a comment in Edit Tags failed on every MP3** with "'comment' is not a valid
