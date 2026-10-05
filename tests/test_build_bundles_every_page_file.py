@@ -29,3 +29,17 @@ def test_every_file_the_page_loads_is_bundled():
     wanted = {"web/static/" + r.rsplit("/", 1)[-1] for r in refs}
     missing = sorted(wanted - _gui_data())
     assert not missing, f"loaded by studio.html but not in desktop/build.py GUI_DATA: {missing}"
+
+
+def test_every_web_module_is_bundled():
+    """Every module under web/ is loaded by path at runtime (app.py and the modules it
+    pulls in import by file, never by package), so one left off GUI_DATA is not a build
+    error: the built app opens, says "Couldn't start the engine: No such file or
+    directory ... tagfile.py", and stops. That happened on 2026-10-05 with the tag
+    editor's file layer, three days after it was added (ISSUES.md row 98). There is no
+    dev-only module under web/, so the rule is simple: all of them, by name."""
+    have = _gui_data()
+    web = sorted("web/" + f for f in os.listdir(os.path.join(ROOT, "web")) if f.endswith(".py"))
+    assert web, "found no modules under web/"
+    missing = [f for f in web if f not in have]
+    assert not missing, f"under web/ but not in desktop/build.py GUI_DATA: {missing}"

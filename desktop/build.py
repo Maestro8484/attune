@@ -90,6 +90,9 @@ GUI_DATA = [
     ("web/studio.py",          "attune/web"),
     # backend modules app.py pulls in by file path
     ("web/userdata.py",        "attune/web"),
+    ("web/tagfile.py",         "attune/web"),   # the tag editor's file layer, 2026-10-02.
+                                                # Left off this list for three days: the
+                                                # built app could not start (ISSUES.md 98)
     ("web/scanjob.py",         "attune/web"),
     ("web/autoscan.py",        "attune/web"),
     ("web/exportjob.py",       "attune/web"),
