@@ -422,6 +422,9 @@
           <button id="lPlay" class="lPrimary" title="Play this list from the top, in this order">▶ Play</button>
           <button id="lSaveNew" title="Save this list, in this order, as a new playlist">Save as new…</button>
           <button id="lSave" title="Write this list back into the playlist you opened" hidden>Save</button>
+          <!-- The trace (2026-10-05): how this list was built, from the engine's own
+               account. Mix view only, and only when the engine sent one. trace.js. -->
+          <button id="lTrace" title="Show or hide the trace: how this list was built, what was left out and why, and what changed since the last step (T)" hidden>Trace</button>
           <!-- Copy to USB and Export left this row on 2026-09-28 for the SEND TO bar at the
                foot of the list (#sendBar), where both destinations are named on their own
                button. Both stay, hidden, because scripts and the capture tool reach them
@@ -506,6 +509,21 @@
         <div id="diagUnavailable" class="empty" hidden>Diagnostics endpoint not available.</div>
       </div>
       <div id="pager" class="pager"></div>
+      <!-- The trace drawer (2026-10-05): closed by default, opened by the Trace button,
+           the T key, or a click on a stage of the strip above the list. Three tabs, all
+           drawn by trace.js from the server's trace of the list on screen. -->
+      <div id="traceDrawer" class="traceDrawer" hidden>
+        <div class="traceTabs">
+          <button type="button" data-ttab="path" class="on" title="The stages the engine ran, in order, with the one that decided where the list ended lit; what the score is made of; and how each song leads into the next">How it was built</button>
+          <button type="button" data-ttab="left" title="Every song the walk reached and did not keep, best first, with the reason">Left out <b id="traceLeftN"></b></button>
+          <button type="button" data-ttab="changes" title="What the last step kept, dropped and added, compared with the list before it">What changed</button>
+          <span class="spacer"></span>
+          <button type="button" id="traceClose" class="x" title="Close the trace">✕</button>
+        </div>
+        <div id="tracePath" class="traceBody"></div>
+        <div id="traceLeft" class="traceBody" hidden></div>
+        <div id="traceChanges" class="traceBody" hidden></div>
+      </div>
       <!-- SEND TO: the payoff of a playlist, where a Winamp playlist window keeps its
            bottom row of buttons. Shows only while the list on screen is a playlist (a
            mix, the queue, an opened playlist, an auto-playlist), so it appears the moment
@@ -1115,6 +1133,7 @@
 <script src="/static/prefs.js"></script>
 <script src="/static/smartlist.js"></script>
 <script src="/static/history.js"></script>
+<script src="/static/trace.js"></script>
 <script src="/static/boot.js"></script>
 <script src="/static/tips.js"></script>
 </body>

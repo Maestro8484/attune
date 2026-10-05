@@ -103,6 +103,11 @@
     ['#viewLabel', 'What the list is showing.'],
     ['#viewSub', 'How many songs, and how long they run.'],
     ['#mixRecipeTag', 'The recipe this mix was made with.'],
+    // the trace (2026-10-05)
+    ['#lTrace', 'Show or hide the trace: how this list was built, what was left out and why, and what changed since the last step. T does the same.'],
+    ['.tleft tr', 'A song the walk reached and did not keep. Click for the numbers behind it.'],
+    ['.tchip', 'An ingredient of the score and its weight. The dials in Mix options set these.'],
+    ['.tchain li', 'One stage the engine ran, in order. The lit one decided where the list ended.'],
     ['#btnVerifyCancel', 'Stop looking for missing files.'],
     ['#saveNewName', 'The name for the new playlist. Enter saves, Escape cancels.'],
     ['#saveNewGo', 'Save the new playlist and open it.'],
@@ -165,6 +170,7 @@
     const th = el.closest('thead th');
     if (th) {
       if (th.dataset.sort === 'pos') return 'The song\'s place in this list: the order it plays and saves in. Drag rows to change it.';
+      if (th.dataset.sort === 'fit') return 'Fit: how close each song sits to a perfect twin of the seed under the recipe in force, 1.00 = identical. The bar runs from the fit line to 1.00; the number is exact. Click a bar for why.';
       return `Click to sort by ${th.textContent.trim().toLowerCase()}; click again to reverse. Right-click to choose which columns show.`;
     }
     const st = el.closest('.stars');

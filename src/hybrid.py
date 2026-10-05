@@ -900,23 +900,39 @@ class HybridEngine:
           fit:            {pool index: fit} for every song taken
           past_line:      [(pool index, fit)] taken past the line to keep the floor
           floor:          the floor the walk was given, or None
+          rank:           {pool index: place in the ranking, 1 = best} for every song
+                          taken (2026-10-05, the trace the window shows)
+          score:          {pool index: the raw score} for every song taken
+          dropped:        [(pool index, place, score, why)] for every song the walk
+                          reached and did not take: 'artist' (the same artist within
+                          artist_spacing), 'recording' (the same recording already on
+                          the list), 'variety' and 'energy' (radio's two coins)
+          next:           [(pool index, place, score)] the next songs in rank order
+                          after the walk stopped, up to ten, so the window can say
+                          what would have come next
         """
         out, recent = [], []
         past = []                   # songs taken past the line so the list is not empty
         passed = []                 # fitting songs the coins passed over, in order
         coin_taken = 0              # of those, how many the floor took back
         last_k = None               # where in `order` the last song taken sat
+        kpos = {}                   # pool index -> its place in `order`, for the trace
+        rank_of, score_of, dropped = {}, {}, []
 
         def _take(j, fit, is_past):
             a = self.artist[j]
             if a and a in recent[-artist_spacing:]:
+                dropped.append((j, kpos.get(j), float(scores[j]), "artist"))
                 return False
             rec = self.recording[j]
             if rec and rec in recs:
+                dropped.append((j, kpos.get(j), float(scores[j]), "recording"))
                 return False
             if rec:
                 recs.add(rec)
             out.append(self.paths[j]); recent.append(a)
+            rank_of[j] = kpos.get(j)
+            score_of[j] = float(scores[j])
             if fit is not None:
                 fit_of[j] = fit
                 if is_past:
@@ -938,6 +954,7 @@ class HybridEngine:
                 continue
             if allowed is not None and not allowed[j]:
                 continue
+            kpos[j] = k
             below = False
             fit = float(scores[j]) / ceiling if min_fit is not None else None
             if min_fit is not None and fit < min_fit:
@@ -956,9 +973,14 @@ class HybridEngine:
                 if floor is None or len(out) >= floor:
                     break
                 below = True                    # the floor, part two: keep going, best first
-            if not below and coin is not None and not coin(j, len(out)):
+            # coin() answers True to keep, or the name of the coin that said no
+            # ('variety', 'energy'); an older coin answering False reads as 'variety'
+            keep = True if coin is None or below else coin(j, len(out))
+            if keep is not True:
                 coin_skipped += 1
                 passed.append(j)
+                dropped.append((j, k, float(scores[j]),
+                                keep if isinstance(keep, str) else "variety"))
                 if min_fit is not None:
                     fit_of_passed[j] = fit
                     if coin_left is None:
@@ -985,6 +1007,27 @@ class HybridEngine:
                 strongest_left = (j, float(scores[j]) / ceiling)
                 break
         if report is not None:
+            # The next songs in rank order that are not on the list and were not dropped
+            # for a reason of their own: what would have come next, for the trace.
+            taken = set(rank_of)
+            seen_drop = {d[0] for d in dropped}
+            nxt = []
+            for k, j in enumerate(order[(last_k + 1 if last_k is not None else 0):],
+                                  start=(last_k + 1 if last_k is not None else 0)):
+                j = int(j)
+                if j in excl or (allowed is not None and not allowed[j]):
+                    continue
+                if j in taken or j in seen_drop:
+                    continue
+                nxt.append((j, k, float(scores[j])))
+                if len(nxt) >= 10:
+                    break
+            report.update({"rank": {j: (k + 1 if k is not None else None)
+                                    for j, k in rank_of.items()},
+                           "score": score_of,
+                           "dropped": [(j, (k + 1 if k is not None else None), s, why)
+                                       for j, k, s, why in dropped],
+                           "next": [(j, k + 1, s) for j, k, s in nxt]})
             # A full list left out its next-best song for COUNT, not for the line; name
             # it too, so a reader can see what the 51st would have been. Found by
             # scanning on from where the walk stopped to the next song it could have
@@ -1031,8 +1074,11 @@ class HybridEngine:
         s = self._score(si)
         order = np.argsort(-s)
         # The seed's own score against itself is the best any song could do under the
-        # active weights, so fit = score / that is 1.0 for a perfect twin.
-        ceiling = float(s[si]) if min_fit is not None and s[si] > 1e-9 else 1.0
+        # active weights, so fit = score / that is 1.0 for a perfect twin. Also found
+        # for a walk without a line that asks for a report, so the trace can say each
+        # song's fit; the walk itself reads the ceiling only when there is a line.
+        ceiling = (float(s[si]) if (min_fit is not None or report is not None)
+                   and s[si] > 1e-9 else 1.0)
         return self._walk(order, s, size, artist_spacing, {si}, allowed=allowed,
                           min_fit=min_fit, ceiling=ceiling, report=report, floor=floor)
 
@@ -1112,17 +1158,18 @@ class HybridEngine:
             if variety <= 0:
                 return True
             if rng.random() >= p_variety:
-                return False                      # variety coin: permanent skip, no lookback
+                return "variety"                  # variety coin: permanent skip, no lookback
             ej = self.energy[j]
             if not np.isnan(ej):
                 target = _target(pos + taken)
                 z = (ej - target) / self.ARC_SIGMA
                 accept_prob = float(np.exp(-0.5 * z * z))
                 if rng.random() >= accept_prob:
-                    return False                  # corridor coin: also a permanent skip
+                    return "energy"               # corridor coin: also a permanent skip
             return True
 
-        ceiling = float(s[si]) if min_fit is not None and s[si] > 1e-9 else 1.0
+        ceiling = (float(s[si]) if (min_fit is not None or report is not None)
+                   and s[si] > 1e-9 else 1.0)
         return self._walk(order, s, n, artist_spacing, excl, allowed=allowed,
                           min_fit=min_fit, ceiling=ceiling, report=report, coin=coin,
                           floor=floor)

@@ -5,6 +5,40 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-05, the mix process made visible)
+
+- **A mix now shows how it was made, from the engine's own record.** Above the list a strip
+  reads the stages in the order they ran: the seed (or the seeds of a Blend, the steer),
+  how many songs were in the pool, how many the walk looked at, how many fit the line, and
+  the count delivered; the stage that decided where the list ended is lit in the accent
+  colour. A **Fit** column gives each song's fit, a meter from the fit line to a perfect
+  twin and the exact number; songs taken past the line stay dimmed with a tilde.
+- **Why this pick says it in the recipe's words.** Right-click a song, or click its Fit
+  meter: its place in the ranking, its fit, and what made its score (Sound fingerprint,
+  Genre tags, Year, Artist links, Earfeel, each with its weight applied). For a Blend it
+  shows how close the song sits to each seed and to their shared centre; for a steered list
+  how close it sits to the songs you voted on.
+- **The Trace drawer**, under the list and closed until asked for (the Trace button, the T
+  key, or a click on a stage). **How it was built** lists the stages with their counts,
+  what the score is made of, and how each song leads into the next (the closeness between
+  neighbours, with the weakest hand-off named). **Left out** lists every song the walk
+  reached and did not keep, best first, with the reason: same artist within 3, the same
+  recording, below the line, removed, blocked, a duplicate, set aside for variety, or
+  passed over by Radio's coins. **What changed** says what the last step kept, dropped and
+  added, with the songs named. Nothing in any of it is generated: a count the code did not
+  keep is not shown, and the MusicIP engine, which Attune cannot see inside, shows none.
+
+### Changed (2026-10-05, the window)
+
+- **The chrome is flat in every theme**, with one accent for what matters: Create Mix, the
+  seed, the song playing, the lit stage of the trace, keyboard focus. Genius is a quiet
+  labelled button beside Create Mix instead of a second loud one. The display, the
+  waveform and the player buttons keep their hardware feel.
+- **The Attune theme is the house look again**, brought up to date: gunmetal, amber, the
+  green display, the heavy bevels reduced to one edge light. It is the default for a fresh
+  install; a theme you chose yourself is kept.
+
+
 ### Added (2026-10-02, every tag, and ratings that other players see)
 
 - **Edit Tags now edits everything a modern player does.** Twenty-two fields (title, artist,

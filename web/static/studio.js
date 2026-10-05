@@ -668,6 +668,9 @@ const COLS = [
   // save. Shown automatically in every list that IS a playlist (see ORDERED_VIEWS) and
   // never offered in the column chooser, because it is not a fact about the song.
   { id: 'pos',    label: '#',      cls: 'c-pos'    },
+  // Fit: how close the song sits to a perfect twin under the recipe in force, from the
+  // engine's trace (trace.js). Mix view only, and only when the engine sent a trace.
+  { id: 'fit',    label: 'Fit',    cls: 'c-fit'    },
   { id: 'track',  label: 'Track',  cls: 'c-track'  },
   { id: 'title',  label: 'Title',  cls: 'c-title'  },
   { id: 'length', label: 'Length', cls: 'c-len'    },
@@ -702,7 +705,9 @@ if (!store.get('colsTrackOff', false)) {
 const ORDERED_VIEWS = new Set(['mix', 'nowplaying', 'playlist', 'smartlist']);
 const DRAG_VIEWS = new Set(['mix', 'nowplaying', 'playlist']);
 function shownCols() {
-  return COLS.filter(c => c.id === 'pos' ? ORDERED_VIEWS.has(S.view) : visCols.has(c.id));
+  return COLS.filter(c => c.id === 'pos' ? ORDERED_VIEWS.has(S.view)
+                        : c.id === 'fit' ? (S.view === 'mix' && !!S.trace)
+                        : visCols.has(c.id));
 }
 /* The Earfeel scores (Pulse, Glow, Heat, Voice, Grain) as optional columns, 0 to 100 = where the song
    sits in this library. Offered only when the engine has an Earfeel file (stats.earfeel is
@@ -725,6 +730,7 @@ function starsHtml(r, cls = 'stars') {
 function cellHtml(c, r, k) {
   switch (c.id) {
     case 'pos':    return k + 1;
+    case 'fit':    return (typeof Trace !== 'undefined') ? Trace.fitCell(r.i) : '';
     case 'track':  return r.track || '';
     case 'title':  return esc(r.title);
     case 'length': return r.length;
@@ -820,6 +826,7 @@ function initColResize() {
 function renderRows(rows, opts = {}) {
   // the "why it stopped" sentence belongs to the mix view only
   if (S.view !== 'mix') { const st = $('mixStop'); if (st) st.hidden = true; }
+  if (typeof Trace !== 'undefined') Trace.onView();
   document.querySelector('#tbl').hidden = false;
   $('albumGrid').hidden = true;
   $('tableWrap').classList.remove('gridmode');
@@ -847,7 +854,10 @@ function renderRows(rows, opts = {}) {
   // honoured on the next launch instead of being overridden. See restoreLastMix() below.
   store.set('lastMix', (S.view === 'mix' && S.seed != null && S.mix.length) ?
     { seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, kind: S.kind, advSize: S.advSize,
-      mix: S.mix } : null);
+      mix: S.mix,
+      // the engine's account of that run and its stop sentence travel with the list, so
+      // the strip and the Fit column come back with it; nothing is recomputed
+      trace: S.trace || null, stop: S.stop || null } : null);
   // mix view shows the inline More/Less Like This (tune) buttons; every other view hides them
   document.querySelector('#tbl').classList.toggle('mixview', S.view === 'mix');
   const tb = $('tbody');
@@ -1480,7 +1490,10 @@ async function mixRestore(snap) {
   renderFilterBar();
   return true;
 }
-function mixStep(label, fn) { return History.snapStep(label, mixSnap, mixRestore, fn); }
+function mixStep(label, fn) {
+  if (typeof Trace !== 'undefined') Trace.noteStep(typeof label === 'string' ? label : '');
+  return History.snapStep(label, mixSnap, mixRestore, fn);
+}
 
 /* The play queue: Play Next, Add to Queue, Remove, Clear, Shuffle, a drag in Now Playing.
    Undo keeps the song that is playing now playing; see Player.restoreQueue. */
@@ -1556,6 +1569,7 @@ async function mixFrom(seedI, opts) {
     S.seed = seedI;
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;                 // why it stopped where it did (one sentence)
+    S.trace = j.trace || null;               // and the engine's own account of the walk (trace.js)
     noteStop(j.stop);
     if (byMinutes) {
       const rows = await jget('/api/lib/rows?' + [seedI, ...ids].map(i => `i=${i}`).join('&'));
@@ -1624,6 +1638,7 @@ async function blendFrom(seedIds, sourceLabel) {
     S.seeds = seedIds.slice(); S.seedTail = []; S.kind = 'blend';
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
+    S.trace = j.trace || null;
     const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
     S.mix = ids.length ? pinSeeds(ids) : [];
     $('mixN').textContent = S.mix.length;
@@ -1678,6 +1693,7 @@ async function adventureFrom(seedIds) {
     S.advSize = +p.get('size');
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
+    S.trace = j.trace || null;
     S.mix = pinSeeds((j.tracks || []).map(x => x.i));
     $('mixN').textContent = S.mix.length;
     toast(`Adventure: ${j.a.label} → ${j.b.label}`);
@@ -1763,6 +1779,7 @@ async function showMix(opts = {}) {
   if (!S.mix.length) {
     renderRows([]);
     $('viewSub').textContent = '0 tracks';      // the sentence is on #mixStop beside it
+    if (typeof Trace !== 'undefined') Trace.paint();
     return;
   }
   const j = await jget('/api/lib/rows?' + S.mix.map(i => `i=${i}`).join('&'));
@@ -1782,6 +1799,7 @@ async function showMix(opts = {}) {
     (votes ? ` · <span class="steer">steering +${S.liked.length} −${S.disliked.length}</span>` +
              ` <button class="chip" id="steerReset" title="Clear all steering and re-mix from the seed">reset</button>`
            : '');
+  if (typeof Trace !== 'undefined') Trace.paint();
 }
 
 /* Crash/restart slice 3: reopen the mix the user last had open. `saved` is read from
@@ -1812,6 +1830,10 @@ async function restoreLastMix(saved) {
     // a Blend or Adventure that lost a seed song since cannot be steered as one any more
     if ((S.kind === 'blend' && S.seeds.length < 2) || (S.kind === 'adventure' && !S.seedTail.length)) S.kind = 'mix';
     S.mix = survived;
+    // the trace is a record of the run that made this list; if a song dropped out
+    // since, the record is of the list as it was, so it is kept only when all survived
+    S.trace = (survived.length === saved.mix.length && saved.trace) ? saved.trace : null;
+    S.stop = S.trace ? (saved.stop || null) : null;
     $('mixN').textContent = S.mix.length;
     await showMix();
   } catch (e) { console.error('[core] restoreLastMix', e); }   // stays on the library view
@@ -2612,21 +2634,10 @@ async function sendToFolder(ids) {
 
 /* ------------------------------------------------------------------ why-this-pick */
 async function showWhy(i, x, y) {
-  if (S.seed == null) return toast('Only available inside a mix', true);
-  if (S.stats.engine !== 'v2') return toast('Why-this-pick needs the V2 engine', true);
-  try {
-    const j = await jget(`/api/explain?seed=${S.seed}&cand=${i}`);
-    const c = Object.fromEntries(Object.entries(j)
-      .filter(([k, v]) => typeof v === 'number'));
-    const max = Math.max(...Object.values(c).map(v => Math.abs(v)), 0.001);
-    const el = $('why');
-    el.innerHTML = `<h4>Why this pick?</h4>` + Object.entries(c).map(([k, v]) => `
-      <div class="bar"><span class="lbl">${esc(k)}</span>
-        <span class="track"><span class="fill ${v < 0 ? 'neg' : ''}"
-          style="width:${Math.abs(v) / max * 100}%"></span></span>
-        <span class="v">${v.toFixed(3)}</span></div>`).join('');
-    placeFloating(el, x, y);
-  } catch (e) { toast(e.message, true); }
+  // the one-song view of the trace: rank, fit and what made the score, in the words
+  // of the recipe; for a Blend how close it sits to each seed; for a steered list how
+  // close to the songs voted on. trace.js owns it; this name stays for the menu.
+  return Trace.showWhy(i, x, y);
 }
 
 /* ---------------------------------------------------------- live mix filters */
@@ -2804,6 +2815,7 @@ async function refine(focusI, msg) {
     });
     const ids = (j.tracks || []).map(x => x.i);
     S.stop = j.stop || null;
+    S.trace = j.trace || null;
     noteStop(j.stop);
     // Compose: seed, then the liked ANCHORS pinned in the order they were liked, then
     // the server's re-ranked picks. The server excludes liked/disliked from its list
@@ -2853,7 +2865,7 @@ function placeFloating(el, x, y, pad = 6) {
 /* ------------------------------------------------------------------ column chooser */
 function openColMenu(x, y) {
   const m = $('colMenu');
-  m.innerHTML = COLS.filter(c => c.id !== 'pos').map(c =>
+  m.innerHTML = COLS.filter(c => c.id !== 'pos' && c.id !== 'fit').map(c =>
     `<li data-col="${c.id}"><span class="ck">${visCols.has(c.id) ? '✓' : ''}</span>${c.label}</li>`).join('');
   placeFloating(m, x, y);
 }
@@ -2925,7 +2937,7 @@ function bindEvents() {
     if (S._colDragged || e.target.closest('.colgrip')) return;   // a resize, not a sort
     const th = e.target.closest('th'); if (!th) return;
     const s = th.dataset.sort;
-    if (s === 'pos') return;              // '#' IS the order; there is nothing to sort by
+    if (s === 'pos' || s === 'fit') return;   // '#' IS the order; Fit is the order's reason
     if (S.sort === s) S.desc = !S.desc; else { S.sort = s; S.desc = false; }
     if (S.view === 'library') { S._userSorted = true; loadLibrary(true); }
     else {
@@ -3538,6 +3550,7 @@ function bindEvents() {
         toast(`Queued ${ids.length}`);
       });
     }
+    else if (k === 't' && !e.ctrlKey && !e.metaKey && S.view === 'mix') Trace.toggle();
     else if (k === 'z') Player.prev();
     else if (k === 'v') Player.stop();
     else if (k === 'b') Player.next();

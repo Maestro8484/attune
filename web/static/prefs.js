@@ -5,8 +5,8 @@
 
 const Prefs = (() => {
   const THEMES = [
-    { id: 'bee',      name: 'Bee',      sw: ['#1a1c20', '#212429', '#3d84c6', '#d0a032'] },
     { id: 'attune',   name: 'Attune',   sw: ['#17191c', '#22252a', '#f0a92e', '#00e800'] },
+    { id: 'bee',      name: 'Bee',      sw: ['#1a1c20', '#212429', '#3d84c6', '#d0a032'] },
     { id: 'obsidian', name: 'Obsidian', sw: ['#0e1014', '#151922', '#6d8cff', '#8b5cf6'] },
     { id: 'aurora',   name: 'Aurora',   sw: ['#060a08', '#0b120e', '#00e07f', '#37cdbe'] },
     { id: 'crimson',  name: 'Crimson',  sw: ['#120d0d', '#1a1212', '#ff5d47', '#e0a030'] },
@@ -57,17 +57,18 @@ const Prefs = (() => {
   }
   function applyThemeEarly() {
     applyLcd(store.get('lcd', 'green'));
-    // The house default is now 'bee' (the MusicBee-style flat skin); 'attune' remains a
-    // first-class choice, one click away. The GUARD is unchanged: a stored theme only
-    // wins once the user has EXPLICITLY picked one (themeChosen) — earlier builds
+    // The house default is 'attune' again (2026-10-05): gunmetal, amber, the LCD, brought
+    // up to date in studio.css. 'bee' (the MusicBee-style flat skin, the default from
+    // 2026-07 to 2026-10) stays one click away. The GUARD is unchanged: a stored theme
+    // only wins once the user has EXPLICITLY picked one (themeChosen) — earlier builds
     // persisted 'obsidian' on every boot, which would otherwise pin old installs to a
     // look nobody chose. An existing themeChosen install therefore keeps its theme.
-    applyTheme(store.get('themeChosen', false) ? store.get('theme', 'bee') : 'bee');
+    applyTheme(store.get('themeChosen', false) ? store.get('theme', 'attune') : 'attune');
   }
   function paintThemeGrid() {
     // The setting wins once it is known (contract F2) -- fall back to the localStorage
     // guess only before settings have loaded at all.
-    const cur = (serverSettings && serverSettings.theme) || store.get('theme', 'bee');
+    const cur = (serverSettings && serverSettings.theme) || store.get('theme', 'attune');
     $('themeGrid').innerHTML = THEMES.map(t => `
       <div class="themecard ${t.id === cur ? 'on' : ''}" data-theme="${t.id}">
         <div class="sw">${t.sw.map(c => `<i style="background:${c}"></i>`).join('')}</div>
@@ -427,7 +428,7 @@ const Prefs = (() => {
       ratings_to_plex: $('prefRatPlex').checked,
       library_folders: collectFolders(),
       exclude_folders: collectFolders('excludeFolders'),
-      theme: store.get('theme', 'bee'),
+      theme: store.get('theme', 'attune'),
       playlist_name_template: $('prefNameTemplate').value.trim(),
       path_flavor: $('prefFlavor').value,
       copy_layout: $('prefCopyLayout').value,

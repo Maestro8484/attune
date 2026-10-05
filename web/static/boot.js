@@ -24,6 +24,7 @@
     ['preferences', () => Prefs.init()],        // modal, splitters, mini mode, scan poll
     ['first-run', () => Prefs.checkFirstRun()], // "point at your music" wizard
     ['auto-playlists', () => Smart.init()],     // tree + rules editor
+    ['trace', () => Trace.bind()],              // the mix trace strip and drawer
   ];
   for (const [name, fn] of steps) {
     try { fn(); } catch (e) { console.error(`[boot] ${name} failed`, e); }

@@ -106,6 +106,11 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
   **USB / car folder**, one click each, and **More...** for playlist files. What you see is
   exactly what you get.
 - **Browse and play.** Search, album and folder views, album art, ratings, loved tracks, tags.
+- **See how a mix was made.** A strip above the list reads the stages the engine ran, with
+  the one that decided the list lit; a **Fit** column gives each song's fit; **Why this
+  pick** gives the numbers behind one song; the **Trace** drawer lists what was left out
+  and why, and what the last change kept, dropped and added. All of it from the engine's
+  own record, none of it written by a model.
 - **Help on hover.** Rest the pointer on any button, dial or setting and it says what it does.
 - **Copy a mix to a USB stick.** Numbered filenames so a car stereo plays them in order, tags
   intact, either flat or as Artist / Album folders.
@@ -154,6 +159,15 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
   <img alt="The album view: every album as a cover" src="docs/img/albums.png" width="820">
 </p>
 
+<p align="center">
+  <img alt="A mix with the trace open: the stages above the list with the fit line lit, the Fit column, and the drawer listing how the list was built and what the score is made of" src="docs/img/trace-path.png" width="820">
+</p>
+<p align="center">
+  <img alt="Why this pick on one song: its place in the ranking, its fit, and what made its score, ingredient by ingredient" src="docs/img/trace-why.png" width="820">
+</p>
+<p align="center">
+  <img alt="What changed after one Less Like This: the songs kept, gone and new, named" src="docs/img/trace-changes.png" width="820">
+</p>
 <p align="center">
   <img alt="Hover help: resting the pointer on Auto-DJ explains what it does" src="docs/img/hover-help.png" width="820">
 </p>

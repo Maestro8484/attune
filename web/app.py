@@ -774,6 +774,223 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                                + nxt + ".")
         return out
 
+    # ---- the trace (2026-10-05): what the engine did, from its own records ---------
+    # The walk keeps each song's place and score and names every song it reached and
+    # did not take (hybrid._walk's report); the route adds what it did after the walk
+    # (bans, duplicates, the near-twin re-pick, flow). _trace() turns that into one
+    # structure the window draws. Nothing in it is inferred or generated: every count
+    # is one the code kept, every song named is one the walk reached, and a stage the
+    # code did not run is not listed. The MusicIP engine gets None: Attune cannot see
+    # inside it and will not pretend to.
+    TERM_LABELS = {"clap": "Sound fingerprint", "lib": "Timbre", "genre": "Genre tags",
+                   "bpm": "Tempo", "era": "Year", "key": "Key", "artist": "Artist links",
+                   "earfeel": "Earfeel"}
+
+    def _recipe():
+        """The score's ingredients as the engine holds them at this moment, with the
+        weights in force (a request's dial overrides are applied by _with_weights, so
+        this is read inside it). Only ingredients that act are listed: a weight of 0,
+        or a term whose data this library lacks, is left out rather than shown as 0."""
+        w = getattr(eng, "w", {}) or {}
+        terms = []
+        for k in ("clap", "lib", "genre", "bpm", "era", "key", "artist", "earfeel"):
+            wk = float(w.get(k) or 0.0)
+            if not wk:
+                continue
+            if k == "lib" and not getattr(eng, "use_lib", False):
+                continue
+            if k == "earfeel" and getattr(eng, "earfeel", None) is None:
+                continue
+            if k == "artist" and not getattr(eng, "similar", None):
+                continue
+            label = TERM_LABELS[k]
+            if k == "clap" and getattr(eng, "clap_space", "raw") == "head":
+                label += " (through the trained head)"
+            terms.append({"id": k, "label": label, "weight": round(wk, 3)})
+        return {"profile": getattr(eng, "profile", "v2"),
+                "fusion": getattr(eng, "fusion", "raw"),
+                "space": getattr(eng, "clap_space", "raw"), "terms": terms}
+
+    def _trace(kind, report, picks_i, requested, cinfo, min_fit, stop=None, head=(),
+               seeds=(), votes=None, flow=False, variety=False, walk_asked=None):
+        """One account of how this list came to be. `picks_i` are the pool indices the
+        route delivers (without the seeds); `head` the songs the window pins in front
+        of them (the seed, a Blend's seeds), so the transitions run over the list as
+        shown. See the note above TERM_LABELS for what this is and is not."""
+        if report is None:
+            return None
+        pool = cinfo["size"]
+        ceiling = float(report.get("ceiling") or 1.0) or 1.0
+        rank = report.get("rank") or {}
+        score = report.get("score") or {}
+        fit = report.get("fit") or {}
+        past = {int(j) for j, _ in (report.get("past_line") or [])}
+        delivered = [int(j) for j in picks_i]
+        dset = set(delivered)
+
+        def _fit_of(j, sc):
+            if j in fit:
+                return float(fit[j])
+            return (float(sc) / ceiling) if sc is not None else None
+
+        songs = {}
+        for j in delivered:
+            sc = score.get(j)
+            f = _fit_of(j, sc)
+            songs[j] = {"rank": rank.get(j),
+                        "score": round(float(sc), 4) if sc is not None else None,
+                        "fit": round(f, 3) if f is not None else None,
+                        "past": j in past}
+        # every song the walk reached and did not deliver, best first, with the reason
+        left, seen = [], set()
+
+        def _leave(j, place, sc, why, f=None):
+            j = int(j)
+            if j in dset or j in seen:
+                return
+            seen.add(j)
+            if f is None:
+                f = _fit_of(j, sc)
+            left.append({"i": j, "label": labels[j], "rank": place,
+                         "fit": round(float(f), 3) if f is not None else None, "why": why})
+        for j, place, sc, why in (report.get("dropped") or []):
+            _leave(j, place, sc, why)
+        for j, why in (report.get("post") or []):
+            if j is not None:
+                _leave(j, rank.get(int(j)), score.get(int(j)), why)
+        for j, place, sc in (report.get("next") or []):
+            f = _fit_of(int(j), sc)
+            _leave(j, place, sc, "line" if (min_fit is not None and f is not None
+                                           and f < min_fit) else "count")
+        for key in ("strongest_left", "coin_left"):
+            t = report.get(key)
+            if t:
+                j, f = t
+                _leave(j, rank.get(int(j)), score.get(int(j)),
+                       "variety" if key == "coin_left" else
+                       ("line" if (min_fit is not None and f < min_fit) else "count"),
+                       f=f)
+        left.sort(key=lambda d: (-(d["fit"] if d["fit"] is not None else -9), d["rank"] or 1e9))
+        left = left[:40]
+        counts = {}
+        for d in (report.get("dropped") or []):
+            counts[d[3]] = counts.get(d[3], 0) + 1
+        for _j, why in (report.get("post") or []):
+            counts[why] = counts.get(why, 0) + 1
+
+        # the chain of stages, in the order the code ran them, with the count that
+        # left each one; `on` marks the stage that decided where the list ended
+        reason = (stop or {}).get("reason")
+        n_seeds = len(seeds)
+        if kind == "blend":
+            first = {"id": "seeds", "n": n_seeds, "label": f"{n_seeds} seeds blended",
+                     "note": "ranked against the seeds' shared centre, sound alone"}
+        elif kind == "adventure":
+            first = {"id": "seeds", "n": 2, "label": "from one song to another",
+                     "note": f"{max(requested, 0)} stops along the straight line between them, sound alone"}
+        elif kind == "steer":
+            v = votes or {}
+            first = {"id": "seeds", "n": n_seeds,
+                     "label": f"steered +{len(v.get('liked') or [])} -{len(v.get('disliked') or [])}",
+                     "note": "the seed's sound pulled toward the liked songs and away from the disliked"}
+        elif kind == "radio":
+            first = {"id": "seeds", "n": 1, "label": "from the song playing",
+                     "note": "the next batch for the queue"}
+        else:
+            first = {"id": "seeds", "n": n_seeds or 1, "label": "1 seed",
+                     "note": "every song in the pool scored against it"}
+        stages = [first,
+                  {"id": "pool", "n": pool, "label": f"{pool:,} in {cinfo['name']}",
+                   "note": f"{pool:,} songs the walk could choose from, every one scored"}]
+        # the walk runs before the line can stop it: it looks at candidates best first,
+        # passes over some (same artist within 3, the same recording, radio's coins),
+        # and the line ends it; so the stages sit in that order
+        reached = len(rank) + len(report.get("dropped") or [])
+        walk_note = []
+        if counts.get("artist"):
+            walk_note.append(f"{counts['artist']} passed over, same artist within 3")
+        if counts.get("recording"):
+            walk_note.append(f"{counts['recording']} the same recording twice")
+        if counts.get("variety") or counts.get("energy"):
+            walk_note.append(f"Radio's coins passed over {counts.get('variety', 0) + counts.get('energy', 0)}")
+        stages.append({"id": "walk", "n": reached, "label": f"looked at {reached:,}",
+                       "note": "best first; " + ("; ".join(walk_note) or "nothing passed over on the way")})
+        if min_fit is not None:
+            n_fit = sum(1 for j, f in fit.items() if f >= min_fit)
+            stages.append({"id": "line", "n": n_fit, "label": f"{n_fit} fit the line {min_fit:.2f}",
+                           "note": f"{n_fit} of the songs taken sit at or above the fit line"
+                           + (f"; {len(past)} taken past it so the list is not empty" if past else "")})
+        else:
+            stages.append({"id": "line", "n": None, "label": "count is a quota",
+                           "note": "no fit line: the list is filled to the count asked for"})
+        post_note = []
+        if counts.get("removed"):
+            post_note.append(f"{counts['removed']} removed by you")
+        if counts.get("blocked"):
+            post_note.append(f"{counts['blocked']} by a blocked artist")
+        if counts.get("duplicate"):
+            post_note.append(f"{counts['duplicate']} duplicates")
+        if variety:
+            post_note.append(f"{counts.get('near-twin', 0)} near-twins set aside for variety")
+        if post_note:
+            stages.append({"id": "after", "n": len(delivered), "label": f"thinned to {len(delivered)}",
+                           "note": "; ".join(post_note)})
+        if flow:
+            stages.append({"id": "flow", "n": len(delivered), "label": "arranged for flow",
+                           "note": "each song placed after the one it sounds closest to"})
+        stages.append({"id": "result", "n": len(delivered),
+                       "label": f"{len(delivered)} of {requested}",
+                       "note": (stop or {}).get("sentence") or ""})
+        decider = {"size": "result", "quota": "result", "fit": "line", "floor": "line",
+                   "none_fit": "line", "thinned": "walk", "exhausted": "pool",
+                   "trimmed": "after", "empty": "pool", "no_line": "result"}.get(reason, "result")
+        for st in stages:
+            st["on"] = st["id"] == decider
+
+        # how each song leads into the next, over the list as the window shows it: the
+        # cosine between neighbours in the space the engine scores in
+        order_i = [int(j) for j in head] + delivered
+        trans = []
+        if len(order_i) >= 2 and getattr(eng, "X", None) is not None and len(eng.X):
+            try:
+                M = eng._clap_matrix(getattr(eng, "clap_space", "raw")) if kind == "mix" else eng.X
+                rows = M[order_i].astype(np.float64)
+                trans = [round(float(rows[k] @ rows[k + 1]), 3) for k in range(len(order_i) - 1)]
+            except Exception:
+                trans = []
+        if kind in ("blend", "adventure", "steer"):
+            recipe = {"profile": getattr(eng, "profile", "v2"), "fusion": "raw", "space": "raw",
+                      "terms": [{"id": "clap", "label": "Sound fingerprint", "weight": 1.0}],
+                      "sound_only": True}
+        else:
+            recipe = report.get("recipe") or _recipe()
+        out = {"kind": kind, "recipe": recipe,
+               "pool": pool, "collection": cinfo["name"], "line": min_fit,
+               "floor": report.get("floor"), "ceiling": round(ceiling, 4),
+               "requested": requested, "returned": len(delivered),
+               "walk_asked": walk_asked, "decider": decider, "reason": reason,
+               "stages": stages, "songs": songs, "left_out": left,
+               "transitions": trans, "order": order_i,
+               "seeds": [{"i": int(j), "label": labels[int(j)]} for j in seeds]}
+        if kind == "blend" and seeds and delivered:
+            # how close each delivered song sits to each seed, sound alone
+            SV = eng.X[[int(j) for j in seeds]].astype(np.float64)
+            C = eng.X[delivered].astype(np.float64) @ SV.T
+            for r, j in enumerate(delivered):
+                songs[j]["seeds"] = [round(float(x), 3) for x in C[r]]
+        if kind == "steer" and votes and delivered:
+            for key in ("liked", "disliked"):
+                ids = [int(j) for j in (votes.get(key) or [])][:12]
+                if not ids:
+                    continue
+                C = eng.X[delivered].astype(np.float64) @ eng.X[ids].astype(np.float64).T
+                for r, j in enumerate(delivered):
+                    songs[j].setdefault("votes", {})[key] = [round(float(x), 3) for x in C[r]]
+            out["votes"] = {key: [{"i": int(j), "label": labels[int(j)]}
+                                  for j in (votes.get(key) or [])][:12]
+                            for key in ("liked", "disliked")}
+        return out
+
     def _build_mix(i, size, field=None, variety=False, flow=False, bans=None,
                    mask=None, min_fit=None, report=None, floor=None):
         """Return (seed_path, picks). With a dedup field, over-fetch then collapse
@@ -818,23 +1035,44 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         rep = report if report is not None else {}
         picks = eng.mix(seed, size=pool_size, allowed=mask, min_fit=min_fit,
                         report=rep, floor=walk_floor) or []
+        # for the trace: the recipe in force, and every song this route drops after the
+        # walk with the reason (rep["post"]); see _trace()
+        rep["recipe"] = _recipe()
+        rep["walk_asked"] = pool_size
+        post = rep.setdefault("post", [])
+
+        def _note(gone, why):
+            for p in gone:
+                pi = eng.idx.get(p)
+                if pi is not None:
+                    post.append((pi, why))
         # The songs carried past the line are a tail: bans, dedup, variety and flow run
         # over the fitting songs alone, and the tail is appended, best first, only when
         # fewer than the floor survive. So a carried song never displaces a fitting one.
         picks, carried = _split_carried(rep, picks)
+        before = picks
         picks = _drop_banned(picks, ban_i, ban_art)
+        kept = set(picks)
+        for p in before:
+            if p not in kept:
+                pi = eng.idx.get(p)
+                post.append((pi, "removed" if pi in ban_i else "blocked"))
         seen = {_dupkey(seed, field)} if field else None
         if field:
             uniq = []
             for p in picks:
                 k = _dupkey(p, field)
                 if k in seen:
+                    post.append((eng.idx.get(p), "duplicate"))
                     continue
                 seen.add(k)
                 uniq.append(p)
             picks = uniq
         if variety:
+            before = picks
             picks = eng.mmr(picks, k=size, lambda_=0.3)
+            chosen = set(picks)
+            _note([p for p in before if p not in chosen], "near-twin")
         else:
             picks = picks[:size]
         if flow:
@@ -1075,12 +1313,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             variety = min(max(int(request.args.get("variety", MUSICIP_VARIETY_DEFAULT)), 0), MUSICIP_VARIETY_MAX)
             return jsonify(
                 seed=labels[i], seed_i=i, tracks=tracks, style=style, variety=variety,
-                stop=stop, collection=cinfo)
+                stop=stop, collection=cinfo, trace=None)
 
         overrides = _weight_overrides()
         effective = {k: overrides.get(k, eng.w.get(k)) for k in SLIDER_KEYS}
+        trace = _trace("mix", report, picks_i, size, cinfo, min_fit, stop=stop, head=[i],
+                       seeds=[i],
+                       flow=(request.args.get("flow") or "").lower() in ("1", "true", "on"),
+                       variety=(request.args.get("variety") or "").lower() in ("1", "true", "on"),
+                       walk_asked=report.get("walk_asked"))
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks, weights=effective,
-                       stop=stop, collection=cinfo)
+                       stop=stop, collection=cinfo, trace=trace)
 
     @app.get("/api/radio/next")
     @_locked
@@ -1159,8 +1402,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error=f"radio not supported by the '{active.name}' engine"), 501
         tracks = [{"i": r.pool_i, "label": r.label} for r in refs]
         stop = _stop_info(report, n, len(tracks), cinfo, min_fit)
+        trace = _trace("radio", report, [r.pool_i for r in refs], n, cinfo, min_fit,
+                       stop=stop, head=[i], seeds=[i])
         return jsonify(seed=labels[i], seed_i=i, tracks=tracks,
-                       variety=variety, arc=arc, pos=pos, stop=stop, collection=cinfo)
+                       variety=variety, arc=arc, pos=pos, stop=stop, collection=cinfo,
+                       trace=trace)
 
     @app.get("/api/mix/blend")
     @_locked
@@ -1210,8 +1456,13 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         ledger.record("blend", seeds=[labels[s] for s in seeds], n=len(tracks),
                       cohesion=round(cohesion, 3))
         stop = _stop_info(report, size, len(tracks), cinfo, min_fit)
+        trace = _trace("blend", report, [r.pool_i for r in refs], size, cinfo, min_fit,
+                       stop=stop, head=seeds, seeds=seeds)
+        if trace is not None:
+            trace["cohesion"] = round(float(cohesion), 3)
         return jsonify(seeds=[{"i": s, "label": labels[s]} for s in seeds],
-                       tracks=tracks, cohesion=cohesion, stop=stop, collection=cinfo)
+                       tracks=tracks, cohesion=cohesion, stop=stop, collection=cinfo,
+                       trace=trace)
 
     @app.get("/api/mix/adventure")
     @_locked
@@ -1254,8 +1505,10 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         # requested/returned count the STOPS between the two ends, which is what the
         # line acts on; the two ends are always there.
         stop = _stop_info(report, size - 2, len(tracks) - 2, cinfo, min_fit)
+        trace = _trace("adventure", report, [r.pool_i for r in refs[1:]], size - 2, cinfo,
+                       min_fit, stop=stop, head=[a], seeds=[a, b])
         return jsonify(a={"i": a, "label": labels[a]}, b={"i": b, "label": labels[b]},
-                       tracks=tracks, stop=stop, collection=cinfo)
+                       tracks=tracks, stop=stop, collection=cinfo, trace=trace)
 
     @app.post("/api/refine")
     @_locked
@@ -1379,8 +1632,11 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             # top of its count, so the "N of M" sentence counts stops only
             on_path = sum(1 for t in tracks if t["i"] in set(kept))
             stop = _stop_info(report, adv_size - 2, len(tracks) - 2 - on_path, cinfo, min_fit)
+            trace = _trace("adventure", report, [r.pool_i for r in refs[1:]], adv_size - 2,
+                           cinfo, min_fit, stop=stop, head=[adv_a], seeds=[adv_a, adv_b],
+                           votes={"liked": liked + liked_art, "disliked": disliked + disliked_art})
             return jsonify(seed=labels[adv_a], seed_i=adv_a, kind="adventure",
-                           tracks=tracks, stop=stop, collection=cinfo)
+                           tracks=tracks, stop=stop, collection=cinfo, trace=trace)
         try:
             # Artist votes STEER the query vector but are not excluded from the result.
             # Per-track votes keep their existing exclude semantics (you already have
@@ -1414,12 +1670,17 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             return jsonify(error=str(e)), 400
 
         stop = _stop_info(report, size, len(picks), cinfo, min_fit)
+        head = blend_seeds if len(blend_seeds) >= 2 else [i]
+        trace = _trace("steer", report, [eng.idx[p] for p in picks], size, cinfo, min_fit,
+                       stop=stop, head=head + [x for x in liked if x not in head],
+                       seeds=head,
+                       votes={"liked": liked + liked_art, "disliked": disliked + disliked_art})
         return jsonify(
             seed=labels[i],
             seed_i=i,
             kind="blend" if len(blend_seeds) >= 2 else "mix",
             tracks=[{"i": eng.idx[p], "label": _label(eng, p)} for p in picks],
-            stop=stop, collection=cinfo,
+            stop=stop, collection=cinfo, trace=trace,
         )
 
     @app.get("/api/explain")
@@ -1440,7 +1701,39 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             comp = eng.explain(si, ci)
         except ValueError as e:
             return jsonify(error=str(e)), 400
-        return jsonify(seed=labels[si], cand=labels[ci], **comp)
+
+        def _csv(key):
+            out = []
+            for raw in request.args.getlist(key):
+                for part in raw.split(","):
+                    part = part.strip()
+                    if not part:
+                        continue
+                    try:
+                        v = int(part)
+                    except ValueError:
+                        continue
+                    if 0 <= v < len(eng.paths):
+                        out.append(v)
+            return out[:25]
+
+        def _close(ids):
+            # plain cosine between the candidate's fingerprint and each song's: the
+            # number a Blend ranks on and a steer pulls with, nothing more
+            if not ids:
+                return []
+            C = eng.X[ids].astype(np.float64) @ eng.X[ci].astype(np.float64)
+            return [{"i": j, "label": labels[j], "cos": round(float(c), 3)} for j, c in zip(ids, C)]
+        extras = {"recipe": _recipe(),
+                  "to_seeds": _close(_csv("seeds")),
+                  "to_liked": _close(_csv("liked")),
+                  "to_disliked": _close(_csv("disliked"))}
+        seeds = _csv("seeds")
+        if len(seeds) >= 2:
+            centre = eng.X[seeds].astype(np.float64).mean(axis=0)
+            centre = centre / max(float(np.linalg.norm(centre)), 1e-9)
+            extras["to_centre"] = round(float(eng.X[ci].astype(np.float64) @ centre), 3)
+        return jsonify(seed=labels[si], cand=labels[ci], **comp, **extras)
 
     @app.get("/audio")
     def audio():
