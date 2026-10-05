@@ -210,3 +210,68 @@ def test_why_is_a_song_absent(client):
     # a Blend's target is the seeds' centre
     c = client.get(f"/api/explain/absent?seeds=0,16&cand={LONER}&reach=10&line=0.5").get_json()
     assert c["kind"] in ("never-reached", "below-line")
+
+
+# ---- the verdict (2026-10-05, TODO.md row 59): the numbers in a listener's words -------
+
+def _v(j):
+    assert j.get("trace") is not None
+    v = j["trace"].get("verdict")
+    assert v and v["headline"] and isinstance(v["levers"], list)
+    return v
+
+
+def test_verdict_says_the_count_and_the_cut_off_in_words(client):
+    """A mix whose list stopped at the line, or was filled past it, says so without a bare
+    decimal: the cut-off as a percentage, the gap in words, and a lever that names the
+    control. The raw numbers stay in the trace beside it."""
+    j = client.get("/api/mix?i=0&size=20&max=1&min_fit=0.5").get_json()
+    v = _v(j)
+    reason = j["stop"]["reason"]
+    assert "0.5" not in v["headline"], v
+    assert "the line" not in v["headline"] and "the line" not in v["body"], v
+    if reason in ("floor", "fit", "none_fit"):
+        assert "cut-off" in v["body"] or "cut-off" in v["headline"], v
+        assert any(l["id"] == "line" for l in v["levers"]), v
+    if reason == "floor":
+        assert "marked ~" in v["body"], v
+        assert any(w in v["body"] for w in ("by a hair", "by a little", "by a long way")), v
+    assert v["levers"][-1]["id"] == "magic"
+
+
+def test_verdict_for_a_full_list_names_the_last_song_in(client):
+    j = client.get("/api/mix?i=0&size=5&max=1&min_fit=0.0").get_json()
+    v = _v(j)
+    assert v["headline"].startswith("All "), v
+    assert "of a twin's score" in v["body"], v
+
+
+def test_verdict_for_a_quota_mix_says_so(client):
+    j = client.get("/api/mix?i=0&size=20").get_json()
+    v = _v(j)
+    assert "as asked" in v["headline"], v
+    assert "quota" in v["body"], v
+
+
+def test_verdict_for_a_blend_opens_with_how_the_seeds_agree(client):
+    j = client.get("/api/mix/blend?i=0&i=16&size=20").get_json()
+    v = _v(j)
+    assert v["body"].startswith("The seeds "), v
+    assert "% alike" in v["body"], v
+
+
+def test_verdict_for_a_steered_list_explains_the_other_cut_off(client):
+    j = client.get("/api/mix?i=0&size=20").get_json()
+    liked = _ids(j)[0]
+    r = client.post("/api/refine", json={"i": 0, "size": 20, "liked": [liked], "disliked": [],
+                                         "max": 1, "min_fit": 0.5}).get_json()
+    v = _v(r)
+    assert "fingerprint closeness alone" in v["body"], v
+    assert any(l["id"] == "undo" for l in v["levers"]), v
+
+
+def test_verdict_for_radio_counts_the_batch(client):
+    j = client.get("/api/radio/next?seed=0&n=8&variety=3&rng=7").get_json()
+    v = _v(j)
+    assert v["headline"].startswith("Radio "), v
+    assert any(l["id"] == "variety" for l in v["levers"]), v

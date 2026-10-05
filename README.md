@@ -160,7 +160,7 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 </p>
 
 <p align="center">
-  <img alt="A mix with the trace open: the stages above the list with the fit line lit, the Fit column, and the drawer listing how the list was built and what the score is made of" src="docs/img/trace-path.png" width="820">
+  <img alt="A mix with the trace open (the morning build of 2026-10-05): the stages above the list with the fit line lit, the Fit column, and the drawer listing how the list was built. Since that evening the stages are a card in words over a sieve of bars, and the drawer is the Show the magic view" src="docs/img/trace-path.png" width="820">
 </p>
 <p align="center">
   <img alt="Why this pick on one song: its place in the ranking, its fit, and what made its score, ingredient by ingredient" src="docs/img/trace-why.png" width="820">

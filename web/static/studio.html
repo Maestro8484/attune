@@ -328,6 +328,10 @@
         <li data-view="library" class="on"><span class="ti">▤</span> Library</li>
         <li data-view="nowplaying"><span class="ti">▶</span> Now Playing <b id="npN">0</b></li>
         <li data-view="mix"><span class="ti">✦</span> Mix <b id="mixN">0</b></li>
+        <!-- Show the magic (2026-10-05, TODO.md row 59, Joe's name for it): everything
+             Attune did to make the list on screen, from the engine's own account (the
+             trace, trace.js). Lights up once when a run arrives; grey otherwise. -->
+        <li data-view="magic" title="Everything Attune did to make the list on screen: the numbers of the run in a listener's words, every song it looked at and what happened to it, the list as an arc, the runs of this session compared, and why a song is not here. T opens it from a mix"><span class="ti">◈</span> Show the magic <b id="magicNew" class="newb" hidden>new</b></li>
         <!-- Folded shut by default (GUI Flow Audit, 2026-09-22: "simplify"). The heading is
              the switch, the same idiom as Folders below. -->
         <li class="grouphead foldhead" id="smartHead" title="Show or hide the smart views">Smart Views <span class="fold" id="smartTog">▸</span></li>
@@ -424,7 +428,7 @@
           <button id="lSave" title="Write this list back into the playlist you opened" hidden>Save</button>
           <!-- The trace (2026-10-05): how this list was built, from the engine's own
                account. Mix view only, and only when the engine sent one. trace.js. -->
-          <button id="lTrace" title="Show or hide the trace: how this list was built, what changed since the last step, the runs this session, and why a song is not here (T)" hidden>Trace</button>
+          <button id="lTrace" title="Show the magic: everything Attune did to make this list, in a listener's words, with every song it looked at (T)" hidden>◈ Show the magic</button>
           <!-- The list as a table, or as an arc: loudness along the sequence, the closeness
                of each hand-off as the ground (TODO.md row 58). Mix view only. -->
           <button id="mixViewList" class="on" title="The list as a table" hidden>☰ List</button>
@@ -480,6 +484,8 @@
                Both painted by trace.js; hidden by every other view like the grid is. -->
           <div id="fieldView" class="fieldView" hidden></div>
           <div id="arcView" class="arcView" hidden></div>
+          <!-- Show the magic (trace.js paintMagic): the account of the run as a page -->
+          <div id="magicView" class="magicView" hidden></div>
           <div id="empty" class="empty" hidden>Nothing here.</div>
         </div>
         <!-- A-Z jump bar (audit item 11) -- Library list only (see renderRows()'s hidden
@@ -518,20 +524,8 @@
         <div id="diagUnavailable" class="empty" hidden>Diagnostics endpoint not available.</div>
       </div>
       <div id="pager" class="pager"></div>
-      <!-- The trace drawer (2026-10-05): closed by default, opened by the Trace button,
-           the T key, or a click on a stage of the strip above the list. Three tabs, all
-           drawn by trace.js from the server's trace of the list on screen. -->
-      <div id="traceDrawer" class="traceDrawer" hidden>
-        <div class="traceTabs">
-          <button type="button" data-ttab="built" class="on" title="The stages the engine ran, in order, with the one that decided where the list ended lit; what the score is made of and which ingredient carried the list; the boundary between the songs kept and the rest">How it was built</button>
-          <button type="button" data-ttab="changes" title="What the last step kept, dropped and added, compared with the list before it">What changed</button>
-          <button type="button" data-ttab="runs" title="The runs of this session (a mix, a vote, a Blend, new dials), any two compared: inputs side by side, what was kept, dropped and added">Runs</button>
-          <button type="button" data-ttab="why" title="Type a song and learn why it is not on this list: never considered, considered and passed over, below the line, removed, not mixable, or outside the collection">Why isn't it here?</button>
-          <span class="spacer"></span>
-          <button type="button" id="traceClose" class="x" title="Close the trace">✕</button>
-        </div>
-        <div id="traceBody" class="traceBody"></div>
-      </div>
+      <!-- The trace drawer that sat here on 2026-10-05 moved whole into the Show the magic
+           view the same day (TODO.md row 59): one home for the account of a run. -->
       <!-- SEND TO: the payoff of a playlist, where a Winamp playlist window keeps its
            bottom row of buttons. Shows only while the list on screen is a playlist (a
            mix, the queue, an opened playlist, an auto-playlist), so it appears the moment
@@ -703,6 +697,20 @@
 </div>
 
 <div id="toast" class="toast" hidden></div>
+<!-- The reveal (2026-10-05, TODO.md row 59, Joe: "like a popup screen while the playlist
+     is being generated, shown briefly ... with animation of 'showing the magic'"): opens
+     the moment a fresh list arrives, replays the recorded numbers of the run for three
+     seconds (never a progress bar: the engine takes about a second and this does not
+     pretend otherwise), then flies into the Show the magic item in the side list. Any
+     click or Esc skips it; the list under it is already live. Preferences, Appearance
+     says when it plays. trace.js reveal(). -->
+<div id="reveal" class="reveal" hidden>
+  <div class="rpop" id="rpop" role="status" aria-live="polite">
+    <div class="rey"><span>Showing the magic</span><i id="rskip">click or Esc to skip</i></div>
+    <div class="rhl" id="rhl">&nbsp;</div>
+    <div class="sieve" id="rsieve"></div>
+  </div>
+</div>
 <div id="why" class="why" hidden></div>
 
 <!-- Preferences modal: eight sections down the left, that section's fields on the
@@ -956,6 +964,15 @@
                  that is meant to look like hardware. Four classic display colours: green
                  phosphor, amber phosphor, the blue-green of a hi-fi deck's vacuum
                  fluorescent display, and a modern white. -->
+            <!-- When the reveal plays (TODO.md row 59). Not for Radio batches or the step
+                 buttons, which update the card over the list in place. -->
+            <div class="prefrow"><span class="k">Showing the magic</span>
+              <div class="v"><select id="prefReveal">
+                  <option value="every">After every new mix, for three seconds</option>
+                  <option value="first">After the first mix of a session only</option>
+                  <option value="never">Never; the card over the list says it</option>
+                </select>
+                <span class="hint">The short replay of how the list was made, over the list, the moment it arrives. Any click skips it.</span></div></div>
             <div class="prefrow"><span class="k">Display colour</span>
               <div class="v"><div class="lcdgrid" id="lcdGrid"></div>
                 <span class="hint">The time and song readout under the player buttons.

@@ -1367,6 +1367,12 @@ const Prefs = (() => {
       document.querySelectorAll('.tabpage').forEach(p =>
         p.hidden = p.dataset.page !== b.dataset.tab);
     });
+    // when the reveal plays: live, no Save needed (trace.js reads it each run)
+    const pr = $('prefReveal');
+    if (pr) {
+      pr.value = store.get('reveal', 'every');
+      pr.addEventListener('change', () => store.set('reveal', pr.value));
+    }
     // display colour cards: live, no Save needed
     $('lcdGrid').addEventListener('click', e => {
       const c = e.target.closest('.lcdcard'); if (!c) return;

@@ -5,6 +5,39 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-05, evening: the numbers in words, and Show the magic)
+
+- **The mix header says what happened in a listener's words.** In place of a line like
+  "9 of 100 fit the line of 0.54 ... the first, at 0.511", a card over the list reads:
+  "Only 9 songs you own sound enough like Sandstorm. You asked for 100. Attune kept going
+  to 50 so you have something to play; the 41 marked ~ are past the cut-off. The best of
+  those, Love Island, missed it by a little (51% of a twin's score; the cut-off is 54%).
+  On the way, 55 close songs were held back so no artist repeats within three songs."
+  Every sentence is built only from counts the engine kept. Under it sit the controls that
+  change the outcome, as buttons: Lower the cut-off, Ask for 50 instead, Clear the votes.
+- **The sieve.** The numbers of the run as bars sized by count, narrowing in the order the
+  code ran them: in your library, can be mixed, looked at, taken, sound enough like it, on
+  the list. The deciding bar glows; the cut-off is a dashed line; a list filled in past the
+  cut-off shows the fit share solid and the rest hatched. Click a bar and the list becomes
+  that population.
+- **Show the magic**, a view of its own under Mix in the side list: the card and the sieve,
+  the hill (every song looked at, closest first, its fit as height, the cut-off dashed),
+  what the score is made of in a sentence ("chosen mostly by how the songs sound (41%) and
+  their genre tags (36%)"), every song looked at with what happened to it, the arc, what
+  changed, the runs of this session compared, and "Why isn't it here?". The drawer under the
+  list is gone; this is its one home. T opens it from a mix.
+- **The reveal.** The moment a fresh list arrives, the recorded numbers replay over the
+  list for three seconds, the deciding bar flares, the headline writes itself, and the card
+  flies into Show the magic, which lights up. Never a progress bar; any click or Esc skips
+  it, and the list under it is already live. Preferences, Appearance, "Showing the magic"
+  says when it plays: every new mix, the first of a session, or never. Not for Radio
+  batches or the step buttons, which update the card in place.
+- **Fit in words, everywhere.** A song's fit on hover, in Why this pick and in "Why isn't
+  it here?" now reads as its place among the songs you own ("the 2nd closest song you own
+  to Sandstorm") and its share of an identical song's score ("93% of what an identical
+  song would"); a song under the cut-off missed it "by a hair", "by a little" or "by a long
+  way". The raw numbers stay one hover away.
+
 ### Added (2026-10-05, the mix process made visible)
 
 - **A mix now shows how it was made, from the engine's own record.** Above the list a strip

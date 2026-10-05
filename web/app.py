@@ -817,6 +817,171 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 "fusion": getattr(eng, "fusion", "raw"),
                 "space": getattr(eng, "clap_space", "raw"), "terms": terms}
 
+    # The verdict (2026-10-05, TODO.md row 59). Joe, on the mix header: "41 of 100 fit
+    # the line (what line?) of 0.54 (what the fuck is 0.54 'mean' to the avg human seeing
+    # that?) and even worse is 'the first.... song... at 0.539' - that makes no sense".
+    # The same facts in a listener's words, three parts in this order: what the number
+    # means (a count of songs you own, or a share of a twin's score), what it did to the
+    # list, which control changes it. Every number stays in the trace; this only words it,
+    # and a clause is written only when the count behind it was kept. The window shows
+    # the headline and body over the list and the levers as buttons.
+    def _share(f):
+        """Fit as a listener reads it: the share of the score an identical song would get."""
+        return f"{int(round(float(f) * 100))}%"
+
+    def _gap_words(f, line):
+        """How far under the cut-off a song sat, in words, never in a third decimal."""
+        d = float(line) - float(f)
+        return "by a hair" if d <= 0.02 else ("by a little" if d <= 0.10 else "by a long way")
+
+    def _title_of(j):
+        """The song's title alone for a headline; the label carries the artist too."""
+        try:
+            t = eng.meta.get(eng.paths[int(j)], {}).get("title")
+            return t or labels[int(j)]
+        except Exception:
+            return labels[int(j)]
+
+    def _verdict(kind, reason, stop, seeds, cinfo, requested, delivered_n, n_fit, past_n,
+                 first_past, counts, reach_depth, min_fit, left, votes=None, rank_map=None):
+        stop = stop or {}
+        report_rank = rank_map or {}
+        where = cinfo["name"]
+        own = "you own" if where == "Full library" else f"in {where}"
+        if kind == "blend" and len(seeds) >= 2:
+            names = [_title_of(j) for j in seeds]
+            like = f"{names[0]} and {names[1]}" if len(names) == 2 else f"{names[0]} and {len(names) - 1} more"
+        elif kind == "steer":
+            like = f"{_title_of(seeds[0])}, as steered" if seeds else "the steered target"
+        elif kind == "radio":
+            like = "the song playing"
+        else:
+            like = _title_of(seeds[0]) if seeds else "the seed"
+        line_pct = _share(min_fit) if min_fit is not None else None
+        wk, sl = stop.get("weakest_kept"), stop.get("strongest_left")
+        n_art, n_rec = counts.get("artist", 0), counts.get("recording", 0)
+        best_held = next((d for d in left if d.get("why") == "artist"), None)
+        spacing = ""
+        if n_art:
+            spacing = (f" On the way, {n_art} close song{'s were' if n_art != 1 else ' was'} held back so no "
+                       f"artist repeats within three songs")
+            if n_rec:
+                spacing += f", and {n_rec} because the same recording was already on the list"
+            if best_held:
+                spacing += f"; the closest of them was {best_held['label']}"
+            spacing += "."
+        elif n_rec:
+            spacing = f" {n_rec} song{'s were' if n_rec != 1 else ' was'} held back because the same recording was already on the list."
+        levers = []
+
+        def lever(i, label):
+            levers.append({"id": i, "label": label})
+
+        def plural(n, one, many):
+            return one if n == 1 else many
+
+        headline, body = "", ""
+        if stop.get("skipped_stops") is not None or kind == "adventure":
+            headline = f"{delivered_n} stop{plural(delivered_n, '', 's')} of {requested}."
+            body = stop.get("sentence") or ""
+        elif kind == "radio":
+            reached = reach_depth or 0
+            headline = (f"Radio found {n_fit} that fit {like}, out of the {reached:,} closest it checked."
+                        if min_fit is not None else f"Radio took the {delivered_n} closest to {like}.")
+            if past_n:
+                body = f"The batch of {delivered_n} is filled {past_n} past the cut-off so the queue keeps going."
+            if counts.get("variety") or counts.get("energy"):
+                n = counts.get("variety", 0) + counts.get("energy", 0)
+                body += (f" Radio passed over {n} {'fitting ' if min_fit is not None else ''}song{plural(n, '', 's')} "
+                         f"on purpose, for variety and a steady loudness.")
+            lever("variety", "Variety")
+        elif reason in ("quota", "no_line"):
+            headline = f"{delivered_n} of {requested}, as asked."
+            body = ("Stop when songs stop fitting is off, so the count is a quota." if reason == "quota"
+                    else "This engine has no cut-off, so the count is a quota.") + spacing
+            lever("line", "Turn the cut-off on")
+        elif reason == "floor":
+            if n_fit:
+                headline = f"Only {n_fit} song{plural(n_fit, '', 's')} {own} sound{plural(n_fit, 's', '')} enough like {like}."
+            else:
+                headline = f"Nothing {own} sounds enough like {like}."
+            body = (f"You asked for {requested}. Attune kept going to {delivered_n} so you have something to play; "
+                    f"the {past_n} marked ~ {plural(past_n, 'is', 'are')} past the cut-off.")
+            if first_past:
+                body += (f" The best of those, {first_past['label']}, missed it {_gap_words(first_past['fit'], min_fit)} "
+                         f"({_share(first_past['fit'])} of a twin's score; the cut-off is {line_pct}).")
+            body += spacing
+            lever("line", "Lower the cut-off")
+            if delivered_n < requested:
+                lever("count", f"Ask for {delivered_n} instead")
+        elif reason == "fit":
+            if counts.get("variety") or counts.get("energy"):
+                n = counts.get("variety", 0) + counts.get("energy", 0)
+                headline = f"Radio skipped {n} fitting song{plural(n, '', 's')} for variety's sake."
+                body = (f"{delivered_n} of {requested} taken." + (f" The best it skipped was {sl['label']}." if sl else "")
+                        + " Below those, nothing else fits.")
+                lever("variety", "Turn Variety down")
+            else:
+                headline = f"{delivered_n} song{plural(delivered_n, '', 's')} {own} sound{plural(delivered_n, 's', '')} enough like {like}."
+                body = f"You asked for {requested}."
+                if sl:
+                    body += (f" The next closest, {sl['label']}, missed the cut-off {_gap_words(sl['fit'], min_fit)} "
+                             f"({_share(sl['fit'])} of a twin's score; the cut-off is {line_pct}).")
+                body += spacing
+                lever("line", "Lower the cut-off")
+                lever("count", f"Ask for {delivered_n} instead")
+        elif reason == "size":
+            headline = f"All {delivered_n} sound enough like {like}."
+            if wk and wk.get("i") is not None:
+                r = None
+                try:
+                    r = (report_rank or {}).get(int(wk["i"]))
+                except Exception:
+                    r = None
+                body = (f"Even the last one in, {wk['label']}, "
+                        + (f"is closer to {like} than all but {int(r) - 2:,} other songs {own} " if r and int(r) > 2 else "")
+                        + f"({_share(wk['fit'])} of a twin's score).")
+            body += spacing
+            lever("count", "Ask for more")
+        elif reason in ("none_fit", "empty"):
+            headline = f"Nothing {own} sounds enough like {like}."
+            if sl:
+                body = f"The nearest, {sl['label']}, scores {_share(sl['fit'])} of a twin; the cut-off is {line_pct}."
+            else:
+                body = "Nothing could be taken for this seed."
+            if counts.get("variety") or counts.get("energy"):
+                n = counts.get("variety", 0) + counts.get("energy", 0)
+                body += f" Radio passed over {n} that fit, for variety's sake."
+            lever("line", "Lower the cut-off")
+        elif reason == "exhausted":
+            headline = f"Only {delivered_n}: the rest close enough are by artists already on the list."
+            body = (f"No artist repeats within three songs" + (f"; {n_art} songs were held back for that" if n_art else "")
+                    + (f", and {n_rec} because the same recording was already on the list" if n_rec else "") + ".")
+            if counts.get("variety") or counts.get("energy"):
+                n = counts.get("variety", 0) + counts.get("energy", 0)
+                body += f" Radio also passed over {n} that fit."
+        elif reason == "trimmed":
+            n_dup = counts.get("duplicate", 0) + counts.get("near-twin", 0)
+            n_gone = counts.get("removed", 0) + counts.get("blocked", 0)
+            headline = f"{delivered_n} of {requested}."
+            parts = []
+            if n_dup:
+                parts.append(f"{n_dup} came out as {plural(n_dup, 'a duplicate', 'duplicates')} or near-twins of songs already on the list")
+            if n_gone:
+                parts.append(f"{n_gone} {plural(n_gone, 'was', 'were')} removed or by a blocked artist")
+            body = ("; ".join(parts) + ". " if parts else "") + f"More may fit; Attune looked at the closest {reach_depth:,} and stopped."
+        else:
+            headline = f"{delivered_n} of {requested}."
+            body = stop.get("sentence") or ""
+        if kind == "steer" and min_fit is not None:
+            v = votes or {}
+            nl, nd = len(v.get("liked") or []), len(v.get("disliked") or [])
+            body += (f" After a vote the list is judged on fingerprint closeness alone, so the cut-off is {line_pct}"
+                     f" (+{nl} More like this, -{nd} Less like this).")
+            lever("undo", "Clear the votes")
+        lever("magic", "Show the magic")
+        return {"headline": headline, "body": body.strip(), "levers": levers, "like": like}
+
     def _trace(kind, report, picks_i, requested, cinfo, min_fit, stop=None, head=(),
                seeds=(), votes=None, flow=False, variety=False, walk_asked=None):
         """One account of how this list came to be. `picks_i` are the pool indices the
@@ -901,8 +1066,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             if int(j) not in dset and status.get(int(j)) == "carried" and int(j) not in past:
                 status[int(j)] = "count"
         field = []
+        dscore = {int(j): sc for j, _pl, sc, _w in (report.get("dropped") or [])}
         for j, st in status.items():
-            sc = score.get(j)
+            sc = score.get(j, dscore.get(j))
             f = _fit_of(j, sc)
             field.append({"i": j, "label": labels[j], "rank": rank.get(j) or next(
                 (pl for jj, pl, _s, _w in (report.get("dropped") or []) if int(jj) == j), None),
@@ -1037,22 +1203,32 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
              "note": (f"{pool:,} mixable songs, every one scored against the seed" if cinfo["name"] == "Full library"
                       else f"the collection {cinfo['name']}: {pool:,} songs, every one scored")},
             {"id": "reach", "n": len([d for d in field if d["status"] != "next"]), "label": "looked at, best first",
-             "note": f"the walk stopped at #{reach_depth:,}; every song ranked past it was never considered"},
+             "note": f"Attune stopped looking at #{reach_depth:,}; every song ranked past it was never considered"},
             {"id": "taken", "n": n_taken, "label": "taken by the walk",
              "note": "; ".join(walk_note) if walk_note else "nothing passed over on the way"},
         ]
         if min_fit is not None:
             funnel.append({"id": "fit", "n": n_fit, "label": f"fit the line {min_fit:.2f}",
-                           "note": f"{len(past)} taken past the line so the list is not empty" if past else "the line ended the walk"})
+                           "note": (f"{len(past)} filled in past the cut-off ({int(round(min_fit * 100))}%) so the list is not empty"
+                                    if past else f"the cut-off ({int(round(min_fit * 100))}% of a twin's score) ended the walk")})
         funnel.append({"id": "list", "n": len(delivered), "label": f"on the list of {requested}",
                        "note": (stop or {}).get("sentence") or ""})
+        # the verdict: the facts above in a listener's words (see _verdict)
+        first_past = None
+        if past:
+            pf = [(int(j), float(f)) for j, f in (report.get("past_line") or [])]
+            if pf:
+                first_past = {"i": pf[0][0], "label": labels[pf[0][0]], "fit": round(pf[0][1], 3)}
+        verdict = _verdict(kind, reason, stop, list(seeds), cinfo, requested, len(delivered),
+                           n_fit if min_fit is not None else len(delivered), len(past), first_past,
+                           counts, reach_depth, min_fit, left, votes, rank_map=rank)
         lit = {"size": "list", "quota": "list", "fit": "fit", "floor": "fit", "none_fit": "fit",
                "thinned": "taken", "exhausted": "pool", "trimmed": "list", "empty": "pool",
                "no_line": "list"}.get(reason, "list")
         for t in funnel:
             t["on"] = t["id"] == lit
         out = {"kind": kind, "recipe": recipe, "field": field, "reach_depth": reach_depth,
-               "energy": energy, "say": say, "funnel": funnel,
+               "energy": energy, "say": say, "funnel": funnel, "verdict": verdict,
                "pool": pool, "collection": cinfo["name"], "line": min_fit,
                "floor": report.get("floor"), "ceiling": round(ceiling, 4),
                "requested": requested, "returned": len(delivered),
@@ -1548,6 +1724,15 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                        stop=stop, head=seeds, seeds=seeds)
         if trace is not None:
             trace["cohesion"] = round(float(cohesion), 3)
+            # the seeds' agreement opens the verdict: how alike the seeds are decides
+            # whether the middle they aim at is a real place (cohesion = their mean
+            # pairwise cosine, 1 the same sound, 0 unrelated)
+            c = float(cohesion)
+            word = "agree strongly" if c >= 0.7 else ("agree somewhat" if c >= 0.4 else "barely agree")
+            v = trace.get("verdict") or {}
+            v["body"] = (f"The seeds {word} ({int(round(c * 100))}% alike), so the middle they aim at "
+                         + ("is a real place. " if c >= 0.4 else "may sound like neither. ") + v.get("body", "")).strip()
+            trace["verdict"] = v
         return jsonify(seeds=[{"i": s, "label": labels[s]} for s in seeds],
                        tracks=tracks, cohesion=cohesion, stop=stop, collection=cinfo,
                        trace=trace)

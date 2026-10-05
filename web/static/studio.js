@@ -834,6 +834,7 @@ function renderRows(rows, opts = {}) {
   // chosen one back for the mix view right after
   const fv = $('fieldView'); if (fv) fv.hidden = true;
   const av = $('arcView'); if (av) av.hidden = true;
+  const mv = $('magicView'); if (mv) mv.hidden = true;
   $('diagView').hidden = true;
   $('diagUnavailable').hidden = true;
   $('azBar').hidden = !(S.view === 'library' && !S.folder);
@@ -856,7 +857,7 @@ function renderRows(rows, opts = {}) {
   // of closing rather than "the last mix that ever existed". Leaving Mix for any other
   // view clears it right here, so a deliberate "back to Library" before quitting is
   // honoured on the next launch instead of being overridden. See restoreLastMix() below.
-  store.set('lastMix', (S.view === 'mix' && S.seed != null && S.mix.length) ?
+  store.set('lastMix', ((S.view === 'mix' || S.view === 'magic') && S.seed != null && S.mix.length) ?
     { seed: S.seed, seeds: S.seeds, seedTail: S.seedTail, kind: S.kind, advSize: S.advSize,
       mix: S.mix,
       // the engine's account of that run and its stop sentence travel with the list, so
@@ -1574,6 +1575,7 @@ async function mixFrom(seedI, opts) {
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;                 // why it stopped where it did (one sentence)
     S.trace = j.trace || null;               // and the engine's own account of the walk (trace.js)
+    S.revealNext = !(opts && opts.keepFilters);   // a fresh mix gets the reveal; a re-mix updates the card in place
     noteStop(j.stop);
     if (byMinutes) {
       const rows = await jget('/api/lib/rows?' + [seedI, ...ids].map(i => `i=${i}`).join('&'));
@@ -1604,7 +1606,11 @@ async function mixFrom(seedI, opts) {
 function noteStop(stop) {
   if (!stop || !stop.sentence) return;
   if (['fit', 'floor', 'none_fit', 'empty', 'exhausted', 'trimmed'].includes(stop.reason)) {
-    toast(stop.sentence, stop.reason === 'none_fit' || stop.reason === 'empty');
+    // the reveal (trace.js) says it for a fresh list; the toast is for a step, and it
+    // speaks in the verdict's words when the trace carries them
+    if (S.revealNext && typeof Trace !== 'undefined' && Trace.willReveal(S.trace)) return;
+    const v = S.trace && S.trace.verdict;
+    toast(v && v.headline ? v.headline : stop.sentence, stop.reason === 'none_fit' || stop.reason === 'empty');
   }
 }
 
@@ -1643,6 +1649,7 @@ async function blendFrom(seedIds, sourceLabel) {
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
     S.trace = j.trace || null;
+    S.revealNext = true;                 // a fresh list: the reveal plays (trace.js)
     const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
     S.mix = ids.length ? pinSeeds(ids) : [];
     $('mixN').textContent = S.mix.length;
@@ -1698,6 +1705,7 @@ async function adventureFrom(seedIds) {
     S.liked = []; S.disliked = [];
     S.stop = j.stop || null;
     S.trace = j.trace || null;
+    S.revealNext = true;                 // a fresh list: the reveal plays (trace.js)
     S.mix = pinSeeds((j.tracks || []).map(x => x.i));
     $('mixN').textContent = S.mix.length;
     toast(`Adventure: ${j.a.label} → ${j.b.label}`);
@@ -1963,6 +1971,34 @@ async function showNowPlaying() {
   const secs = S.rows.reduce((a, r) => a + r.seconds, 0);
   $('viewSub').textContent = `${q.length} queued · ${hms(secs)}`;
   // Radio on: the strip over the queue says how the last batch was picked (trace.js)
+  if (typeof Trace !== 'undefined') Trace.paint();
+}
+
+/* Show the magic (2026-10-05, TODO.md row 59): the account of the mix on screen as a
+   page of its own, under Mix in the side list. Joe's name for it; the code calls the
+   account the trace. Everything that sat in the drawer under the list lives here now:
+   the verdict in words over the sieve, the hill of every song looked at, what the score
+   is made of, the field, the arc, the runs compared, and why a song is not here. The
+   list itself is untouched: S.mix, S.trace and S.stop are read, never written. */
+async function showMagic() {
+  S.view = 'magic'; markTree('magic');
+  $('viewLabel').textContent = 'Show the magic';
+  $('btnBackLib').hidden = false; $('pager').innerHTML = '';
+  $('queueTools').hidden = true;
+  $('magicNew').hidden = true;
+  const st = $('mixStop'); if (st) st.hidden = true;
+  // the page needs the rows of the list for titles, years and Earfeel (the arc, the field)
+  if (S.mix.length && !(S.rows || []).length) {
+    try {
+      const j = await jget('/api/lib/rows?' + S.mix.map(i => `i=${i}`).join('&'));
+      const byI = new Map(j.rows.map(r => [r.i, r]));
+      S.rows = S.mix.map(i => byI.get(i)).filter(Boolean);
+    } catch (e) { console.error('[magic] rows', e); }
+  }
+  renderRows(S.rows || []);
+  document.querySelector('#tbl').hidden = true;
+  $('empty').hidden = true;
+  $('viewSub').textContent = S.trace ? `how the mix of ${S.mix.length} was made` : '';
   if (typeof Trace !== 'undefined') Trace.paint();
 }
 
@@ -3007,7 +3043,7 @@ function bindEvents() {
     const li = e.target.closest('li[data-view]'); if (!li) return;
     if (li.dataset.view === 'library') { S.smart = ''; S.folder = null; }
     ({ library: () => loadLibrary(true), mix: showMix, nowplaying: showNowPlaying,
-       diagnostics: showDiagnostics, failures: showFailures })[li.dataset.view]();
+       diagnostics: showDiagnostics, failures: showFailures, magic: showMagic })[li.dataset.view]();
   });
 
   // A-Z jump bar
@@ -3556,7 +3592,7 @@ function bindEvents() {
         toast(`Queued ${ids.length}`);
       });
     }
-    else if (k === 't' && !e.ctrlKey && !e.metaKey && S.view === 'mix') Trace.toggle();
+    else if (k === 't' && !e.ctrlKey && !e.metaKey && (S.view === 'mix' || S.view === 'magic')) { if (S.view === 'magic') showMix(); else showMagic(); }
     else if (k === 'z') Player.prev();
     else if (k === 'v') Player.stop();
     else if (k === 'b') Player.next();
