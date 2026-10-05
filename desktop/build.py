@@ -196,8 +196,16 @@ FFBIN = [
 ]
 
 
+# The exe's own icon, the one every shortcut and the taskbar show. Without it PyInstaller
+# stamps its stock floppy-and-feather, which is what Joe saw on 2026-10-05. The .ico is
+# rendered from attune-icon.svg by installer/make_icon.py, five sizes.
+ICON = os.path.join(HERE, "installer", "attune.ico")
+
+
 def _pyinstaller(name, entry, data, hidden, collect_all, exclude, distpath,
                  workpath, windowed):
+    if not os.path.exists(ICON):
+        raise SystemExit(f"[build] missing icon: {ICON} (run desktop/installer/make_icon.py)")
     for src, _dest in data:
         full = os.path.join(ATT, src)
         if not os.path.exists(full):
@@ -205,6 +213,7 @@ def _pyinstaller(name, entry, data, hidden, collect_all, exclude, distpath,
     args = [sys.executable, "-m", "PyInstaller", "--name", name,
             "--windowed" if windowed else "--console",
             "--noconfirm", "--clean", "--noupx",
+            "--icon", ICON,
             "--distpath", distpath, "--workpath", workpath, "--specpath", HERE]
     for m in hidden:
         args += ["--collect-submodules", m]

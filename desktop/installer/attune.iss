@@ -87,14 +87,12 @@ PrivilegesRequired=lowest
 DefaultDirName={localappdata}\Programs\Attune
 DefaultGroupName=Attune
 DisableProgramGroupPage=yes
-; attune.ico (next to this .iss) is a PLACEHOLDER, not final art -- that call is the
-; operator's. Derived from the app's own "bee" favicon, the inline data:image/svg+xml
-; at web/static/studio.html:10 (a dark rounded square, #1a1c20, with the bee-accent
-; blue, #3d84c6, paired-eighth-note glyph) -- decoded and rasterized with ImageMagick's
-; built-in rsvg delegate (already on this machine; nothing installed for this), packed
-; multi-resolution 256/64/48/32/16, 32bpp with alpha. Verified by parsing the .ico back
-; with a standalone struct-based reader (independent of ImageMagick's own `identify`):
-; 5 entries, exactly those five sizes, 38118 bytes total. Revisit when real art exists.
+; attune.ico (next to this .iss) is the window's own mark since 2026-10-05: the amber
+; diamond of the top bar on a gunmetal tile with an eighth note knocked out, drawn in
+; attune-icon.svg and rendered by make_icon.py (Playwright, the lean venv) at 256/64/48/32/16, 32bpp
+; with alpha. desktop/build.py stamps the same file on Attune.exe and the analyzer, so
+; the setup, the exe, the shortcuts and the taskbar all show one icon. Before that day
+; the exe had no icon of its own and Windows showed PyInstaller's stock floppy.
 SetupIconFile=attune.ico
 OutputBaseFilename=AttuneSetup-{#AppVersion}
 ; Without this the compiled setup exe's own file Properties in Explorer read 0.0.0.0,

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+  <!-- Attune's icon (2026-10-05, Joe: the stock floppy "- better"). The window's own mark:
+       the amber diamond that opens the top bar ("◆ Attune Studio") on gunmetal, with an
+       eighth note knocked out of it. One accent, nothing else, so it reads at 16 px as a
+       lit amber diamond on a dark tile, the way the window reads. make_icon.py renders
+       this into attune.ico at 256, 64, 48, 32 and 16. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2e35"/>
+      <stop offset="1" stop-color="#17191c"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f7bd4a"/>
+      <stop offset="1" stop-color="#e0961c"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="url(#tile)"/>
+  <rect x="8" y="8" width="240" height="240" rx="56" fill="none" stroke="#0e1013" stroke-width="4"/>
+  <rect x="12" y="12" width="232" height="232" rx="52" fill="none" stroke="#ffffff" stroke-opacity="0.07" stroke-width="2"/>
+  <path d="M128 30 L226 128 L128 226 L30 128 Z" fill="url(#amber)"/>
+  <path d="M128 30 L226 128 L128 226 L30 128 Z" fill="none" stroke="#9a6a10" stroke-width="3" stroke-linejoin="round"/>
+  <!-- the note, knocked out in the tile's own dark -->
+  <path d="M150 74 v70 a22 22 0 1 1 -14 -20.4 V96 l-30 8 v54 a22 22 0 1 1 -14 -20.4 V92 l58 -16 z" fill="#1a1c20"/>
+</svg>

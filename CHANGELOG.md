@@ -5,6 +5,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (2026-10-05, the icon)
+
+- **Attune has its own icon on the taskbar, the desktop and in the Start menu.** The
+  window's mark: the amber diamond from the top bar on a gunmetal tile, with an eighth note
+  cut out of it. Until now the program file carried no icon of its own, so Windows showed
+  the build tool's stock picture, a floppy disk with a feather. The window's tab shows the
+  same mark, and the setup program too.
+
 ### Added (2026-10-05, evening: the numbers in words, and Show the magic)
 
 - **The mix header says what happened in a listener's words.** In place of a line like
