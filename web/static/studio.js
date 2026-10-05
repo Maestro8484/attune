@@ -1952,12 +1952,14 @@ async function showNowPlaying() {
   $('btnBackLib').hidden = false; $('pager').innerHTML = '';
   $('queueTools').hidden = false;
   const q = Player.q;
-  if (!q.length) { renderRows([]); $('viewSub').textContent = 'queue is empty'; return; }
+  if (!q.length) { renderRows([]); $('viewSub').textContent = 'queue is empty'; if (typeof Trace !== 'undefined') Trace.paint(); return; }
   const j = await jget('/api/lib/rows?' + q.map(i => `i=${i}`).join('&'));
   const byI = new Map(j.rows.map(r => [r.i, r]));
   renderRows(q.map(i => byI.get(i)).filter(Boolean));
   const secs = S.rows.reduce((a, r) => a + r.seconds, 0);
   $('viewSub').textContent = `${q.length} queued · ${hms(secs)}`;
+  // Radio on: the strip over the queue says how the last batch was picked (trace.js)
+  if (typeof Trace !== 'undefined') Trace.paint();
 }
 
 /* ---------------------------------------------------- right rail: Up Next + Info

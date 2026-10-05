@@ -204,6 +204,8 @@ const Player = (() => {
         }
       }
       const j = await jget('/api/radio/next?' + p);
+      // the engine's account of this batch, for the strip over the queue (trace.js)
+      P.radioTrace = j.trace || null;
       const have = new Set(P.q);
       const fresh = (j.tracks || []).map(x => x.i).filter(i => i !== seed && !have.has(i));
       if (fresh.length) {
@@ -971,6 +973,8 @@ const Player = (() => {
     playAt, playList, playTrack, queueAdd, removeFromQueue, clearQueue,
     moveInQueue, shuffleQueue, toggleShuffle, cycleRepeat,
     togglePlay, stop, next, prev, toggleEqPanel, toggleAutoDj, toggleRadio,
+    get radioTrace() { return P.radioTrace || null; },
+    get radio() { return !!P.radio; },
     paintNowPlayingMeta, restoreQueue,
     // the row behind a pool index, for the right-click menu on the playing song
     rowOf: rowFor,

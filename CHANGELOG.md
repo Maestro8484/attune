@@ -18,6 +18,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   Genre tags, Year, Artist links, Earfeel, each with its weight applied). For a Blend it
   shows how close the song sits to each seed and to their shared centre; for a steered list
   how close it sits to the songs you voted on.
+- **Radio shows how each batch was picked.** While Radio is on, Now Playing carries the
+  same strip and drawer for the last batch it added, with the coins that passed a song
+  over named in Left out.
 - **The Trace drawer**, under the list and closed until asked for (the Trace button, the T
   key, or a click on a stage). **How it was built** lists the stages with their counts,
   what the score is made of, and how each song leads into the next (the closeness between

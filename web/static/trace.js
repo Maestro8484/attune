@@ -37,7 +37,14 @@ const Trace = (() => {
   let open = store.get('traceOpen', false);
   let prevLabels = new Map();          // labels of the list before the last change
 
-  const tr = () => (typeof S !== 'undefined' && S.view === 'mix') ? S.trace : null;
+  // the trace on screen: the mix's in the Mix view; in Now Playing, the last Radio
+  // batch's while Radio is on (player.js keeps it), so the queue says how it grew
+  const tr = () => {
+    if (typeof S === 'undefined') return null;
+    if (S.view === 'mix') return S.trace;
+    if (S.view === 'nowplaying' && typeof Player !== 'undefined' && Player.radio) return Player.radioTrace;
+    return null;
+  };
   const song = i => { const t = tr(); return t && t.songs ? t.songs[i] : null; };
   const fmt2 = v => (v == null ? '' : Number(v).toFixed(2));
   const fmt3 = v => (v == null ? '' : Number(v).toFixed(3));
@@ -102,6 +109,10 @@ const Trace = (() => {
     const d = $('traceDrawer'); if (!d) return;
     d.hidden = !(t && open);
     if (!t || !open) return;
+    // the queue has no "last step" to compare against: that tab is the Mix view's
+    const queue = S.view === 'nowplaying';
+    const ch = d.querySelector('[data-ttab="changes"]'); if (ch) ch.hidden = queue;
+    if (queue && tab === 'changes') tab = 'path';
     for (const b of d.querySelectorAll('[data-ttab]')) b.classList.toggle('on', b.dataset.ttab === tab);
     $('tracePath').hidden = tab !== 'path';
     $('traceLeft').hidden = tab !== 'left';
@@ -217,7 +228,7 @@ const Trace = (() => {
     toggle(true);
   }
   function onView() {
-    if (S.view === 'mix') return;
+    if (S.view === 'mix' || S.view === 'nowplaying') return;
     const d = $('traceDrawer'); if (d) d.hidden = true;
     const lt = $('lTrace'); if (lt) lt.hidden = true;
   }

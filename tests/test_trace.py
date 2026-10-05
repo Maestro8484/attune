@@ -166,3 +166,13 @@ def test_adventure_trace_is_per_stop(client):
     assert t["kind"] == "adventure" and [s["i"] for s in t["seeds"]] == [0, 16]
     assert t["order"][0] == 0 and t["order"][-1] == 16
 
+
+
+def test_radio_trace_names_the_coins(client):
+    j = client.get("/api/radio/next?seed=0&n=8&variety=3&rng=7").get_json()
+    t = j["trace"]
+    assert t["kind"] == "radio" and t["stages"][0]["id"] == "seeds"
+    whys = {d["why"] for d in t["left_out"]}
+    assert whys <= {"variety", "energy", "artist", "recording", "count", "line"}
+    if j["stop"].get("passed_over"):
+        assert whys & {"variety", "energy"}
