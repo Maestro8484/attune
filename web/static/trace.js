@@ -138,8 +138,10 @@ const Trace = (() => {
   function meter(fit, past, i, tip) {
     const lo = fitFloor();
     const w = Math.max(0, Math.min(1, (fit - lo) / (1 - lo)));
+    const t = tr(), line = t && t.line;      // a tick where the cut-off sits, so each bar reads as over or under it
+    const tick = line != null && line > lo && line < 1 ? `<u style="left:${Math.round(100 * (line - lo) / (1 - lo))}%"></u>` : '';
     return `<span class="fitm${past ? ' past' : ''}"${i != null ? ` data-i="${i}"` : ''}${tip ? ` title="${esc(tip)}"` : ''}>` +
-      `<i style="width:${Math.round(w * 100)}%"></i></span><b>${fmt2(fit)}</b>`;
+      `<i style="width:${Math.round(w * 100)}%"></i>${tick}</span><b>${fmt2(fit)}</b>`;
   }
   function fitCell(i) {
     const s = song(i); if (!s || s.fit == null) return '';
@@ -159,9 +161,24 @@ const Trace = (() => {
     return hl;
   }
   function leversHtml(v, opts = {}) {
+    const low = opts.t ? lowerBy(opts.t) : null;
     return (v.levers || [])
       .filter(l => !(opts.noMagic && l.id === 'magic'))
-      .map(l => `<button type="button" class="lever${l.id === 'line' ? ' hot' : ''}" data-lever="${l.id}">${esc(l.label)}</button>`).join('');
+      .map(l => {
+        const tip = l.id === 'line' && low ? ` title="${esc(`Lower the cut-off to ${pct(low.to)} and ${low.best.label} would sit over it; of the songs Attune looked at, ${low.more} ${low.more === 1 ? 'sits' : 'sit'} between ${pct(low.to)} and ${pct(opts.t.line)}. The dotted ring in the drawing shows where. Click to set it in Mix options, then Mix again.`)}"` : '';
+        return `<button type="button" class="lever${l.id === 'line' ? ' hot' : ''}" data-lever="${l.id}"${tip}>${esc(l.label)}</button>`;
+      }).join('');
+  }
+  /* what lowering the cut-off would do, from this run alone: just under the best song that
+     missed it, and how many of the songs looked at sit in between. A preview of the knob's
+     consequence, not a promise: a real re-mix walks further and may find more. */
+  function lowerBy(t) {
+    if (!t || t.line == null) return null;
+    const best = (t.field || []).filter(r => r.status === 'kept-past' && r.fit != null).sort((a, b) => b.fit - a.fit)[0];
+    if (!best) return null;
+    const to = Math.floor(best.fit * 100) / 100;
+    const more = (t.field || []).filter(r => r.status !== 'next' && r.fit != null && r.fit >= to && r.fit < t.line).length;
+    return { to, best, more };
   }
   /* the body and the raw numbers of the run as one hover text, for a headline shown alone */
   function numbersWords(t) {
@@ -188,16 +205,16 @@ const Trace = (() => {
   function legendHtml(t) {
     return `<div class="cstlegend"><span><i class="k"></i>on the list, over the cut-off</span><span><i class="p"></i>filled in past it</span>` +
       `<span><i class="d"></i>held back</span><span><i class="th"></i>the list, clockwise from the top</span>` +
-      `<span class="hint">nearer the middle sounds more like ${esc(likeOf(t))}</span></div>`;
+      `<span class="hint">nearer the middle sounds more like ${esc(likeOf(t))}; the angle only spreads the dots</span></div>`;
   }
   function foldHtml(t) {
     const v = t.verdict;
     const orb = foldOpen ? '' : `<span class="vorb" title="The connections Attune made for this list: every song it looked at around ${esc(likeOf(t))}, the list threaded through in play order. Click to open">${constSvg(t, { size: 26, mini: true })}</span>`;
     const head = `<div class="vline vfold${foldOpen ? ' open' : ''}"><button type="button" class="vtog" aria-expanded="${foldOpen}" ` +
       `title="${foldOpen ? 'Fold away the connections, the explanation and the numbers of this run' : 'Open the connections, the explanation, the controls and the numbers of this run'}">${foldOpen ? '▾' : '▸'}</button>` +
-      `${orb}<span class="hl"${foldOpen ? '' : ` title="${esc(hlTip(t))}"`}>${hlHtml(v)}</span></div>`;
+      `${orb}<span class="hl"${foldOpen ? '' : ` title="${esc(hlTip(t))}"`}>${hlHtml(v)}</span>${changedChip(t)}</div>`;
     if (!foldOpen) return head;
-    const levers = leversHtml(v, { noMagic: true });
+    const levers = leversHtml(v, { noMagic: true, t });
     return head + `<div class="vopen"><div class="vconst">${constSvg(t, { size: 210 })}${legendHtml(t)}</div>` +
       `<div class="vright"><div class="vcard vfoldbody">${v.body ? `<p class="body">${esc(v.body)}</p>` : ''}${levers ? `<div class="levers">${levers}</div>` : ''}</div>${sieveHtml(t)}</div></div>`;
   }
@@ -236,7 +253,7 @@ const Trace = (() => {
     }
     const reach = looked.length ? rad(Math.min(...looked.map(r => r.fit))) : R1;
     const cut = t.line != null ? Math.max(R0 - 8, Math.min(R1 + 8, rad(t.line))) : null;
-    return { field, pos, reach, cut };
+    return { field, pos, reach, cut, rad };
   }
   function constSvg(t, opts = {}) {
     const g = constGeo(t); if (!g) return '';
@@ -252,7 +269,7 @@ const Trace = (() => {
     for (const r of g.field) {
       const [x, y, d] = g.pos.get(r.i), c = cls(r.status), p = pops(r);
       const at = r.status === 'next' ? walkAt + walkMs + 120 : when(d);
-      if (c !== 'n' && (!mini || c === 'k' || c === 'p')) links += `<line class="lk ${c}${p}" x1="0" y1="0" x2="${fx(x)}" y2="${fx(y)}" pathLength="1"${dly(at)}/>`;
+      if (c !== 'n' && (!mini || c === 'k' || c === 'p')) links += `<line class="lk ${c}${p}" x1="0" y1="0" x2="${fx(x)}" y2="${fx(y)}" pathLength="1" data-i="${r.i}"${dly(at)}/>`;
       const tip = mini ? '' : ` data-tip="${esc(`${r.label}: ${fitWords(r, t)}; ${WHY[r.status] || r.status}. Click for why.`)}"`;
       nodes += `<circle class="nd ${c}${p}" cx="${fx(x)}" cy="${fx(y)}" r="${fx(rpx[c] * u)}" data-i="${r.i}"${tip}${dly(at)}/>`;
     }
@@ -267,7 +284,7 @@ const Trace = (() => {
       const cx = (x1 + x2) / 2 - (y2 - y1) * 0.14, cy = (y1 + y2) / 2 + (x2 - x1) * 0.14;
       const w = (mini ? 0.4 : 0.45) + (mini ? 0.3 : 1.0) * (trs[k] == null ? 0.5 : (trs[k] - tmin) / ((tmax - tmin) || 1));
       const tip = mini || trs[k] == null ? '' : ` data-tip="${esc(`#${k + 1} to #${k + 2}: the hand-off from ${label(order[k])} to ${label(order[k + 1])} is ${pct(trs[k])} alike`)}"`;
-      thread += `<path class="th" d="M${fx(x1)} ${fx(y1)}Q${fx(cx)} ${fx(cy)} ${fx(x2)} ${fx(y2)}" pathLength="1" style="stroke-width:${fx(w * u)}px${play ? `;animation-delay:${Math.round(threadAt + threadMs * j / Math.max(1, segs.length))}ms` : ''}"${tip}/>`;
+      thread += `<path class="th" data-k="${k}" d="M${fx(x1)} ${fx(y1)}Q${fx(cx)} ${fx(cy)} ${fx(x2)} ${fx(y2)}" pathLength="1" style="stroke-width:${fx(w * u)}px${play ? `;animation-delay:${Math.round(threadAt + threadMs * j / Math.max(1, segs.length))}ms` : ''}"${tip}/>`;
     });
     const fs = px => `font-size:${fx(px * u)}px`;
     const pool = ((t.funnel || []).find(s => s.id === 'pool') || {}).n;
@@ -277,6 +294,12 @@ const Trace = (() => {
     if (play) rings += `<circle class="rg walk" r="${R1}" style="--s0:${(R0 / R1).toFixed(3)};--s1:${(g.reach / R1).toFixed(3)};animation-duration:${walkMs}ms;animation-delay:${walkAt}ms"/>`;
     const cutRing = g.cut == null ? '' : `<circle class="rg cut" r="${fx(g.cut)}" style="stroke-width:${fx((mini ? 0.7 : 1.2) * u)}px;stroke-dasharray:${fx(4 * u)} ${fx(3 * u)}"/>`;
     let labels = '';
+    const low = !mini && !play ? lowerBy(t) : null;
+    if (low) {
+      const gr = Math.max(R0 - 8, Math.min(R1 + 8, g.rad(low.to)));
+      labels += `<circle class="rg ghost" r="${fx(gr)}" style="stroke-width:${fx(1.2 * u)}px;stroke-dasharray:${fx(2 * u)} ${fx(3 * u)}"/>` +
+        `<text class="gl" x="${fx(gr * Math.cos(0.5))}" y="${fx(gr * Math.sin(0.5) + 10 * u)}" style="${fs(9.5)}">at ${pct(low.to)}: ${low.more} more</text>`;
+    }
     if (!mini) {
       const a = -2.45;   // upper left, where the thread ends rather than where it starts
       if (g.cut != null) labels += `<text class="on" x="${fx((g.cut + 4) * Math.cos(a))}" y="${fx((g.cut + 4) * Math.sin(a))}" text-anchor="end" style="${fs(9.5)}">the cut-off ${pct(t.line)}</text>`;
@@ -539,6 +562,7 @@ const Trace = (() => {
     noteRows(S.rows);
     if ((inMix() || inMagic()) && t && t !== lastRun) {   // a new run arrived: remember it, show the list
       lastRun = t;
+      lastWasStep = stepPending; stepPending = false;
       noteRun(t);
       showing = 'list'; view = 'list'; mpop = litPop(t);
       if (S.revealNext) { S.revealNext = false; if (inMix()) reveal(t); }
@@ -548,6 +572,9 @@ const Trace = (() => {
     paintField();
     paintArc();
     paintMagic();
+    markCut();
+    markNew();
+    markPlaying();
     const lt = $('lTrace');
     if (lt) lt.hidden = !(t && inMix());
     for (const [id, which] of [['mixViewList', 'list'], ['mixViewArc', 'arc']]) {
@@ -571,8 +598,14 @@ const Trace = (() => {
       : r.fusion === 'rank' ? 'each ingredient as its percentile in the library'
       : 'the raw numbers added together';
     const prof = r.profile === 'sound' ? 'the sound profile' : 'the V2 recipe';
+    const said = sayWords(t, keys);
     const bar = keys.length && Object.keys(say).length ? `<div class="say">${keys.map(k => `<i style="width:${((say[k] || 0) * 100).toFixed(1)}%" title="${esc((TERM[k] || k) + ' ' + ((say[k] || 0) * 100).toFixed(0) + '% of the say')}"></i>`).join('')}</div>` : '';
-    // the sentence: which ingredients carried the list, in words
+    return said + bar + chips + `<span class="hint">${esc(prof)}; ${esc(scale)}${Object.keys(say).length ? '; the percentages are each ingredient\'s share of the say, averaged over the songs on the list' : ''}</span>`;
+  }
+  /* which ingredients carried the list, in words */
+  function sayWords(t, keys) {
+    const say = t.say || {};
+    if (!keys) keys = ((t.recipe || {}).terms || []).map(x => x.id).sort((a, b) => (say[b] || 0) - (say[a] || 0));
     let said = '';
     if (keys.length >= 2 && Object.keys(say).length) {
       const name = k => ({ clap: 'how the songs sound', genre: 'their genre tags', era: 'their year', earfeel: 'their Earfeel', artist: 'artist links', lib: 'their timbre', bpm: 'their tempo', key: 'their key' })[k] || (TERM[k] || k).toLowerCase();
@@ -585,7 +618,7 @@ const Trace = (() => {
         (nudged.length ? `; ${list(nudged)} nudged it (${nudged.map(p).join(', ')})` : '') + '.' +
         (barely.length ? ` ${list(barely).replace(/^./, c => c.toUpperCase())} barely spoke.` : '') + `</p>`;
     }
-    return said + bar + chips + `<span class="hint">${esc(prof)}; ${esc(scale)}${Object.keys(say).length ? '; the percentages are each ingredient\'s share of the say, averaged over the songs on the list' : ''}</span>`;
+    return said;
   }
 
   function builtHtml(t) {
@@ -748,9 +781,135 @@ const Trace = (() => {
 
   /* the window calls this just before a re-mix replaces S.mix, with the step's name */
   function noteStep(stepLabel) {
+    stepPending = true;
     S.prevMix = Array.isArray(S.mix) ? S.mix.slice() : [];
     S.prevStep = stepLabel || '';
     prevLabels = new Map(labels);
+  }
+
+  /* ---- the drawing and the rest of the window, linked (2026-10-06, TODO.md row 63:
+     make the implicit explicit). A song pointed at in the list lights its dot and its line
+     from the seed in every drawing on screen; a dot pointed at lights its row. The song
+     playing glows on the thread, and the stretch of the list already played is drawn solid.
+     The list itself carries the cut-off as a dashed line between the songs over it and the
+     first one filled in, when the list is in play order and the boundary is one clean line. */
+  let hiNow = null, rowNow = null, stepPending = false, lastWasStep = false;
+  function hiSong(i) {
+    if (i === hiNow) return; hiNow = i;
+    document.querySelectorAll('.cst').forEach(c => {
+      c.querySelectorAll('.me').forEach(e => e.classList.remove('me'));
+      const hit = i == null ? [] : c.querySelectorAll(`[data-i="${i}"]`);
+      c.classList.toggle('one', hit.length > 0);
+      hit.forEach(e => e.classList.add('me'));
+    });
+  }
+  function hiRow(i) {
+    if (i === rowNow) return; rowNow = i;
+    document.querySelectorAll('#tbody tr.linked').forEach(r => r.classList.remove('linked'));
+    if (i != null) { const r = document.querySelector(`#tbody tr[data-i="${i}"]`); if (r) r.classList.add('linked'); }
+  }
+  function markPlaying() {
+    const i = typeof Player !== 'undefined' && Player.currentPool ? Player.currentPool() : -1;
+    const t = tr() || (typeof S !== 'undefined' ? S.trace : null);
+    const pos = t && t.order && i >= 0 ? t.order.indexOf(i) : -1;
+    document.querySelectorAll('.cst').forEach(c => {
+      c.querySelectorAll('.now').forEach(e => e.classList.remove('now'));
+      c.classList.toggle('playing', pos >= 0);
+      c.querySelectorAll('.th').forEach(p => p.classList.toggle('done', pos >= 0 && +p.dataset.k < pos));
+      if (pos < 0) return;
+      const nd = c.querySelector(`.nd[data-i="${i}"]`) || (pos === 0 ? c.querySelector('.seed') : null);
+      if (nd) nd.classList.add('now');
+    });
+    paintRailMix();
+  }
+  /* after a step (a vote, a removal, new dials), what changed shows in the list: the songs
+     that came in carry a + by their number, and one chip on the fold line counts them */
+  function changed(t) {
+    if (!lastWasStep || t !== lastRun || !Array.isArray(S.prevMix) || !S.prevMix.length || !Array.isArray(S.mix)) return null;
+    return diff(S.prevMix, S.mix);
+  }
+  function changedChip(t) {
+    const d = changed(t); if (!d) return '';
+    return `<button type="button" class="vchg" data-mtab-open="changes" title="${esc(`After ${S.prevStep || 'the last step'}: ${diffWords(d, S.mix.length)} The new songs carry a + by their number. Click for the whole comparison in Show the magic.`)}">${d.added.length} new · ${d.kept.length} stayed</button>`;
+  }
+  function markNew() {
+    const tb = $('tbody'); if (!tb) return;
+    tb.querySelectorAll('tr.isnew').forEach(r => r.classList.remove('isnew'));
+    const t = tr(); if (!inMix() || !t) return;
+    const d = changed(t); if (!d || !d.added.length) return;
+    const add = new Set(d.added);
+    tb.querySelectorAll('tr[data-i]').forEach(r => { if (add.has(+r.dataset.i)) r.classList.add('isnew'); });
+  }
+  /* the Status column in a mix says what the song is to this list */
+  function mixStatus(i) {
+    const t = typeof S !== 'undefined' ? S.trace : null;
+    if (!t || !t.songs) return '';
+    if ((t.seeds || []).some(s => s.i === i)) return 'the seed';
+    const s = t.songs[i]; if (!s) return '';
+    return s.past ? 'filled in' : (t.line != null ? 'over cut-off' : 'on the list');
+  }
+  /* the green display, while a song of this mix plays: its place, its fit, its hand-off */
+  function lcdNote(i) {
+    const t = typeof S !== 'undefined' ? S.trace : null;
+    if (!t || !t.order) return '';
+    const k = t.order.indexOf(i); if (k < 0) return '';
+    if (k === 0) return '  ::  THE SEED';
+    const s = (t.songs || {})[i] || {}, h = (t.transitions || [])[k - 1];
+    return `  ::  #${k + 1} OF ${t.order.length}` + (s.fit != null ? `  FIT ${pct(s.fit)}` : '') + (h != null ? `  HAND-OFF ${pct(h)}` : '');
+  }
+  /* the side panel under the cover: this song in the mix (the one selected, else the one
+     playing), or the mix as a whole. Earfeel is each score's place in your library, 0 to
+     100, 50 the middle (web/studio.py); the tick is the seed. Numbers only, no sound words */
+  function paintRailMix() {
+    const el = $('railMix'); if (!el) return;
+    const t = (inMix() || inMagic()) ? S.trace : null;
+    if (!t || !cardReady(t)) { el.hidden = true; return; }
+    const order = t.order || [];
+    const sel = S.sel && S.sel.size === 1 ? [...S.sel][0] : null;
+    const play = typeof Player !== 'undefined' && Player.currentPool ? Player.currentPool() : -1;
+    const i = sel != null && order.includes(sel) ? sel : (order.includes(play) ? play : null);
+    const names = (S.stats && S.stats.earfeel) || [];
+    const byI = new Map((S.rows || []).map(r => [r.i, r]));
+    const seedRow = byI.get(order[0]), like = likeOf(t);
+    const ef = (vals, mark) => names.length && vals ? `<div class="rmef">` + names.map((n, k) =>
+      `<div class="rmrow" title="${esc(`${n.label} ${vals[k]}: where it sits among the songs you own, 0 to 100, 50 the middle` + (mark ? `. ${like}: ${mark[k]}` : ''))}">` +
+      `<span class="k">${esc(n.label)}</span><span class="tr"><i style="width:${vals[k]}%"></i>${mark ? `<u style="left:${mark[k]}%"></u>` : ''}</span><span class="v">${vals[k]}</span></div>`).join('') + `</div>` : '';
+    let html;
+    if (i != null && i !== order[0]) {
+      const k = order.indexOf(i), s = (t.songs || {})[i] || {}, trs = t.transitions || [], r = byI.get(i) || {};
+      const w = fitWords(s, t);
+      html = `<div class="rmh">${i === play ? 'Playing' : 'Selected'}: this song in the mix</div>` +
+        `<div class="rmbig">#${k + 1} <span>of ${order.length} in the list</span></div>` +
+        (w ? `<div class="rmline">${esc(w.charAt(0).toUpperCase() + w.slice(1))}.</div>` : '') +
+        (trs[k - 1] != null ? `<div class="rmline">Hand-off in <b>${pct(trs[k - 1])}</b> alike${trs[k] != null ? `, out <b>${pct(trs[k])}</b>` : ''}</div>` : '') +
+        (r.earfeel ? `<div class="rmh2">Earfeel of this song; the tick is ${esc(like)}</div>` + ef(r.earfeel, seedRow && seedRow.earfeel) : '');
+    } else {
+      const rows = order.slice(1).map(j => byI.get(j)).filter(Boolean);
+      const avg = names.map((_, kk) => { const v = rows.map(r => r.earfeel && r.earfeel[kk]).filter(x => x != null); return v.length ? Math.round(v.reduce((a, b) => a + b, 0) / v.length) : null; });
+      const years = rows.map(r => r.year).filter(Boolean);
+      html = `<div class="rmh">This mix</div>` + sayWords(t).replace('<p class="shape">', '<div class="rmline">').replace('</p>', '</div>') +
+        (years.length ? `<div class="rmline">Years <b>${Math.min(...years)}</b> to <b>${Math.max(...years)}</b></div>` : '') +
+        (avg.every(v => v != null) && avg.length ? `<div class="rmh2">Earfeel of the list on average; the tick is ${esc(like)}</div>` + ef(avg, seedRow && seedRow.earfeel) : '') +
+        `<div class="rmhint">Play or select a song for its place in the mix.</div>`;
+    }
+    el.innerHTML = html; el.hidden = false;
+  }
+  function markCut() {
+    const tb = $('tbody'); if (!tb) return;
+    tb.querySelectorAll('tr.cutbelow').forEach(r => { r.classList.remove('cutbelow'); r.querySelectorAll('td[data-cut]').forEach(td => delete td.dataset.cut); });
+    const t = tr();
+    if (!inMix() || !t || t.line == null || showing !== 'list' || view !== 'list') return;
+    const rows = Array.from(tb.querySelectorAll('tr[data-i]'));
+    const order = t.order || [];
+    if (rows.length !== order.length || rows.some((r, k) => +r.dataset.i !== order[k])) return;   // sorted another way
+    const past = k => { const s = (t.songs || {})[order[k]]; return !!(s && s.past); };
+    const first = order.findIndex((_, k) => past(k));
+    if (first <= 0) return;
+    for (let k = first; k < order.length; k++) if (!past(k)) return;   // over and past are mixed: no one line to draw
+    const row = rows[first - 1];
+    row.classList.add('cutbelow');
+    const cell = row.querySelector('td.c-title') || row.lastElementChild;   // the widest cell carries the words
+    if (cell) cell.dataset.cut = `the cut-off ${pct(t.line)}: below it, filled in`;
   }
 
   function setView(v) { view = v; if (v === 'arc') showing = 'list'; paint(); }
@@ -767,6 +926,7 @@ const Trace = (() => {
     const fv = $('fieldView'); if (fv) fv.hidden = true;
     const av = $('arcView'); if (av) av.hidden = true;
     const mv = $('magicView'); if (mv) mv.hidden = true;
+    const rm = $('railMix'); if (rm) rm.hidden = true;
   }
 
   /* ---- the levers: a verdict's buttons go to the control they name */
@@ -977,7 +1137,8 @@ const Trace = (() => {
     const strip_ = $('mixStop');
     if (strip_) strip_.addEventListener('click', e => {
       if (onCard(e)) return;
-      if (e.target.closest('.vfold .vtog, .vfold .hl, .vfold .vorb')) { foldOpen = !foldOpen; store.set('mixHeaderOpen', foldOpen); strip(); return; }
+      if (e.target.closest('.vchg')) { mtab = 'changes'; store.set('magicTab', mtab); if (typeof showMagic === 'function') showMagic(); return; }
+      if (e.target.closest('.vfold .vtog, .vfold .hl, .vfold .vorb')) { foldOpen = !foldOpen; store.set('mixHeaderOpen', foldOpen); strip(); markPlaying(); return; }
       const nd = e.target.closest('.cst:not(.mini) .nd[data-i]');
       if (nd) { e.stopPropagation(); showWhy(+nd.dataset.i, e.clientX, e.clientY); return; }
       const b = e.target.closest('.tstage'); if (!b) return;
@@ -995,6 +1156,22 @@ const Trace = (() => {
       box.addEventListener('mouseover', lightPop);
       box.addEventListener('mouseleave', lightPop);
     }
+    // the lever previews its consequence in the drawing (the ring it would move to); a dot
+    // pointed at lights its row; a row pointed at lights its dot
+    document.addEventListener('mouseover', e => {
+      const at = sel => !!(e.target.closest && e.target.closest(sel));
+      const on = at('.lever[data-lever="line"]');
+      document.querySelectorAll('.cst:not(.mini)').forEach(c => c.classList.toggle('ghost', on));
+      const nd = e.target.closest && e.target.closest('.cst .nd[data-i]');
+      hiRow(nd ? +nd.dataset.i : null);
+      if (nd) hiSong(+nd.dataset.i);
+      else if (!at('#tbody')) hiSong(null);
+    });
+    const tbody_ = $('tbody');
+    if (tbody_) tbody_.addEventListener('mouseover', e => {
+      if (!inMix()) return;
+      const r = e.target.closest('tr[data-i]'); hiSong(r ? +r.dataset.i : null);
+    });
     const mv = $('magicView');
     if (mv) {
       mv.addEventListener('click', e => {
@@ -1039,6 +1216,6 @@ const Trace = (() => {
   }
 
   return { paint, strip, fitCell, onView, showWhy, noteStep, noteRows, diff, diffWords, bind,
-           setView, showPop, willReveal, reveal, skipReveal, pullLever, constSvg,
+           setView, showPop, willReveal, reveal, skipReveal, pullLever, constSvg, markPlaying, mixStatus, lcdNote,
            get runs() { return runs; }, WHY, TERM };
 })();

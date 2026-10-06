@@ -740,7 +740,10 @@ function cellHtml(c, r, k) {
     case 'year':   return r.year || '';
     case 'rating': return starsHtml(r);
     case 'plays':  return r.plays || '';
-    case 'status': return esc(r.status);
+    case 'status': {                // in a mix: what the song is to this list (trace.js)
+      const w = S.view === 'mix' && typeof Trace !== 'undefined' && Trace.mixStatus ? Trace.mixStatus(r.i) : '';
+      return w ? `<span class="mixst${w === 'filled in' ? ' past' : ''}">${esc(w)}</span>` : esc(r.status);
+    }
     case 'bpm':    return r.bpm || '';
     // Real bitrate off the file header (audioinfo.py), not size/duration arithmetic.
     // Blank while the fill pass is still working through the library — never "0".
@@ -965,6 +968,7 @@ function repaintRowState() {
     tr.classList.toggle('playing', i === playing && i >= 0);
     tr.classList.toggle('seed', seed !== null && i === seed);
   });
+  if (typeof Trace !== 'undefined' && Trace.markPlaying) Trace.markPlaying();   // the song playing, on the thread
   updateSelStatus();
 }
 
@@ -1806,8 +1810,10 @@ async function showMix(opts = {}) {
   const secs = rows.reduce((a, r) => a + r.seconds, 0);
   const sr = byI.get(S.seed);
   const votes = S.liked.length + S.disliked.length;
+  const nSeeds = rows.filter(r => isSeed(r.i)).length;
+  const count = nSeeds ? `${rows.length - nSeeds} songs + ${nSeeds === 1 ? 'the seed' : nSeeds + ' seeds'}` : `${rows.length} tracks`;
   $('viewSub').innerHTML =
-    `${rows.length} tracks · ${hms(secs)} · seed: ${esc(sr ? sr.artist + ' — ' + sr.title : '?')}` +
+    `${count} · ${hms(secs)} · seed: ${esc(sr ? sr.artist + ' — ' + sr.title : '?')}` +
     (votes ? ` · <span class="steer">steering +${S.liked.length} −${S.disliked.length}</span>` +
              ` <button class="chip" id="steerReset" title="Clear all steering and re-mix from the seed">reset</button>`
            : '');

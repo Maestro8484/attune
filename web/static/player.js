@@ -259,7 +259,9 @@ const Player = (() => {
   async function paintNowPlaying(i) {
     const r = await rowFor(i);
     // LCD: "ARTIST - TITLE", marquee-scrolled when it overflows (the Winamp move)
-    const lcdText = r ? `${r.artist || '?'} - ${r.title}` : 'ATTUNE :: ready';
+    // while a song of the open mix plays, its place, fit and hand-off follow the title (trace.js)
+    const mixNote = r && typeof Trace !== 'undefined' && Trace.lcdNote ? Trace.lcdNote(i) : '';
+    const lcdText = r ? `${r.artist || '?'} - ${r.title}${mixNote}` : 'ATTUNE :: ready';
     const track = $('lcdTrack');
     track.classList.remove('scroll');
     track.textContent = lcdText;

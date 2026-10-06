@@ -26,6 +26,32 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   drawing shrinks into the small one over the list. Any click or Esc still skips it, and
   Preferences, Appearance still says when it plays.
 
+### Added (2026-10-06, the engine's work shown where you already look)
+
+- **The drawing and the list point at each other.** Rest the pointer on a song in the list
+  and its dot and its line from the seed light in the drawing; rest it on a dot and its row
+  lights. The song playing glows on the thread, and the part of the list already played is
+  drawn solid, so you can see where the mix has got to.
+- **The list shows the cut-off.** A dashed amber line runs between the last song over the
+  cut-off and the first one filled in, labelled with the cut-off; the Status column says
+  "the seed", "over cut-off" or "filled in"; every Fit meter has a tick where the cut-off
+  sits. The header counts "50 songs + the seed" instead of 51 tracks.
+- **Lower the cut-off says what it would do.** Hover it and a dotted ring shows in the
+  drawing where the cut-off would go, just under the best song that missed, with how many
+  of the songs looked at sit in between.
+- **The side panel under the cover says what this song is to the mix**: its place, how
+  close it is to the seed, how alike the hand-offs in and out are, and its Earfeel beside the
+  seed's. With nothing playing from the list, what carried the mix, its years and the
+  list's Earfeel on average.
+- **The green display carries the mix while a song of it plays**: its place, its fit and its
+  hand-off, after the title.
+- **After a vote or a change, the songs that came in are marked** with a + by their number,
+  and the fold line counts them ("36 new · 15 stayed"); click it for the full comparison.
+
+### Fixed (2026-10-06)
+
+- **Why this pick drew its ingredient bars empty.** They draw again.
+
 ## [0.2.1] - 2026-10-05
 
 ### Changed (2026-10-05, the sound-alike cut-off after a vote, by ear)

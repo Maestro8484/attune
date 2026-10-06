@@ -675,7 +675,7 @@ td.c-title .tune { float:right; display:none; gap:3px; margin-left:8px; }
 .why .bar { display:flex; align-items:center; gap:8px; margin:3px 0; font-size:12px; }
 .why .bar .lbl { width:56px; color:var(--muted); }
 .why .bar .track { flex:1; height:7px; background:var(--panel2); border-radius:99px; overflow:hidden; }
-.why .bar .fill { height:100%; background:var(--accent); }
+.why .bar .fill { display:block; height:100%; background:var(--accent); }   /* a span: without block it drew nothing (cold review 2026-10-06) */
 .why .bar .fill.neg { background:var(--warn); }
 .why .bar .v { width:44px; text-align:right; font-variant-numeric:tabular-nums; color:var(--muted); }
 
@@ -1326,8 +1326,9 @@ tbody tr.seed td.c-title::before { color:var(--accent); }
 .c-fit { width:88px; white-space:nowrap; }
 .c-fit b { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; margin-left:5px;
   vertical-align:middle; font-weight:500; }
-.fitm { display:inline-block; width:40px; height:6px; vertical-align:middle; background:var(--panel2);
+.fitm { display:inline-block; position:relative; width:40px; height:6px; vertical-align:middle; background:var(--panel2);
   border:1px solid var(--line); border-radius:3px; overflow:hidden; cursor:pointer; }
+.fitm u { position:absolute; top:0; bottom:0; width:1px; margin-left:-.5px; background:var(--fg); opacity:.55; text-decoration:none; }
 .fitm i { display:block; height:100%; background:var(--meter); }
 .fitm.past i { background:var(--dim); }
 tbody tr:hover .fitm { border-color:var(--accent); }
@@ -1655,7 +1656,7 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 /* the reveal plays it: the walk ring grows out from the seed, each song appears as the ring
    passes its distance (delays set per dot in trace.js), colours arrive with the cut-off,
    the held back flash, the thread draws through in play order */
-.cst.play .nd { animation:cstIn .34s cubic-bezier(.2,.8,.3,1.25) both; transform-box:fill-box; transform-origin:center; }
+.cst.play .nd { animation:cstIn .34s cubic-bezier(.22,1,.36,1) both; transform-box:fill-box; transform-origin:center; }
 .cst.play .lk, .cst.play .th { stroke-dasharray:1; animation:cstDraw .3s ease-out both; }
 .cst.play .rg.walk { animation-name:cstWalk; animation-timing-function:linear; animation-fill-mode:both; }
 .cst.play .rg.reach, .cst.play text.rl { animation:cstFade .4s ease-out both; }
@@ -1670,6 +1671,52 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 .cst.play text.on { transition:opacity .45s .2s; }
 .cst.play.held .nd.d { stroke-width:calc(3px * 400 / var(--cst-size, 300)); }
 @keyframes cstIn { from { opacity:0; transform:scale(.15); } to { opacity:1; transform:none; } }
+
+/* the drawing linked to the window (TODO.md row 63): a song pointed at in the list, its dot
+   pointed at, the song playing on the thread, the lever's preview ring, the list's own
+   cut-off line */
+.cst.one :is(.nd, .lk):not(.me) { opacity:.16; }
+.cst .nd.me { stroke:var(--fg); stroke-width:2px; vector-effect:non-scaling-stroke; }
+.cst .lk.me { stroke:var(--fg); opacity:.9; }
+.cst.mini .nd.me { fill:var(--fg); r:34px; }
+.cst.playing .th { opacity:.4; }
+.cst.playing .th.done { opacity:.95; }
+.cst .nd.now, .cst .seed.now { stroke:var(--accent); stroke-width:3px; vector-effect:non-scaling-stroke; animation:cstNow 1.6s ease-in-out infinite; }
+.cst.mini .nd.now { fill:var(--fg); r:40px; stroke-width:1.5px; }
+@keyframes cstNow { 50% { stroke-opacity:.25; } }
+.cst .rg.ghost, .cst text.gl { opacity:0; transition:opacity .25s; }
+.cst .rg.ghost { stroke:var(--fg); }
+.cst text.gl { fill:var(--fg); }
+.cst.ghost .rg.ghost, .cst.ghost text.gl { opacity:.85; }
+tbody tr.linked td { background:color-mix(in srgb, var(--accent) 14%, transparent); }
+tbody tr.cutbelow td { border-bottom:1px dashed var(--accent); }
+tbody tr.cutbelow td[data-cut] { position:relative; overflow:visible; }
+tbody tr.cutbelow td[data-cut]::after { content:attr(data-cut); position:absolute; left:0; bottom:-8px; z-index:2; padding:0 6px;
+  font-size:9.5px; line-height:15px; letter-spacing:.06em; text-transform:uppercase; color:var(--accent); background:var(--panel);
+  border-radius:3px; white-space:nowrap; pointer-events:none; }
+@media (prefers-reduced-motion: reduce) { .cst .nd.now, .cst .seed.now { animation:none; } }
+/* what changed after a step, the Status column in a mix, the side panel's In this mix */
+.vchg { flex:0 0 auto; font:600 11px/1 inherit; font-family:inherit; padding:4px 8px; border-radius:99px; cursor:pointer;
+  background:color-mix(in srgb, var(--accent) 12%, transparent); border:1px solid color-mix(in srgb, var(--accent) 45%, transparent); color:var(--accent); white-space:nowrap; }
+.vchg:hover { background:color-mix(in srgb, var(--accent) 22%, transparent); }
+tbody tr.isnew td.c-pos::before { content:"+ "; color:var(--accent); font-weight:700; }
+.mixst { color:var(--fg); } .mixst.past { color:var(--muted); }
+.railMix { padding:8px 12px 10px; margin-top:4px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:5px; font-size:12px; }
+.railMix[hidden] { display:none; }
+.railMix .rmh { font-size:10px; letter-spacing:.12em; text-transform:uppercase; color:var(--muted); }
+.railMix .rmbig { font-size:22px; font-weight:600; color:var(--accent); font-variant-numeric:tabular-nums; line-height:1.1; }
+.railMix .rmbig span { font-size:12px; font-weight:500; color:var(--muted); }
+.railMix .rmline { color:var(--fg); line-height:1.4; margin:0; font-size:12px; }
+.railMix .rmline b { color:var(--accent); font-weight:600; }
+.railMix .rmh2 { margin-top:6px; font-size:10.5px; color:var(--muted); }
+.rmef { display:flex; flex-direction:column; gap:4px; }
+.rmrow { display:grid; grid-template-columns:42px minmax(0, 1fr) 24px; align-items:center; gap:6px; }
+.rmrow .k { color:var(--muted); font-size:11px; }
+.rmrow .v { text-align:right; font-variant-numeric:tabular-nums; color:var(--fg); font-size:11px; }
+.rmrow .tr { position:relative; height:7px; border-radius:3px; background:var(--panel2); border:1px solid var(--line); }
+.rmrow .tr i { position:absolute; left:0; top:0; bottom:0; background:var(--accent); opacity:.75; border-radius:2px; }
+.rmrow .tr u { position:absolute; top:-3px; bottom:-3px; width:2px; margin-left:-1px; background:var(--fg); border-radius:1px; }
+.railMix .rmhint { margin-top:6px; color:var(--muted); font-size:11px; }
 @keyframes cstFade { from { opacity:0; } to { opacity:1; } }
 @keyframes cstDraw { from { stroke-dashoffset:1; } to { stroke-dashoffset:0; } }
 @keyframes cstWalk { 0% { opacity:.95; transform:scale(var(--s0)); } 92% { opacity:.6; transform:scale(var(--s1)); } 100% { opacity:0; transform:scale(var(--s1)); } }
@@ -1721,7 +1768,7 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 .reveal.fly { background:transparent; backdrop-filter:none; }
 .reveal.fly .rpop { transform:translate(var(--fx, -45vw), var(--fy, -10vh)) scale(var(--fs, .06)); background:transparent; border-color:transparent; box-shadow:none; }
 .reveal.fly .rey, .reveal.fly .rside { opacity:0; transition:opacity .18s; }
-.reveal.fly .rconst { opacity:0; transition:opacity .2s .38s; }
+.reveal.fly .rconst { opacity:0; transition:opacity .3s .12s; }
 .rgrid { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:6px 18px; align-items:center; }
 .rconst { display:grid; place-items:center; }
 .rside { display:flex; flex-direction:column; gap:8px; min-width:0; }
