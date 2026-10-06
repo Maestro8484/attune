@@ -141,7 +141,7 @@ const Trace = (() => {
     const t = tr(), line = t && t.line;      // a tick where the cut-off sits, so each bar reads as over or under it
     const tick = line != null && line > lo && line < 1 ? `<u style="left:${Math.round(100 * (line - lo) / (1 - lo))}%"></u>` : '';
     return `<span class="fitm${past ? ' past' : ''}"${i != null ? ` data-i="${i}"` : ''}${tip ? ` title="${esc(tip)}"` : ''}>` +
-      `<i style="width:${Math.round(w * 100)}%"></i>${tick}</span><b>${fmt2(fit)}</b>`;
+      `<i style="width:${Math.round(w * 100)}%"></i>${tick}</span><b>${pct(fit)}</b>`;
   }
   function fitCell(i) {
     const s = song(i); if (!s || s.fit == null) return '';
@@ -324,7 +324,10 @@ const Trace = (() => {
     switch (s.id) {
       case 'lib': return 'in your library';
       case 'pool': return coll ? `in ${coll}, every one scored` : 'can be mixed, every one scored against the seed';
-      case 'reach': return 'looked at, closest first';
+      case 'reach': {
+        const pool = ((t.funnel || []).find(x => x.id === 'pool') || {}).n, n = Number(s.n) || 0;
+        return 'looked at, closest first' + (pool && n && pool / n >= 3 ? ` · 1 in ${Math.round(pool / n).toLocaleString()} of those scored` : '');
+      }
       case 'taken': return 'taken';
       case 'fit': return `sound enough like ${likeOf(t)}`;
       case 'list': return `on the list${t.requested ? ` of ${Number(t.requested).toLocaleString()} asked for` : ''}`;
@@ -337,7 +340,8 @@ const Trace = (() => {
     const lw = n => { n = Number(n) || 0; return n <= 0 ? 3 : Math.max(5, Math.round(8 + 92 * Math.log(n + 1) / Math.log(max + 1))); };
     const pastN = Object.values(t.songs || {}).filter(s => s.past).length;
     const canOpen = opts.open !== false;
-    return `<div class="sieve${opts.cls ? ' ' + opts.cls : ''}">` + tiles.map(s => {
+    const scale = opts.cls === 'r' ? '' : `<div class="sscale" title="The bar lengths are on a log scale, so 21,000 and 50 both fit on one card. The words on each bar give the true share">bar lengths on a log scale</div>`;
+    return `<div class="sieve${opts.cls ? ' ' + opts.cls : ''}">` + scale + tiles.map(s => {
       const n = s.n == null ? '' : Number(s.n).toLocaleString();
       const split = s.id === 'list' && pastN && Number(s.n) > 0;
       const text = esc(sieveLabel(s, t)) + (split ? ` · ${pastN} filled in past the cut-off` : '');

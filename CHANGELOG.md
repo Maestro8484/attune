@@ -68,6 +68,11 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 ### Fixed (2026-10-06)
 
 - **Why this pick drew its ingredient bars empty.** They draw again.
+- **Fit reads as a percent in the list**, as the drawing and the sentences say it (93%, not
+  0.93).
+- **The count bars say they are on a log scale**, and "looked at" says its true share ("1 in
+  101 of those scored"), since 209 drew longer than half of 21,118.
+- **A fresh mix no longer shows the Library's sort arrow** over a list that is in play order.
 
 ## [0.2.1] - 2026-10-05
 

@@ -1567,6 +1567,7 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 .lever:hover { border-color:var(--edge, var(--line)); background:var(--hover); }
 .lever.hot { color:var(--accent); border-color:color-mix(in srgb, var(--accent) 50%, transparent); }
 .sieve { display:flex; flex-direction:column; gap:3px; padding:4px 10px 6px; }
+.sieve .sscale { align-self:flex-end; font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--muted); margin-bottom:-2px; }
 .sv { display:grid; grid-template-columns:64px minmax(0,1fr); align-items:center; gap:8px; background:none; border:0; padding:0;
   cursor:pointer; text-align:left; font:inherit; color:inherit; }
 .sv .c { font-size:12.5px; font-weight:600; text-align:right; color:var(--fg); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }

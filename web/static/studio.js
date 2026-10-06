@@ -973,9 +973,11 @@ function repaintRowState() {
 }
 
 function setHeaderSort() {
+  // a fresh mix is in play order: the arrow left over from the Library would say otherwise
+  const live = S.view !== 'mix' || S._mixSorted;
   document.querySelectorAll('thead th').forEach(th => {
-    th.classList.toggle('sorted', th.dataset.sort === S.sort);
-    th.classList.toggle('asc', th.dataset.sort === S.sort && !S.desc);
+    th.classList.toggle('sorted', live && th.dataset.sort === S.sort);
+    th.classList.toggle('asc', live && th.dataset.sort === S.sort && !S.desc);
   });
 }
 
@@ -1580,6 +1582,7 @@ async function mixFrom(seedI, opts) {
     S.stop = j.stop || null;                 // why it stopped where it did (one sentence)
     S.trace = j.trace || null;               // and the engine's own account of the walk (trace.js)
     S.revealNext = !(opts && opts.keepFilters);   // a fresh mix gets the reveal; a re-mix updates the card in place
+    S._mixSorted = false;                           // and starts in play order
     noteStop(j.stop);
     if (byMinutes) {
       const rows = await jget('/api/lib/rows?' + [seedI, ...ids].map(i => `i=${i}`).join('&'));
@@ -1654,6 +1657,7 @@ async function blendFrom(seedIds, sourceLabel) {
     S.stop = j.stop || null;
     S.trace = j.trace || null;
     S.revealNext = true;                 // a fresh list: the reveal plays (trace.js)
+    S._mixSorted = false;
     const ids = (j.tracks || []).map(x => x.i).filter(i => !seedIds.includes(i));
     S.mix = ids.length ? pinSeeds(ids) : [];
     $('mixN').textContent = S.mix.length;
@@ -1710,6 +1714,7 @@ async function adventureFrom(seedIds) {
     S.stop = j.stop || null;
     S.trace = j.trace || null;
     S.revealNext = true;                 // a fresh list: the reveal plays (trace.js)
+    S._mixSorted = false;
     S.mix = pinSeeds((j.tracks || []).map(x => x.i));
     $('mixN').textContent = S.mix.length;
     toast(`Adventure: ${j.a.label} → ${j.b.label}`);
@@ -3004,7 +3009,7 @@ function bindEvents() {
         if (S.desc) rows.reverse();
         // keep S.mix in step with what's on screen -- currentExportIds() reads S.mix in the
         // mix view, so a stale S.mix would export a different order than the user is looking at
-        if (S.view === 'mix') S.mix = rows.map(r => r.i);
+        if (S.view === 'mix') { S.mix = rows.map(r => r.i); S._mixSorted = true; }
         if (S.view === 'playlist') S.plDirty = true;   // a re-sort is a re-order to save
         renderRows(rows, { seed: S.seed }); setHeaderSort();
       };
