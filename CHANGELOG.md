@@ -5,6 +5,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-05
+
 ### Changed (2026-10-05, the sound-alike cut-off after a vote, by ear)
 
 - **A voted list keeps far more of its songs.** After a More or Less Like This, a list is

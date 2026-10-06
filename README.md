@@ -45,7 +45,7 @@ Everything happens on your machine. Nothing is uploaded and there is no account 
 
 ## Get it
 
-1. Download **AttuneSetup-0.2.0.exe** from the [Releases page](https://github.com/Maestro8484/attune/releases).
+1. Download **AttuneSetup-0.2.1.exe** from the [Releases page](https://github.com/Maestro8484/attune/releases).
 2. Run it. It installs for you alone, in your own user folder, so Windows won't ask for an
    administrator password.
 3. Windows will show a blue box saying **"Windows protected your PC"**. Click **More info**,
@@ -61,7 +61,7 @@ Everything happens on your machine. Nothing is uploaded and there is no account 
 To check your download against `SHA256SUMS.txt`, in PowerShell:
 
 ```
-Get-FileHash .\AttuneSetup-0.2.0.exe -Algorithm SHA256
+Get-FileHash .\AttuneSetup-0.2.1.exe -Algorithm SHA256
 ```
 
 ### First run
@@ -332,7 +332,7 @@ Details, with the file and line behind each claim, in [docs/PRIVACY.md](docs/PRI
 
 ## Status and limits
 
-Attune is v0.2.0. It's the app its author uses every day on a library of over twenty thousand
+Attune is v0.2.1. It's the app its author uses every day on a library of over twenty thousand
 tracks. Expect rough edges.
 
 - **Coming from 0.1?** Install over the top. Your library, playlists and settings carry on,
