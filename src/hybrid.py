@@ -89,6 +89,12 @@ EARFEEL_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models"
                          "earfeel.json")
 HEAD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
                          "sound_head.npz")
+# The MusicIP-taught head (2026-10-06, TODO.md row 62): the same two-layer shape as the sound
+# head, taught instead by MusicIP Mixer's own lists, pulled through its local API for every
+# song it knows at the owner's setting (style 5, variety 0). The trainer is
+# eval/train_musicip_head.py; the file carries what taught it in its `taught_by` field.
+MUSICIP_HEAD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models",
+                                 "musicip_head.npz")
 
 # THE SOUND PROFILE (2026-10-01). The configuration a library gets when its fingerprints were
 # made with the fingerprint model's TRAINED weights. A library says so itself, in its meta
@@ -117,7 +123,22 @@ SOUND_PROFILE = {
                 "earfeel": 0.25, "artist": 0.12},
     "fusion": "z", "clap_space": "head", "family_credit": 0.0,
 }
-PROFILES = ("v2", "sound")
+# THE MUSICIP PROFILE (2026-10-06, TODO.md row 62). The fingerprint through the MusicIP-taught
+# head, nothing else: MusicIP Mixer ranks by its own similarity function alone (genre is a
+# pre-filter there, never a term; measured July 2026), so the head that imitates it is the whole
+# recipe. On the z scale so the fit line means the same share of a twin's score as the other
+# profiles. Chosen by agreement with MusicIP's own lists on seeds it was never taught, on the
+# owner's ruling for that one task (his words: "make my ears secondary to the musicIP product");
+# the measurement, its ceiling and the pool: ISSUES.md row 100 and
+# audit-sonic/musicip_agreement.json in the development workspace. NEVER the default: a
+# trained-weight library still gets the sound profile unless the profile is asked for by name
+# (the app's --profile flag). Whether it becomes the default is the owner's call, by ear.
+MUSICIP_PROFILE = {
+    "weights": {"clap": 1.0, "lib": 0.0, "genre": 0.0, "bpm": 0.0, "era": 0.0, "key": 0.0,
+                "earfeel": 0.0, "artist": 0.0},
+    "fusion": "z", "clap_space": "head", "family_credit": 0.0,
+}
+PROFILES = ("v2", "sound", "musicip")
 
 # The fit line: the count becomes a MAXIMUM, not a quota, when a walk is given `min_fit`.
 # Both values are PROVISIONAL starting points (LAW 1: where "fits" ends is judged by ear,
@@ -157,6 +178,16 @@ CLAP_LINE_DEFAULT = 0.99
 # of seeds reach it within 10 songs. That is a property of a single line, not of where it sits.
 FIT_LINE_SOUND = 0.54          # the sound profile
 FIT_LINE_V2_TRAINED = 0.50     # the V2 recipe on trained-weight fingerprints
+# The MusicIP profile's line is placed by measurement, not by the 100th-song rule: on the 198
+# held-out seeds, the share of a fit band's songs that MusicIP also picked, band by band, and
+# the line sits at the bottom of the last band where that share still beats what a random song
+# gets (eval/musicip_line.py, 2026-10-06, the head that ships, candidates the 17,124 songs
+# MusicIP knows): 0.30 to 0.35 is 1.6 times random, 0.25 to 0.30 is 0.9 times, so the fit has
+# nothing left to say below 0.30. At this line every one of the 198 seeds fills 100 of 100,
+# which is what MusicIP does: it has no line and fills the count asked for, for every seed it
+# knows. For scale, the 100th song of a typical seed fits at 0.58 here (middle half 0.55 to
+# 0.63), so the 100th-song rule would have cut a third of seeds short at 100 asked.
+FIT_LINE_MUSICIP = 0.30        # the MusicIP profile: where the fit stops predicting MusicIP's picks
 # CLAP_LINE_TRAINED was 0.79 from 2026-10-01, placed by the same 100th-song rule, and it kept
 # 2 or 3 of 50 after one vote (ISSUES.md row 97). Re-placed 2026-10-05 BY EAR (LAW 1): a
 # steered Sandstorm list (one Less Like This) was staged as four playlists at 0.79, 0.74 and
@@ -288,24 +319,47 @@ def _fingerprint_weights(db_path):
 def _load_head(path=None):
     """The trained head's numbers from models/sound_head.npz, or None when the file is absent
     or not a head this engine can run. Two layers: mean (512), w1 (hidden x 512), b1, w2
-    (out x hidden), b2. Stored as 16-bit floats; read back as 32-bit."""
+    (out x hidden), b2. Stored as 16-bit floats; read back as 32-bit.
+
+    A head may also take the 79 sound descriptors beside the fingerprint (the MusicIP-taught
+    head, 2026-10-06): then the file carries lib_mu, lib_sd and lib_clip, the z-score the
+    descriptors were trained with, and w1 is as wide as the fingerprint and the descriptors
+    together. Those stats are the TRAINING pool's and are never recomputed from the library."""
     try:
         with np.load(path or HEAD_FILE, allow_pickle=False) as f:
             h = {k: f[k].astype(np.float32) for k in ("mean", "w1", "b1", "w2", "b2")}
+            if "lib_mu" in f:
+                h.update({k: f[k].astype(np.float32) for k in ("lib_mu", "lib_sd", "lib_clip")})
     except (OSError, ValueError, KeyError):
         return None
-    ok = (h["w1"].ndim == 2 and h["w2"].ndim == 2 and h["mean"].shape == (h["w1"].shape[1],)
+    extra = h["lib_mu"].shape[0] if "lib_mu" in h else 0
+    ok = (h["w1"].ndim == 2 and h["w2"].ndim == 2 and h["mean"].ndim == 1
+          and h["mean"].shape[0] + extra == h["w1"].shape[1]
           and h["b1"].shape == (h["w1"].shape[0],) and h["w2"].shape[1] == h["w1"].shape[0]
-          and h["b2"].shape == (h["w2"].shape[0],))
+          and h["b2"].shape == (h["w2"].shape[0],)
+          and (not extra or (h["lib_sd"].shape == h["lib_mu"].shape and h["lib_clip"].shape == ())))
     return h if ok else None
 
 
-def _apply_head(h, X):
+def _apply_head(h, X, L=None):
     """Run the head over fingerprints X (rows), with numpy alone: subtract the mean the head
     was trained with, make each row length 1, one hidden layer with the tanh form of GELU,
-    then the output layer, length 1 again. No model is loaded and nothing is written."""
+    then the output layer, length 1 again. No model is loaded and nothing is written.
+
+    `L`, the raw sound descriptors in the same row order, is read only by a head that takes
+    them (see _load_head): z-scored with the head's own stats, clipped, and put beside the
+    centered fingerprint. A row with no descriptors (all zeros) scores as the average song."""
     Xc = X.astype(np.float32) - h["mean"]
     Xc /= np.maximum(np.linalg.norm(Xc, axis=1, keepdims=True), 1e-9)
+    if "lib_mu" in h:
+        if L is None or L.shape != (X.shape[0], h["lib_mu"].shape[0]):
+            raise ValueError("this head takes the sound descriptors beside the fingerprint, "
+                             "and none of the right shape were given")
+        c = float(h["lib_clip"])
+        sd = np.where(h["lib_sd"] < 1e-9, 1e-9, h["lib_sd"])
+        LZ = np.clip((L.astype(np.float32) - h["lib_mu"]) / sd, -c, c).astype(np.float32)
+        LZ[~np.isfinite(LZ)] = 0.0
+        Xc = np.hstack([Xc, LZ])
     a = Xc @ h["w1"].T + h["b1"]
     a = 0.5 * a * (1.0 + np.tanh(0.7978845608028654 * (a + 0.044715 * a ** 3)))
     y = a @ h["w2"].T + h["b2"]
@@ -418,22 +472,35 @@ class HybridEngine:
         if profile is not None and profile not in PROFILES:
             raise ValueError(f"profile must be one of {PROFILES}, not {profile!r}")
         self.trained_fingerprints = _fingerprint_weights(db_path) == TRAINED_CLAP_WEIGHTS
+        if profile == "musicip":
+            # Asked for by name, never chosen for a library. Its head was taught on fingerprints
+            # from the trained weights; on the earlier kind it would return lists nobody can
+            # vouch for, so it refuses rather than runs (the learned engine's own rule).
+            if not self.trained_fingerprints:
+                raise ValueError(
+                    "profile 'musicip' needs fingerprints made with the fingerprint model's "
+                    "trained weights; this library's fingerprints are the earlier kind")
+            head_file = head_file or MUSICIP_HEAD_FILE
         self._head_file = head_file
         self._head = _load_head(head_file)
+        if profile == "musicip" and self._head is None:
+            raise ValueError(f"profile 'musicip' needs its head file, {head_file}")
         if profile is None:
             profile = "sound" if self.trained_fingerprints and self._head is not None else "v2"
         self.profile = profile
         # where the app's fit switch draws its line for this library (see FIT_LINE_DEFAULT)
         self.fit_line = (FIT_LINE_SOUND if profile == "sound"
+                         else FIT_LINE_MUSICIP if profile == "musicip"
                          else FIT_LINE_V2_TRAINED if self.trained_fingerprints else FIT_LINE_DEFAULT)
         self.clap_line = CLAP_LINE_TRAINED if self.trained_fingerprints else CLAP_LINE_DEFAULT
         self.w = dict(DEFAULT_WEIGHTS)
         self.fusion, self.clap_space = "raw", "raw"
         self.family_credit = 0.0
-        if profile == "sound":
-            self.w.update(SOUND_PROFILE["weights"])
-            self.fusion, self.clap_space = SOUND_PROFILE["fusion"], SOUND_PROFILE["clap_space"]
-            self.family_credit = SOUND_PROFILE["family_credit"]
+        if profile in ("sound", "musicip"):
+            chosen = SOUND_PROFILE if profile == "sound" else MUSICIP_PROFILE
+            self.w.update(chosen["weights"])
+            self.fusion, self.clap_space = chosen["fusion"], chosen["clap_space"]
+            self.family_credit = chosen["family_credit"]
         cfg = os.path.join(os.path.dirname(db_path), "engine_v2.json")
         if os.path.exists(cfg):
             try:
@@ -583,6 +650,15 @@ class HybridEngine:
         if self.use_lib:
             self.L = (np.vstack([libN[p] for p in paths]) if paths
                       else np.zeros((0, self.LIB_DIM), np.float64))
+        # The raw descriptors of every pool song, for a head that takes them beside the
+        # fingerprint (see _apply_head); zeros where a song has none. Kept whatever the lib
+        # weight is: the sound profile scores with lib at 0 and the MusicIP-taught head still
+        # reads them.
+        self._lib_raw = np.zeros((len(paths), self.LIB_DIM), np.float32)
+        for i, p in enumerate(paths):
+            v = lib_vec.get(p)
+            if v is not None:
+                self._lib_raw[i] = v
         self.idx = {p: i for i, p in enumerate(paths)}
         self.artist = [meta.get(p, (None,)*5)[0] for p in paths]
         # Catalog fields per pool track (None where the library has no catalog row): STYLE joins
@@ -652,7 +728,7 @@ class HybridEngine:
             if self._head is None or self._head["mean"].shape[0] != self.X.shape[1]:
                 raise ValueError("clap_space 'head' needs the head file models/sound_head.npz, "
                                  "made for fingerprints of this length")
-            M = self._spaces[name] = _apply_head(self._head, self.X)
+            M = self._spaces[name] = _apply_head(self._head, self.X, self._lib_raw)
         if M is None:
             Xc = self.X.astype(np.float64)
             Xc = Xc - Xc.mean(0)

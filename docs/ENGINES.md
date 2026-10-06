@@ -50,6 +50,25 @@ seed's artist for this profile, against 33.1 for Attune as released up to 0.1.2 
 random picks. That is evidence it finds music people like together. It is not a listening
 test, and none has been sat on it yet.
 
+### The MusicIP profile, selectable by name (2026-10-06)
+
+A third recipe, never chosen for a library: start the app with `--profile musicip` and a
+library of trained-weight fingerprints scores by one ingredient, the fingerprint and the 79
+sound descriptors through the **MusicIP-taught head** (`src/models/musicip_head.npz`, 3 MB).
+That head was taught by MusicIP Mixer itself: its list of 100 for every song it knows, pulled
+through its local API at the owner's own setting (style 5, variety 0), and a small head
+trained so that those songs come out nearest the seed (`eval/train_musicip_head.py`, the
+same knowledge-distillation recipe that made the learned engine in July 2026, on the newer
+fingerprints). Nothing of MusicIP was taken apart; only its answers were read.
+
+Measured on 198 seeds the head never saw (`eval/musicip_agreement.py`), songs in common
+with MusicIP's 99, candidates limited to the 17,124 songs MusicIP knows: this head 21.9 (the
+engine's walk 20.5), the sound profile 5.6, the plain fingerprint 6.0, random 0.6; MusicIP
+against itself 99, since at variety 0 it is deterministic. Its fit line sits where the fit
+stops predicting MusicIP's picks (`eval/musicip_line.py`), low enough that a 100-song list
+fills for every seed, as MusicIP's does. It has not been judged by ear; the listening set
+is staged and the owner decides whether it becomes the default for trained-weight libraries.
+
 ### V2, for a library analysed by 0.1.x
 
 Blends the **CLAP embedding**, the ears, with the librosa descriptor and a few plain musical

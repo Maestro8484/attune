@@ -60,7 +60,7 @@ def _label(eng, path):
 
 
 def build_engine_bundle(hybrid_mod, eng_iface_mod, db_path, engine_name, musicip_url,
-                        log=print, mip=None):
+                        log=print, mip=None, profile=None):
     """(hybrid_eng, labels, labels_lc, active) for a FRESH load of db_path -- the exact
     construction app.py's create_app() performs at startup, factored out so both
     startup and reload build the same shape from one place (prior art before
@@ -71,7 +71,8 @@ def build_engine_bundle(hybrid_mod, eng_iface_mod, db_path, engine_name, musicip
     reuse -- reload must not tear down and reconnect a working MusicIP session just
     to refresh the pool.
     """
-    hybrid_eng = hybrid_mod.HybridEngine(db_path)
+    # `profile` names a scoring profile (hybrid.PROFILES); None lets the library decide
+    hybrid_eng = hybrid_mod.HybridEngine(db_path, profile=profile)
     labels = [_label(hybrid_eng, p) for p in hybrid_eng.paths]
     labels_lc = [s.lower() for s in labels]
     if engine_name == "musicip":
@@ -118,7 +119,8 @@ class ReloadJob:
                 mip = ctx["active"].mip
             hybrid_eng, labels, labels_lc, active = build_engine_bundle(
                 ctx["hybrid_mod"], ctx["eng_iface_mod"], ctx["db_path"],
-                ctx["engine_name"], ctx["musicip_url"], log=print, mip=mip)
+                ctx["engine_name"], ctx["musicip_url"], log=print, mip=mip,
+                profile=ctx.get("profile"))
             # LibraryIndex construction (the DB read for seconds/analyzed/etc) is cheap
             # relative to the engine load above, but still done off-lock -- no reason
             # to make readers wait for it when the eng build already dwarfs it.

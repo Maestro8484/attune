@@ -349,7 +349,10 @@ def _migrate_plex_env_once(cfgmod, settings, env_cfg):
 
 
 def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:10002",
-               playlist_dir=None):
+               playlist_dir=None, profile=None):
+    """`profile` (2026-10-06) names the hybrid engine's scoring profile (hybrid.PROFILES);
+    None lets the library decide, as it always has. The one way to run the MusicIP-taught
+    head until it is ruled the default."""
     _ensure_db(db_path)
     hybrid = _load_hybrid()
     print(f"Loading library from {db_path} ...")
@@ -368,7 +371,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # (the hot-reload endpoint -- rebuilds this exact bundle from the DB, in a background
     # thread, without restarting the app) shares this code instead of duplicating it.
     eng, labels, labels_lc, active = libreload.build_engine_bundle(
-        hybrid, eng_iface, db_path, engine_name, musicip_url, log=print)
+        hybrid, eng_iface, db_path, engine_name, musicip_url, log=print, profile=profile)
     print(f"Ready — {len(eng.paths):,} songs in the mixable pool.")
     is_musicip = engine_name == "musicip"
     # how many songs the library holds, pool or not, for the first tile of the funnel;
@@ -811,7 +814,9 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
                 continue
             label = TERM_LABELS[k]
             if k == "clap" and getattr(eng, "clap_space", "raw") == "head":
-                label += " (through the trained head)"
+                label += (" (through the MusicIP-taught head)"
+                          if getattr(eng, "profile", "v2") == "musicip"
+                          else " (through the trained head)")
             terms.append({"id": k, "label": label, "weight": round(wk, 3)})
         return {"profile": getattr(eng, "profile", "v2"),
                 "fusion": getattr(eng, "fusion", "raw"),
@@ -2713,6 +2718,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # hand back libverify's `filestate` (re-attached to `lib` after every reload).
     reload_ctx = {
         "db_path": db_path, "engine_name": engine_name, "musicip_url": musicip_url,
+        "profile": profile,
         "hybrid_mod": hybrid, "eng_iface_mod": eng_iface, "studio_mod": studio_mod,
         "eng": eng, "active": active, "labels": labels, "labels_lc": labels_lc,
         "lib": lib, "ud": ud, "engine_lock": engine_lock,
@@ -3261,6 +3267,11 @@ def main():
                          "to v2. Falls back to settings.json (default: auto).")
     ap.add_argument("--musicip-url", default=None,
                     help="MusicIP Mixer HTTP API base URL (only used with --engine musicip)")
+    ap.add_argument("--profile", choices=("v2", "sound", "musicip"), default=None,
+                    help="the hybrid engine's scoring profile. Left out, the library decides "
+                         "(the sound profile for trained-weight fingerprints, else V2). "
+                         "'musicip' is the MusicIP-taught head (2026-10-06), selectable here "
+                         "only; it refuses a library of the earlier fingerprint kind.")
     ap.add_argument("--playlists", default=None,
                     help="folder of .m3u/.m3u8 playlists to browse, and the ONLY folder "
                          "'Save to playlist folder' can write into. Falls back to "
@@ -3317,8 +3328,9 @@ def main():
             engine = "v2"
         print(f"engine=auto -> {engine}")
     app = create_app(db, engine_name=engine, musicip_url=musicip_url,
-                     playlist_dir=playlists or None)
-    print(f"Serving on http://{args.host}:{args.port} (engine={engine})")
+                     playlist_dir=playlists or None, profile=args.profile)
+    print(f"Serving on http://{args.host}:{args.port} (engine={engine}"
+          + (f", profile={args.profile}" if args.profile else "") + ")")
     # threaded=True is REQUIRED for a media player: the default single-threaded dev server
     # serializes every request, so while the browser fetches a whole track to decode its
     # waveform (a big transfer over /audio) or computes a mix, the CURRENTLY PLAYING audio's

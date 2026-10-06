@@ -5,6 +5,23 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-06, a head taught by MusicIP Mixer, selectable by name)
+
+- **A third scoring profile, `musicip`, started with `--profile musicip`.** The fingerprint
+  and the 79 sound descriptors go through a small head taught by MusicIP Mixer's own lists,
+  pulled through its local API for every song it knows at the owner's setting (style 5,
+  variety 0), and nothing else is scored. On 198 seeds it was never taught, its 99 best
+  share 21.9 songs with MusicIP's 99 (the engine's walk 20.5) where the sound profile shares
+  5.6, the plain fingerprint 6.0 and a random list 0.6; MusicIP agrees with itself 99 of 99
+  at that setting. Candidates limited to the 17,124 songs MusicIP knows; the whole pool is
+  21,118. Its cut-off sits where the fit stops predicting MusicIP's picks, so a 100-song
+  list fills for every seed, as MusicIP's does. Never chosen for a library on its own: a
+  trained-weight library still gets the sound profile, and this one refuses a library of
+  the earlier fingerprint kind. Not yet judged by ear. `src/models/musicip_head.npz`,
+  `eval/train_musicip_head.py`, `eval/musicip_agreement.py`, `eval/musicip_line.py`.
+- **A head may read the sound descriptors beside the fingerprint.** The head file carries
+  the z-score it was trained with; the engine runs it with numpy alone, as before.
+
 ### Changed (2026-10-06, the mix gets its room back, and the connections drawn)
 
 - **The card over a fresh mix folds to one line.** An arrow, a small drawing and the
