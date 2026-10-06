@@ -26,7 +26,7 @@ features (scan.py analyze); with lib active the pool is the clap∩librosa inter
 If CLAP is absent, use the librosa engine in mixer.py.
 """
 from __future__ import annotations
-import copy, os, json, sqlite3, pathlib
+import copy, os, json, re, sqlite3, pathlib
 import numpy as np
 
 # V2 — the recipe that came out ahead in the partly blind listening test (human_ratings.md,
@@ -176,7 +176,16 @@ CLAP_LINE_DEFAULT = 0.99
 # holds neither, with the head that ships (pool 21,118, 200 seeds): the 100th song fits at 0.54.
 # The line is one number for every seed and seeds differ widely: on that measurement a quarter
 # of seeds reach it within 10 songs. That is a property of a single line, not of where it sits.
-FIT_LINE_SOUND = 0.54          # the sound profile
+#
+# MOVED 0.54 to 0.30 on 2026-10-06, on the owner's yes ("1 yes"), placed by the same measured rule as
+# the MusicIP profile's line: where a 100-song list fills for nearly every seed, as MusicIP's does.
+# At 0.54, 65 of 198 held-out seeds filled 100 of 100 and the median list kept 58; at 0.30, 192 of
+# 198 filled and none kept under 10 (eval/musicip_line.py --profile sound, audit-sonic/sound_line.json).
+# The picks and their order do not change; only how many are kept before the floor fills in. Three
+# outside judges (Last.fm, ListenBrainz links, two blind readers) ranked this profile's picks above
+# MusicIP's and above the MusicIP-taught head's, so the count was the whole of what was sub-par
+# (ISSUES.md row 100). The ear has still not ruled on where "fits" ends; this line says where lists fill.
+FIT_LINE_SOUND = 0.30          # the sound profile
 FIT_LINE_V2_TRAINED = 0.50     # the V2 recipe on trained-weight fingerprints
 # The MusicIP profile's line is placed by measurement, not by the 100th-song rule: on the 198
 # held-out seeds, the share of a fit band's songs that MusicIP also picked, band by band, and
@@ -364,6 +373,39 @@ def _apply_head(h, X, L=None):
     a = 0.5 * a * (1.0 + np.tanh(0.7978845608028654 * (a + 0.044715 * a ** 3)))
     y = a @ h["w2"].T + h["b2"]
     return (y / np.maximum(np.linalg.norm(y, axis=1, keepdims=True), 1e-9)).astype(np.float32)
+
+
+# One recording once, without a catalog (2026-10-06, ISSUES.md row 101). A library holds the same
+# song in more than one file (another album, a compilation, a live and a studio take under one
+# title): on the reference library 2,759 artist-and-title names are held by 6,929 files. Two blind
+# readers found the same song twice in 4 of 10 seeds' lists, and the seed's own twin as the first
+# pick. The walk now blocks a candidate that carries the NAME of the seed or of a song already
+# taken: the same artist and title once the title is stripped of its suffixes (live, remastered,
+# alternate take, a bracketed note). The report names the reason 'duplicate', the word the window
+# already has for the same song twice. A twin by FINGERPRINT (the same recording under another
+# title) is left to the app's existing near-twin re-pick, the recipe switch, so there is one such
+# rule, not two; TWIN_COSINE below is off, and exists for a library whose tags are too poor for
+# names. Measured on 500 random seeds of the reference library, should it ever be turned on: of
+# neighbour pairs at a cosine of 0.98 or more, 81 in 100 are the same artist and title; at 0.95,
+# 47 in 100. The synthetic library of tests/test_collections_fit.py puts distinct songs at 0.99.
+TWIN_COSINE = None
+_TWIN_SUFFIX = re.compile(r"\s*-\s*(live|remaster(ed)?|mono|stereo|single version|album version|"
+                          r"previously unreleased|alternate take|alt\.? take|demo|edit|radio edit|"
+                          r"acoustic|instrumental|take \d+)\b.*$")
+_TWIN_BRACKETS = re.compile(r"[\(\[].*?[\)\]]")
+_TWIN_PLAIN = re.compile(r"[^a-z0-9]+")
+
+
+def _twin_key(artist, title):
+    """(artist, title) as the walk compares them: lower case, the title without a bracketed note or
+    a dash suffix, punctuation collapsed. None when there is no title to compare."""
+    t = (title or "").lower()
+    t = _TWIN_BRACKETS.sub("", t)
+    t = _TWIN_SUFFIX.sub("", t)
+    t = _TWIN_PLAIN.sub(" ", t).strip()
+    if not t:
+        return None
+    return (_TWIN_PLAIN.sub(" ", (artist or "").lower()).strip(), t)
 
 
 def _key_from_chroma(chroma12):
@@ -661,6 +703,8 @@ class HybridEngine:
                 self._lib_raw[i] = v
         self.idx = {p: i for i, p in enumerate(paths)}
         self.artist = [meta.get(p, (None,)*5)[0] for p in paths]
+        # the name the twin block compares (see TWIN_COSINE); None where a song has no title
+        self.twin = [_twin_key(meta.get(p, (None,)*5)[0], meta.get(p, (None,)*5)[2]) for p in paths]
         # Catalog fields per pool track (None where the library has no catalog row): STYLE joins
         # the genre tags, the original release year replaces the file's year in the era term,
         # and the recording id stops a walk taking one recording twice. "covers" leaves the
@@ -1006,6 +1050,15 @@ class HybridEngine:
 
         def _take(j, fit, is_past):
             a = self.artist[j]
+            # the same song again (by name; by fingerprint only when TWIN_COSINE is set) is
+            # judged before artist spacing: it is the more exact reason, and the one the
+            # sentence gives
+            tk = self.twin[j] if j < len(self.twin) else None
+            if (tk is not None and tk in twins) or (
+                    TWIN_COSINE is not None and rows_taken
+                    and float((self.X[rows_taken] @ self.X[j]).max()) >= TWIN_COSINE):
+                dropped.append((j, kpos.get(j), float(scores[j]), "duplicate"))
+                return False
             if a and a in recent[-artist_spacing:]:
                 dropped.append((j, kpos.get(j), float(scores[j]), "artist"))
                 return False
@@ -1013,6 +1066,9 @@ class HybridEngine:
             if rec and rec in recs:
                 dropped.append((j, kpos.get(j), float(scores[j]), "recording"))
                 return False
+            if tk is not None:
+                twins.add(tk)
+            rows_taken.append(j)
             if rec:
                 recs.add(rec)
             out.append(self.paths[j]); recent.append(a)
@@ -1026,6 +1082,9 @@ class HybridEngine:
         # one recording once: the seed, anything excluded, and every pick block their own
         # recording id (only libraries with a catalog_ids table have any)
         recs = {self.recording[j] for j in excl if 0 <= int(j) < len(self.recording)} - {None}
+        # the twin block starts from the seed (and anything excluded): its name and its row
+        rows_taken = [int(j) for j in excl if 0 <= int(j) < len(self.paths)]
+        twins = {self.twin[j] for j in rows_taken if j < len(self.twin)} - {None}
         fit_of = {}
         fit_of_passed = {}
         stopped = "exhausted"

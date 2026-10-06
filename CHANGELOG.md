@@ -5,6 +5,22 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (2026-10-06, lists fill, and one recording once)
+
+- **The sound profile's cut-off moved from 0.54 to 0.30,** on the owner's yes, placed where a
+  100-song list fills for nearly every seed, as MusicIP's does: measured on 100 random seeds,
+  at 0.54 the median list kept 28 songs and a third kept under 10; at 0.30 the median keeps 100
+  and 2 in 100 seeds keep under 10. The picks and their order are unchanged. Three outside
+  judges (Last.fm, ListenBrainz links, two blind readers) ranked this profile's picks above
+  MusicIP's and above the MusicIP-taught head's, so the count was the whole of what was short.
+- **One recording once, without a catalog.** A song the library holds in two files (another
+  album, a compilation, a live take) is taken once: the walk blocks a song carrying the name of
+  the seed or of a song already on the list (artist and title, the title without its live,
+  remastered or bracketed note). The seed's own twin is never the first pick. The trace counts
+  them as duplicates, the word it already had; the same recording under a different title is
+  still the near-twin re-pick's job, as before. On the reference library 2,759 names are held by
+  6,929 files, and on 100 random seeds the block fired in 71 lists.
+
 ### Added (2026-10-06, a head taught by MusicIP Mixer, selectable by name)
 
 - **A third scoring profile, `musicip`, started with `--profile musicip`.** The fingerprint
