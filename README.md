@@ -106,15 +106,17 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
   **USB / car folder**, one click each, and **More...** for playlist files. What you see is
   exactly what you get.
 - **Browse and play.** Search, album and folder views, album art, ratings, loved tracks, tags.
-- **See how a mix was made, in words.** A card above the list says what decided it ("Only
-  9 songs you own sound enough like Sandstorm; the 41 marked ~ are past the cut-off") with
-  the controls that change it as buttons, over a sieve of the run's numbers; a **Fit**
-  column gives each song's fit; **Why this pick** gives the numbers behind one song;
-  **Show the magic**, under Mix in the side list, holds every song looked at and what
-  happened to it, the list as an arc, what the last change kept and dropped, the runs of a
-  session compared, and "why isn't this song here?". A three-second reveal plays it the
-  moment a list arrives. All of it from the engine's own record, none of it written by a
-  model.
+- **See how a mix was made, in words and as a picture.** One line above the list says what
+  decided it ("Only 9 songs you own sound enough like Sandstorm"), beside a small drawing
+  of the connections: every song Attune looked at around the seed, nearer the middle
+  sounding more like it, the cut-off as a ring, the list threaded through in play order.
+  Open the line for the drawing at full size, the explanation, the controls that change it
+  and a sieve of the run's numbers. A **Fit** column gives each song's fit; **Why this
+  pick** gives the numbers behind one song; **Show the magic**, under Mix in the side
+  list, holds every song looked at and what happened to it, the list as an arc, what the
+  last change kept and dropped, the runs of a session compared, and "why isn't this song
+  here?". A five-second reveal draws the connections the moment a list arrives. All of it
+  from the engine's own record, none of it written by a model.
 - **Help on hover.** Rest the pointer on any button, dial or setting and it says what it does.
 - **Copy a mix to a USB stick.** Numbered filenames so a car stereo plays them in order, tags
   intact, either flat or as Artist / Album folders.
@@ -164,13 +166,13 @@ The click-by-click guide, including getting a mix onto a USB stick and into Plex
 </p>
 
 <p align="center">
-  <img alt="A fresh mix: the card over the list says only 4 songs you own sound enough like the seed and why, with the controls that change it as buttons; under it the sieve, the numbers of the run as bars with the deciding one lit; then the list with its Fit column" src="docs/img/trace-main.png" width="820">
+  <img alt="A fresh mix: one line over the list, an arrow, a small drawing of the connections and the words: only 4 songs you own sound enough like Tootsie Roll; then the list with its Fit column, 20 songs in view" src="docs/img/trace-main.png" width="820">
 </p>
 <p align="center">
-  <img alt="The reveal, two seconds after the list arrived: the sieve growing stage by stage over the dimmed window, the headline written" src="docs/img/trace-reveal.png" width="820">
+  <img alt="The reveal, four and a half seconds after the list arrived: the connections drawn around the seed, 4 songs inside the dashed cut-off ring, the songs held back in red, the list threaded clockwise through the 46 filled in from further out; beside it the sieve and the headline" src="docs/img/trace-reveal.png" width="820">
 </p>
 <p align="center">
-  <img alt="Show the magic: the card and the sieve, then the hill of every song looked at, closest first, its fit as height, the cut-off dashed, with the songs held back in red" src="docs/img/trace-magic.png" width="820">
+  <img alt="Show the magic: the card and the sieve, then the connections: every song looked at around the seed, the cut-off ring, the list threaded through in play order" src="docs/img/trace-magic.png" width="820">
 </p>
 <p align="center">
   <img alt="Why this pick on one song: the 3rd closest song you own to the seed, 55% of what an identical song would score, and what made its score, ingredient by ingredient" src="docs/img/trace-why.png" width="820">

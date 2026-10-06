@@ -698,17 +698,25 @@
 
 <div id="toast" class="toast" hidden></div>
 <!-- The reveal (2026-10-05, TODO.md row 59, Joe: "like a popup screen while the playlist
-     is being generated, shown briefly ... with animation of 'showing the magic'"): opens
-     the moment a fresh list arrives, replays the recorded numbers of the run for three
-     seconds (never a progress bar: the engine takes about a second and this does not
-     pretend otherwise), then flies into the Show the magic item in the side list. Any
-     click or Esc skips it; the list under it is already live. Preferences, Appearance
-     says when it plays. trace.js reveal(). -->
+     is being generated, shown briefly ... with animation of 'showing the magic'"; five
+     seconds and the connections drawn since 2026-10-06, TODO.md row 61): opens the moment
+     a fresh list arrives and replays the recorded run (never a progress bar: the engine
+     takes about a second and this does not pretend otherwise). The connections draw
+     themselves beside the sieve, one line says what is happening, then the drawing
+     shrinks into the small one beside the headline over the list. Any click or Esc skips
+     it; the list under it is already live. Preferences, Appearance says when it plays.
+     trace.js reveal(). -->
 <div id="reveal" class="reveal" hidden>
   <div class="rpop" id="rpop" role="status" aria-live="polite">
     <div class="rey"><span>Showing the magic</span><i id="rskip">click or Esc to skip</i></div>
-    <div class="rhl" id="rhl">&nbsp;</div>
-    <div class="sieve" id="rsieve"></div>
+    <div class="rgrid">
+      <div class="rconst" id="rconst"></div>
+      <div class="rside">
+        <div class="rhl" id="rhl">&nbsp;</div>
+        <div class="rcap" id="rcap"></div>
+        <div class="sieve" id="rsieve"></div>
+      </div>
+    </div>
   </div>
 </div>
 <div id="why" class="why" hidden></div>
@@ -968,7 +976,7 @@
                  buttons, which update the card over the list in place. -->
             <div class="prefrow"><span class="k">Showing the magic</span>
               <div class="v"><select id="prefReveal">
-                  <option value="every">After every new mix, for three seconds</option>
+                  <option value="every">After every new mix, for five seconds</option>
                   <option value="first">After the first mix of a session only</option>
                   <option value="never">Never; the card over the list says it</option>
                 </select>

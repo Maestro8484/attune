@@ -1570,10 +1570,10 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
   cursor:pointer; text-align:left; font:inherit; color:inherit; }
 .sv .c { font-size:12.5px; font-weight:600; text-align:right; color:var(--fg); font-variant-numeric:tabular-nums; letter-spacing:-.01em; }
 .sv .bar { position:relative; display:block; height:18px; border-radius:3px; background:var(--panel2); border:1px solid var(--line);
-  overflow:hidden; transition:width .55s cubic-bezier(.2,.7,.2,1); min-width:6px; }
-.sv .bar .lbl { position:absolute; inset:0; display:flex; align-items:center; padding-left:7px; font-size:10.5px; color:var(--muted); white-space:nowrap; }
+  overflow:visible; transition:width .55s cubic-bezier(.2,.7,.2,1); min-width:6px; }
+.sv .bar .lbl { position:absolute; top:0; bottom:0; left:0; overflow:hidden; display:flex; align-items:center; padding-left:7px; font-size:10.5px; color:var(--muted); white-space:nowrap; }
 .sv .bar .lbl.two { color:var(--fg); }
-.sv .bar .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); opacity:.85; }
+.sv .bar .fill { position:absolute; left:0; top:0; bottom:0; background:var(--accent); opacity:.85; border-radius:2px 0 0 2px; }
 .sv .bar .hatch { position:absolute; top:0; bottom:0; right:0; background:repeating-linear-gradient(135deg, transparent 0 4px, color-mix(in srgb, var(--fg) 18%, transparent) 4px 6px); }
 .sv:hover .bar { border-color:var(--edge, var(--muted)); }
 .sv.on .c { color:var(--accent); }
@@ -1586,6 +1586,94 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 .sieve.big .sv .bar { height:24px; } .sieve.big .sv .c { font-size:15px; } .sieve.big .sv .bar .lbl { font-size:11.5px; }
 .sieve.r .sv .bar { height:16px; } .sieve.r .sv .c { font-size:11.5px; } .sieve.r .sv .bar .lbl { font-size:10px; }
 .flash { outline:2px solid var(--accent); outline-offset:2px; transition:outline-color 1.6s; }
+
+/* ---- the fold (2026-10-06, TODO.md row 61, Joe: "fold"): the mix list is the hero; the
+   card is one line until opened. trace.js strip(), foldHtml(). ---- */
+#mixStop.tstrip.fold { padding:2px 0 0; container-type:inline-size; }
+.vline { display:flex; align-items:center; gap:4px 8px; min-height:30px; padding:0 10px 0 4px; }
+.vline .hl { flex:1 1 auto; min-width:0; font-size:17px; font-weight:600; line-height:1.3; letter-spacing:-.01em; color:var(--fg);
+  white-space:nowrap; overflow:hidden; text-overflow:ellipsis; cursor:pointer; }
+.vline .hl em { color:var(--accent); font-style:normal; }
+@container (max-width:900px) { .vline .hl { font-size:15px; } }
+.vtog { flex:0 0 auto; width:22px; height:22px; padding:0; border-radius:5px; background:none; border:1px solid transparent;
+  color:var(--fg); font-size:14px; line-height:1; cursor:pointer; }
+.vtog:hover, .vfold.open .vtog { border-color:var(--line); color:var(--fg); background:var(--hover); }
+.vorb { flex:0 0 auto; width:26px; height:26px; border-radius:50%; cursor:pointer; display:grid; place-items:center;
+  background:radial-gradient(circle, color-mix(in srgb, var(--accent) 14%, transparent) 0 40%, transparent 72%); }
+.vorb:hover { background:radial-gradient(circle, color-mix(in srgb, var(--accent) 26%, transparent) 0 45%, transparent 75%); }
+.vorb.lit { animation:orbLit 1.4s ease-out 1; }
+@keyframes orbLit { 0% { box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 75%, transparent); } 100% { box-shadow:0 0 0 16px transparent; } }
+.vopen { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:4px 14px; padding:2px 10px 4px 10px; align-items:start; }
+.vconst { display:flex; flex-direction:column; align-items:center; gap:4px; width:214px; }
+.vright { min-width:0; display:flex; flex-direction:column; }
+.vright .vfoldbody { padding:0 0 2px; }
+.vright .sieve { padding:4px 0 6px; }
+@container (max-width:640px) { .vopen { grid-template-columns:minmax(0, 1fr); } .vconst { width:auto; } }
+
+/* the connections: every song looked at around the seed, the list threaded through.
+   Sizes are set per drawing in trace.js constSvg() so a dot stays a dot at any size. */
+.cst { display:block; overflow:visible; max-width:100%; height:auto; }
+.cst .rg { fill:none; }
+.cst .rg.haze { stroke:color-mix(in srgb, var(--fg) 7%, transparent); stroke-dasharray:1 5; }
+.cst .rg.reach { stroke:color-mix(in srgb, var(--fg) 16%, transparent); }
+.cst .rg.cut { stroke:var(--accent); }
+.cst .rg.walk { stroke:var(--accent); stroke-width:1.5px; vector-effect:non-scaling-stroke; opacity:0; transform-box:fill-box; transform-origin:center; }
+.cst .lk { stroke-width:calc(.6px * 400 / var(--cst-size, 300)); }
+.cst .lk.k { stroke:var(--accent); opacity:.55; }
+.cst .lk.p { stroke:var(--fg); opacity:.16; }
+.cst .lk.d { stroke:var(--err); opacity:.28; }
+.cst .lk.c { stroke:var(--fg); opacity:.06; }
+.cst .nd { stroke:var(--err); stroke-width:0; transition:fill .45s, opacity .3s, stroke-width .3s; cursor:pointer; }
+.cst .nd.k { fill:var(--accent); }
+.cst .nd.p { fill:color-mix(in srgb, var(--fg) 55%, transparent); }
+.cst .nd.d { fill:color-mix(in srgb, var(--err) 80%, var(--dim)); }
+.cst .nd.c { fill:var(--dim); }
+.cst .nd.n { fill:none; stroke:var(--dim); stroke-width:.6px; vector-effect:non-scaling-stroke; }
+.cst .nd:hover { stroke:var(--fg); stroke-width:1.5px; vector-effect:non-scaling-stroke; }
+.cst .th { fill:none; stroke:var(--accent); opacity:.75; stroke-linecap:round; }
+.cst .seed { fill:var(--accent); }
+.cst .seedh { fill:color-mix(in srgb, var(--accent) 22%, transparent); }
+.cst text { fill:var(--muted); font-family:inherit; }
+.cst text.on { fill:var(--accent); }
+.cst text.sl { fill:var(--fg); font-weight:600; }
+.cst.mini .lk.k { opacity:.8; } .cst.mini .lk.p { opacity:.25; }
+.cst.mini .nd { cursor:inherit; }
+/* a sieve bar hovered: only its songs stay bright */
+.cst[data-hi="reach"] :is(.nd, .lk):not(.s-reach), .cst[data-hi="taken"] :is(.nd, .lk):not(.s-taken),
+.cst[data-hi="fit"] :is(.nd, .lk):not(.s-fit), .cst[data-hi="list"] :is(.nd, .lk):not(.s-list) { opacity:.07; }
+.cst[data-hi]:not([data-hi="list"]) .th { opacity:.12; }
+.cst[data-hi="list"] .th { opacity:1; }
+.cstlegend { display:flex; flex-wrap:wrap; justify-content:center; gap:2px 10px; font-size:10.5px; color:var(--muted); line-height:1.4; }
+.cstlegend i { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:4px; vertical-align:0; }
+.cstlegend i.k { background:var(--accent); } .cstlegend i.p { background:color-mix(in srgb, var(--fg) 55%, transparent); }
+.cstlegend i.d { background:color-mix(in srgb, var(--err) 80%, var(--dim)); }
+.cstlegend i.th { width:14px; height:2px; border-radius:1px; background:var(--accent); vertical-align:3px; }
+.cstlegend .hint { flex-basis:100%; text-align:center; }
+.tconst { display:flex; flex-direction:column; align-items:center; gap:6px; }
+.tconst .cstlegend { max-width:520px; }
+
+/* the reveal plays it: the walk ring grows out from the seed, each song appears as the ring
+   passes its distance (delays set per dot in trace.js), colours arrive with the cut-off,
+   the held back flash, the thread draws through in play order */
+.cst.play .nd { animation:cstIn .34s cubic-bezier(.2,.8,.3,1.25) both; transform-box:fill-box; transform-origin:center; }
+.cst.play .lk, .cst.play .th { stroke-dasharray:1; animation:cstDraw .3s ease-out both; }
+.cst.play .rg.walk { animation-name:cstWalk; animation-timing-function:linear; animation-fill-mode:both; }
+.cst.play .rg.reach, .cst.play text.rl { animation:cstFade .4s ease-out both; }
+.sieve.r .sv:not(.grown) .lbl { opacity:0; }
+.sieve.r .sv .lbl { transition:opacity .3s .15s; }
+.cst.play .seedh { animation:cstPulse 1.1s ease-out 2; transform-box:fill-box; transform-origin:center; }
+.cst.play:not(.cut) .nd:not(.n) { fill:color-mix(in srgb, var(--fg) 62%, transparent); }
+.cst.play:not(.cut) .lk { stroke:var(--fg); opacity:.12; }
+.cst.play .lk { transition:stroke .45s, opacity .45s; }
+.cst.play .rg.cut { transform-box:fill-box; transform-origin:center; transition:opacity .45s, transform .55s cubic-bezier(.2,.8,.3,1); }
+.cst.play:not(.cut) .rg.cut, .cst.play:not(.cut) text.on { opacity:0; transform:scale(1.35); }
+.cst.play text.on { transition:opacity .45s .2s; }
+.cst.play.held .nd.d { stroke-width:calc(3px * 400 / var(--cst-size, 300)); }
+@keyframes cstIn { from { opacity:0; transform:scale(.15); } to { opacity:1; transform:none; } }
+@keyframes cstFade { from { opacity:0; } to { opacity:1; } }
+@keyframes cstDraw { from { stroke-dashoffset:1; } to { stroke-dashoffset:0; } }
+@keyframes cstWalk { 0% { opacity:.95; transform:scale(var(--s0)); } 92% { opacity:.6; transform:scale(var(--s1)); } 100% { opacity:0; transform:scale(var(--s1)); } }
+@keyframes cstPulse { 0% { transform:scale(1); opacity:.9; } 100% { transform:scale(2.6); opacity:0; } }
 
 /* the hill */
 .hill { width:100%; height:190px; display:block; }
@@ -1621,15 +1709,26 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 @keyframes magicPulse { 0% { box-shadow:0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent); background:color-mix(in srgb, var(--accent) 25%, transparent); }
   100% { box-shadow:0 0 0 14px transparent; background:transparent; } }
 
-/* the reveal: over the window while a fresh list arrives, three seconds, skippable */
+/* the reveal: over the window while a fresh list arrives, five seconds, skippable; the
+   connections draw beside the sieve, then shrink into the small one over the list */
 .reveal { position:fixed; inset:0; z-index:60; display:grid; place-items:center; background:color-mix(in srgb, var(--bg) 70%, transparent);
-  backdrop-filter:blur(2px); opacity:0; transition:opacity .22s; cursor:pointer; }
+  backdrop-filter:blur(2px); opacity:0; transition:opacity .22s, background-color .3s; cursor:pointer; }
 .reveal[hidden] { display:none; }
 .reveal.show { opacity:1; }
-.rpop { width:min(78vw, 560px); background:var(--panel2); border:1px solid var(--edge, var(--line)); border-radius:10px; padding:14px 16px 12px;
+.rpop { width:min(94vw, 900px); background:var(--panel2); border:1px solid var(--edge, var(--line)); border-radius:10px; padding:14px 16px 12px;
   box-shadow:0 18px 50px #0008; display:flex; flex-direction:column; gap:8px; transform-origin:center;
-  transition:transform .5s cubic-bezier(.4,0,.8,.2), opacity .4s; }
-.reveal.fly .rpop { transform:translate(var(--fx, -45vw), var(--fy, -10vh)) scale(.06); opacity:0; }
+  transition:transform .55s cubic-bezier(.5,0,.75,.15), opacity .4s, background-color .25s, border-color .25s, box-shadow .25s; }
+.reveal.fly { background:transparent; backdrop-filter:none; }
+.reveal.fly .rpop { transform:translate(var(--fx, -45vw), var(--fy, -10vh)) scale(var(--fs, .06)); background:transparent; border-color:transparent; box-shadow:none; }
+.reveal.fly .rey, .reveal.fly .rside { opacity:0; transition:opacity .18s; }
+.reveal.fly .rconst { opacity:0; transition:opacity .2s .38s; }
+.rgrid { display:grid; grid-template-columns:auto minmax(0, 1fr); gap:6px 18px; align-items:center; }
+.rconst { display:grid; place-items:center; }
+.rside { display:flex; flex-direction:column; gap:8px; min-width:0; }
+.rcap { min-height:2.6em; font-size:13px; line-height:1.35; color:var(--fg); }
+.rcap.in { animation:capIn .35s ease-out both; }
+@keyframes capIn { from { opacity:0; transform:translateY(5px); } to { opacity:1; transform:none; } }
+@media (max-width:760px) { .rgrid { grid-template-columns:minmax(0, 1fr); } }
 .rpop .rey { display:flex; justify-content:space-between; font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); }
 .rpop .rey i { font-style:normal; color:var(--dim); letter-spacing:0; text-transform:none; }
 .rpop .rhl { min-height:2.5em; }
@@ -1637,4 +1736,4 @@ html[data-theme="attune"] .saveNewBox button.lPrimary { color:#1a1204; }
 .rpop .rhl .hl em { color:var(--accent); font-style:normal; }
 .rpop .rhl .body { display:none; }
 .rpop .sieve { padding:0; }
-@media (prefers-reduced-motion: reduce) { .sv .bar, .reveal, .rpop { transition:none !important; } #tree li[data-view="magic"].lit { animation:none; } }
+@media (prefers-reduced-motion: reduce) { .sv .bar, .reveal, .rpop { transition:none !important; } #tree li[data-view="magic"].lit, .vorb.lit, .rcap.in { animation:none; } }

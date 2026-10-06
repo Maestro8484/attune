@@ -8,23 +8,28 @@
    record is not shown.
 
    On screen:
-     the card       over the list in the Mix view (and over the queue while Radio is on):
-                    the verdict in words, the one deciding number in the accent, the
-                    controls that change it as buttons, and under it the sieve: the
-                    numbers of the run as bars sized by count, the deciding one lit.
-                    Click a bar and the list becomes that population, with a column
-                    saying what happened to each song.
+     the fold       over the list in the Mix view (and over the queue while Radio is on):
+                    one line, an arrow, the connections drawn small and the verdict in
+                    words, the one deciding number in the accent. Open: the connections
+                    drawn large, the explanation, the controls that change it as buttons,
+                    and the sieve: the numbers of the run as bars sized by count, the
+                    deciding one lit. Hover a bar and its songs light in the connections;
+                    click it and the list becomes that population, with a column saying
+                    what happened to each song.
+     connections    every song the walk looked at around the seed, nearer = closer, the
+                    cut-off as a ring, the list threaded through in play order.
      Fit column     each song's fit, a meter from the cut-off to a perfect twin and the
                     number; hover for it in words (its place among the songs you own).
      List / Arc     the list as a table, or as an arc: loudness along the sequence, Heat
                     under it, the closeness of each hand-off as the ground.
      Show the magic the view under Mix in the side list (Joe's name for it): the card and
-                    the sieve, the hill of every song looked at, what the score is made of,
+                    the sieve, the connections, the hill of every song looked at, what the score is made of,
                     the field, the arc, the runs of this session compared, and "why isn't
                     this song here?". T opens it from a mix.
      the reveal     the moment a fresh list arrives: the recorded numbers replayed for
-                    three seconds over the list, then the card flies into the side list and
-                    Show the magic lights up. Never a progress bar; any click skips it.
+                    five seconds over the list, the connections drawing themselves, then the
+                    drawing shrinks into the small one beside the headline and Show the
+                    magic lights up. Never a progress bar; any click skips it.
    Why this pick (right-click, or click a Fit meter) is the one-song view of the same data.
    The MusicIP engine sends no trace: Attune cannot see inside it and says nothing. */
 'use strict';
@@ -146,16 +151,144 @@ const Trace = (() => {
   }
 
   /* ---- the verdict card: the words over the list */
-  function verdictHtml(t, opts = {}) {
-    const v = t && t.verdict; if (!v || !v.headline) return '';
+  function hlHtml(v) {
     let hl = esc(v.headline);
     const m = hl.match(/\d[\d,]*/);
     if (m) hl = hl.replace(m[0], `<em>${m[0]}</em>`);
     else hl = hl.replace(/^(\S+)/, '<em>$1</em>');
-    const levers = opts.levers === false ? '' : (v.levers || [])
+    return hl;
+  }
+  function leversHtml(v, opts = {}) {
+    return (v.levers || [])
       .filter(l => !(opts.noMagic && l.id === 'magic'))
       .map(l => `<button type="button" class="lever${l.id === 'line' ? ' hot' : ''}" data-lever="${l.id}">${esc(l.label)}</button>`).join('');
-    return `<div class="vcard"><div class="hl">${hl}</div>${v.body ? `<p class="body">${esc(v.body)}</p>` : ''}${levers ? `<div class="levers">${levers}</div>` : ''}</div>`;
+  }
+  /* the body and the raw numbers of the run as one hover text, for a headline shown alone */
+  function numbersWords(t) {
+    const parts = (t.funnel || []).map(s => `${Number(s.n || 0).toLocaleString()} ${sieveLabel(s, t)}`);
+    if (t.line != null) parts.push(`the cut-off ${pct(t.line)}`);
+    return parts.length ? `The numbers: ${parts.join(' · ')}.` : '';
+  }
+  function hlTip(t) {
+    return [t.verdict.body, numbersWords(t), 'Show the magic (T) has the whole story.'].filter(Boolean).join(' ');
+  }
+  function verdictHtml(t, opts = {}) {
+    const v = t && t.verdict; if (!v || !v.headline) return '';
+    const levers = opts.levers === false ? '' : leversHtml(v, opts);
+    return `<div class="vcard"><div class="hl">${hlHtml(v)}</div>${v.body ? `<p class="body">${esc(v.body)}</p>` : ''}${levers ? `<div class="levers">${levers}</div>` : ''}</div>`;
+  }
+
+  /* ---- the fold over a fresh mix (TODO.md row 61, ISSUES.md row 99; Joe 2026-10-06, of
+     three ways shown him: "fold"). One line by default: an arrow, the connections drawn
+     small, and the headline. Open, the connections drawn large beside the explanation,
+     the controls and the sieve. Open or closed is remembered. The list is the hero; the
+     card says its one sentence and steps aside. */
+  let foldOpen = !!store.get('mixHeaderOpen', false);
+  const cardReady = t => !!(t && t.verdict && t.verdict.headline && (t.funnel || []).length);
+  function legendHtml(t) {
+    return `<div class="cstlegend"><span><i class="k"></i>on the list, over the cut-off</span><span><i class="p"></i>filled in past it</span>` +
+      `<span><i class="d"></i>held back</span><span><i class="th"></i>the list, clockwise from the top</span>` +
+      `<span class="hint">nearer the middle sounds more like ${esc(likeOf(t))}</span></div>`;
+  }
+  function foldHtml(t) {
+    const v = t.verdict;
+    const orb = foldOpen ? '' : `<span class="vorb" title="The connections Attune made for this list: every song it looked at around ${esc(likeOf(t))}, the list threaded through in play order. Click to open">${constSvg(t, { size: 26, mini: true })}</span>`;
+    const head = `<div class="vline vfold${foldOpen ? ' open' : ''}"><button type="button" class="vtog" aria-expanded="${foldOpen}" ` +
+      `title="${foldOpen ? 'Fold away the connections, the explanation and the numbers of this run' : 'Open the connections, the explanation, the controls and the numbers of this run'}">${foldOpen ? '▾' : '▸'}</button>` +
+      `${orb}<span class="hl"${foldOpen ? '' : ` title="${esc(hlTip(t))}"`}>${hlHtml(v)}</span></div>`;
+    if (!foldOpen) return head;
+    const levers = leversHtml(v, { noMagic: true });
+    return head + `<div class="vopen"><div class="vconst">${constSvg(t, { size: 210 })}${legendHtml(t)}</div>` +
+      `<div class="vright"><div class="vcard vfoldbody">${v.body ? `<p class="body">${esc(v.body)}</p>` : ''}${levers ? `<div class="levers">${levers}</div>` : ''}</div>${sieveHtml(t)}</div></div>`;
+  }
+
+  /* ---- the connections (2026-10-06, Joe: "more 'connection' visualizations of
+     relationships and connections made"): every song the walk looked at, placed by how
+     close it sounds to the seed (nearer the middle = closer), a line from the seed to
+     each, the cut-off as a
+     dashed ring, where Attune stopped looking as a faint one, and the list threaded
+     through in play order, one segment per hand-off, thicker where the hand-off is
+     closer. The angle says nothing about sound: the songs on the list go round clockwise
+     from the top in play order, so the thread reads as one loop; the rest are spread by
+     rank on the golden angle. Drawn from the trace alone; nothing here is placed by guess.
+       opts.size  the size it is shown at, in pixels (strokes and dots keep their size)
+       opts.mini  the small one beside the headline: dots, the kept lines, the thread
+       opts.play  the reveal: the walk ring grows out from the seed and each song appears
+                  as it passes, then the cut-off, the held back, the thread */
+  const GOLD = Math.PI * (3 - Math.sqrt(5));
+  // which songs each sieve bar counts, so a bar can light its own songs (the counts match
+  // web/app.py: "sound enough like it" is the songs taken at or over the cut-off)
+  const POPS = { reach: r => r.status !== 'next', taken: r => TAKEN.has(r.status),
+    fit: (r, line) => TAKEN.has(r.status) && line != null && r.fit >= line, list: r => r.status === 'kept' || r.status === 'kept-past' };
+  const R0 = 24, R1 = 176;
+  function constGeo(t) {
+    const field = ((t && t.field) || []).filter(r => r.fit != null);
+    if (field.length < 3) return null;
+    const looked = field.filter(r => r.status !== 'next');
+    const fhi = Math.max(...field.map(r => r.fit)), flo = Math.min(...field.map(r => r.fit));
+    const rad = f => R0 + (R1 - R0) * (fhi - f) / ((fhi - flo) || 1);
+    const pos = new Map(), seeds = new Set((t.seeds || []).map(s => s.i));
+    for (const i of seeds) pos.set(i, [0, 0, 0]);
+    const onList = (t.order || []).filter(i => !seeds.has(i)), at = new Map(onList.map((i, k) => [i, k]));
+    for (const r of field) {
+      const a = at.has(r.i) ? -Math.PI / 2 + 2 * Math.PI * at.get(r.i) / onList.length : r.rank * GOLD, d = rad(r.fit);
+      pos.set(r.i, [d * Math.cos(a), d * Math.sin(a), d]);
+    }
+    const reach = looked.length ? rad(Math.min(...looked.map(r => r.fit))) : R1;
+    const cut = t.line != null ? Math.max(R0 - 8, Math.min(R1 + 8, rad(t.line))) : null;
+    return { field, pos, reach, cut };
+  }
+  function constSvg(t, opts = {}) {
+    const g = constGeo(t); if (!g) return '';
+    const size = opts.size || 300, u = 400 / size, mini = !!opts.mini, play = !!opts.play;
+    const walkAt = opts.walkAt || 0, walkMs = opts.walkMs || 1, threadAt = opts.threadAt || 0, threadMs = opts.threadMs || 1;
+    const fx = v => v.toFixed(1);
+    const when = d => Math.round(walkAt + walkMs * Math.max(0, Math.min(1, (d - R0) / ((g.reach - R0) || 1))));
+    const dly = ms => play ? ` style="animation-delay:${ms}ms"` : '';
+    const cls = st => st === 'kept' ? 'k' : st === 'kept-past' ? 'p' : SC[st] === 'drop' ? 'd' : st === 'next' ? 'n' : 'c';
+    const pops = r => Object.keys(POPS).filter(k => POPS[k](r, t.line)).map(k => ' s-' + k).join('');
+    const rpx = mini ? { k: 1.5, p: 1.1, d: 1.1, c: 0.8, n: 0.7 } : { k: 3.3, p: 2.5, d: 2.5, c: 1.7, n: 1.6 };
+    let links = '', nodes = '';
+    for (const r of g.field) {
+      const [x, y, d] = g.pos.get(r.i), c = cls(r.status), p = pops(r);
+      const at = r.status === 'next' ? walkAt + walkMs + 120 : when(d);
+      if (c !== 'n' && (!mini || c === 'k' || c === 'p')) links += `<line class="lk ${c}${p}" x1="0" y1="0" x2="${fx(x)}" y2="${fx(y)}" pathLength="1"${dly(at)}/>`;
+      const tip = mini ? '' : ` data-tip="${esc(`${r.label}: ${fitWords(r, t)}; ${WHY[r.status] || r.status}. Click for why.`)}"`;
+      nodes += `<circle class="nd ${c}${p}" cx="${fx(x)}" cy="${fx(y)}" r="${fx(rpx[c] * u)}" data-i="${r.i}"${tip}${dly(at)}/>`;
+    }
+    // the thread: the list in play order, one segment per hand-off, bowed so the path reads
+    let thread = '';
+    const order = t.order || [], trs = t.transitions || [];
+    const tv = trs.filter(v => v != null), tmin = tv.length ? Math.min(...tv) : 0, tmax = tv.length ? Math.max(...tv) : 1;
+    const segs = [];
+    for (let k = 0; k + 1 < order.length; k++) if (g.pos.has(order[k]) && g.pos.has(order[k + 1])) segs.push(k);
+    segs.forEach((k, j) => {
+      const [x1, y1] = g.pos.get(order[k]), [x2, y2] = g.pos.get(order[k + 1]);
+      const cx = (x1 + x2) / 2 - (y2 - y1) * 0.14, cy = (y1 + y2) / 2 + (x2 - x1) * 0.14;
+      const w = (mini ? 0.4 : 0.45) + (mini ? 0.3 : 1.0) * (trs[k] == null ? 0.5 : (trs[k] - tmin) / ((tmax - tmin) || 1));
+      const tip = mini || trs[k] == null ? '' : ` data-tip="${esc(`#${k + 1} to #${k + 2}: the hand-off from ${label(order[k])} to ${label(order[k + 1])} is ${pct(trs[k])} alike`)}"`;
+      thread += `<path class="th" d="M${fx(x1)} ${fx(y1)}Q${fx(cx)} ${fx(cy)} ${fx(x2)} ${fx(y2)}" pathLength="1" style="stroke-width:${fx(w * u)}px${play ? `;animation-delay:${Math.round(threadAt + threadMs * j / Math.max(1, segs.length))}ms` : ''}"${tip}/>`;
+    });
+    const fs = px => `font-size:${fx(px * u)}px`;
+    const pool = ((t.funnel || []).find(s => s.id === 'pool') || {}).n;
+    let rings = mini ? '' : `<circle class="rg haze" r="${R1 + 16}" style="stroke-width:${fx(5 * u)}px"/>`;
+    const after = play ? `;animation-delay:${walkAt + walkMs}ms` : '';   // the reveal shows where the walk stopped once it gets there
+    rings += `<circle class="rg reach" r="${fx(g.reach)}" style="stroke-width:${fx(1 * u)}px${after}"/>`;
+    if (play) rings += `<circle class="rg walk" r="${R1}" style="--s0:${(R0 / R1).toFixed(3)};--s1:${(g.reach / R1).toFixed(3)};animation-duration:${walkMs}ms;animation-delay:${walkAt}ms"/>`;
+    const cutRing = g.cut == null ? '' : `<circle class="rg cut" r="${fx(g.cut)}" style="stroke-width:${fx((mini ? 0.7 : 1.2) * u)}px;stroke-dasharray:${fx(4 * u)} ${fx(3 * u)}"/>`;
+    let labels = '';
+    if (!mini) {
+      const a = -2.45;   // upper left, where the thread ends rather than where it starts
+      if (g.cut != null) labels += `<text class="on" x="${fx((g.cut + 4) * Math.cos(a))}" y="${fx((g.cut + 4) * Math.sin(a))}" text-anchor="end" style="${fs(9.5)}">the cut-off ${pct(t.line)}</text>`;
+      const reachN = ((t.funnel || []).find(s => s.id === 'reach') || {}).n;
+      if (reachN) labels += `<text class="rl" x="${fx(-g.reach * 0.72)}" y="${fx(g.reach * 0.72 + 12 * u)}" text-anchor="middle" style="${fs(9)}${after}">${Number(reachN).toLocaleString()} looked at</text>`;
+      if (pool) labels += `<text x="0" y="${fx(-(R1 + 16) - 4 * u)}" text-anchor="middle" style="${fs(9)}">${Number(pool).toLocaleString()} scored, the rest further out</text>`;
+      const name = likeOf(t).replace(/^.* - /, '');
+      labels += `<text class="sl" x="0" y="${fx(R0 * 0.55 + 12 * u)}" text-anchor="middle" style="${fs(10)}">${esc(name.length > 30 ? name.slice(0, 29) + '…' : name)}</text>`;
+    }
+    const seed = `<circle class="seedh" r="${fx((mini ? 3 : 10) * u)}"/><circle class="seed" r="${fx((mini ? 1.9 : 5) * u)}"/>`;
+    return `<svg class="cst${mini ? ' mini' : ''}${play ? ' play' : ''}" viewBox="-200 -200 400 400" width="${size}" height="${size}" style="--cst-size:${size}" xmlns="http://www.w3.org/2000/svg" aria-label="The connections: every song looked at around the seed, the list threaded through">` +
+      rings + links + cutRing + thread + nodes + seed + labels + `</svg>`;
   }
 
   /* ---- the sieve: the numbers of the run as bars sized by count (log scale, so 21,000
@@ -183,11 +316,12 @@ const Trace = (() => {
     const canOpen = opts.open !== false;
     return `<div class="sieve${opts.cls ? ' ' + opts.cls : ''}">` + tiles.map(s => {
       const n = s.n == null ? '' : Number(s.n).toLocaleString();
-      let inner = `<span class="lbl">${esc(sieveLabel(s, t))}</span>`;
-      if (s.id === 'list' && pastN && Number(s.n) > 0) {
+      const split = s.id === 'list' && pastN && Number(s.n) > 0;
+      const text = esc(sieveLabel(s, t)) + (split ? ` · ${pastN} filled in past the cut-off` : '');
+      let inner = `<span class="lbl${split ? ' two' : ''}" style="width:${(10000 / lw(s.n)).toFixed(0)}%">${text}</span>`;
+      if (split) {
         const fitShare = Math.max(4, Math.round(100 * (Number(s.n) - pastN) / Number(s.n)));
-        inner = `<i class="fill" style="width:${fitShare}%"></i><i class="hatch" style="width:${100 - fitShare}%"></i>` +
-          `<span class="lbl two">${esc(sieveLabel(s, t))} · ${pastN} filled in past the cut-off</span>`;
+        inner = `<i class="fill" style="width:${fitShare}%"></i><i class="hatch" style="width:${100 - fitShare}%"></i>` + inner;
       }
       const cut = s.id === 'fit' && t.line != null ? `<div class="cut"><span>the cut-off ${pct(t.line)}</span></div>` : '';
       const tip = (s.note || '').replace(/the line/g, 'the cut-off') + (canOpen ? (s.id === 'lib' ? '. Click to open the Library' : s.id === 'list' ? '. Click to show the list' : '. Click to see these songs') : '');
@@ -203,13 +337,15 @@ const Trace = (() => {
     el.classList.toggle('tstrip', !!t);
     if (!t) { if (inMagic()) el.hidden = true; return; }   // the server's sentence stays as it was
     el.classList.remove('short');
-    if (!t.verdict || !(t.funnel || []).length) {  // a trace saved before the card existed
+    if (!cardReady(t)) {                           // a trace saved before the card existed
+      el.classList.remove('fold');
       el.innerHTML = (t.stages || []).map(s =>
         `<button type="button" class="tstage${s.on ? ' on' : ''}" data-stage="${s.id}" title="${esc(s.note || '')}">${esc(s.label)}</button>`
       ).join('<span class="tsep">›</span>');
       el.hidden = false; return;
     }
-    el.innerHTML = verdictHtml(t) + sieveHtml(t);
+    el.classList.add('fold');
+    el.innerHTML = foldHtml(t);
     el.hidden = false;
   }
 
@@ -463,7 +599,10 @@ const Trace = (() => {
         `<div class="saylab"><span><b class="k1">${esc(names[0])}</b> pulls ${c[0]}</span><span><b class="k4">${esc(names[1])}</b> pulls ${c[1]}</span>${names.length > 2 ? `<span class="hint">the other ${names.length - 2} seeds share the rest; each song leans to whichever seed it sits closest to</span>` : ''}</div>` : '') +
         `<div class="hint">The seeds are ${pct(t.cohesion)} alike (100% would be the same sound, 0% unrelated); the list is ranked against their shared centre.</div></div>`;
     }
-    return hillHtml(t) +
+    const cst = constSvg(t, { size: 340 });
+    const conn = cst ? `<div class="tsection"><div class="tk">The connections: every song Attune looked at, placed by how close it sounds; the list threaded through in play order. Hover a bar above to light its songs; click a song for why</div>` +
+      `<div class="tconst">${cst}${legendHtml(t)}</div></div>` : '';
+    return conn + hillHtml(t) +
       `<div class="tsection"><div class="tk">What the score is made of</div><div class="trecipe">${recipeHtml(t)}</div></div>` + extra;
   }
 
@@ -656,8 +795,18 @@ const Trace = (() => {
     if (id === 'undo') { const b = $('steerReset'); if (b) b.click(); else toast('No votes to clear on this list'); return; }
   }
 
-  /* ---- the reveal: the recorded numbers replayed over the list, three seconds */
-  let revealTimers = [], revealRaf = 0, revealing = false;
+  /* ---- the reveal: the recorded numbers replayed over the list, five seconds (Joe
+     2026-10-06: "make that longer displayed 5seconds but more 'connection' visualizations
+     of relationships and connections made"). The connections draw themselves in the order
+     the code ran: every song scored, the walk out from the seed (each song appears as the
+     ring passes its distance), the cut-off, the songs held back, then the list threaded
+     through in play order. The sieve beside it counts in step, and one line says what is
+     happening. Then the drawing shrinks into the small one beside the headline over the
+     list, and Show the magic lights in the side list. A replay of what was recorded, never
+     a progress bar: the list under it is already live, and any click or Esc skips it. */
+  const RV = { lib: 150, pool: 500, reach: 900, taken: 2400, fit: 2700, list: 3600 };   // when each bar fills, ms
+  const RV_WALK = [900, 1500], RV_CUT = 2500, RV_HELD = 3100, RV_THREAD = [3600, 900], RV_HL = 4400, RV_END = 5000;
+  let revealTimers = [], revealRafs = new Set(), revealing = false;
   function willReveal(t) {
     if (!t || !t.verdict || !(t.funnel || []).length || t.kind === 'radio') return false;
     if (!$('reveal')) return false;
@@ -668,56 +817,98 @@ const Trace = (() => {
   }
   function clearReveal() {
     revealTimers.forEach(clearTimeout); revealTimers = [];
-    cancelAnimationFrame(revealRaf);
+    revealRafs.forEach(cancelAnimationFrame); revealRafs.clear();
     revealing = false;
   }
-  function tick(el, n, ms) {
+  function tick(el, n, ms, curve) {
     const start = performance.now();
     const step = now => {
       const p = Math.min(1, (now - start) / ms);
-      el.textContent = Math.round(n * (p < 1 ? 1 - Math.pow(1 - p, 3) : 1)).toLocaleString();
-      if (p < 1) revealRaf = requestAnimationFrame(step);
+      const f = p >= 1 ? 1 : (curve ? curve(p) : 1 - Math.pow(1 - p, 3));
+      el.textContent = Math.round(n * f).toLocaleString();
+      if (p < 1) revealRafs.add(requestAnimationFrame(step));
     };
-    revealRaf = requestAnimationFrame(step);
+    revealRafs.add(requestAnimationFrame(step));
+  }
+  /* what is happening, one line at a time, each from the trace */
+  function revealSteps(t) {
+    const n = id => ((t.funnel || []).find(s => s.id === id) || {}).n;
+    const coll = t.collection && t.collection !== 'Full library' ? ` in ${t.collection}` : '';
+    const steps = [];
+    if (n('pool') != null) steps.push([RV.pool - 400, `Scoring all ${Number(n('pool')).toLocaleString()} songs${coll} against ${likeOf(t)}`]);
+    if (n('reach') != null) steps.push([RV_WALK[0], `Walking out from the closest: ${Number(n('reach')).toLocaleString()} looked at`]);
+    if (t.line != null && n('fit') != null) steps.push([RV_CUT, `The cut-off at ${pct(t.line)}: ${Number(n('fit')).toLocaleString()} sound enough like it`]);
+    const field = t.field || [];
+    const held = field.filter(r => SC[r.status] === 'drop').length, art = field.filter(r => r.status === 'artist').length;
+    if (held) steps.push([RV_HELD, `${held} close song${held === 1 ? '' : 's'} held back` + (art ? (art === held ? ' so no artist repeats within three songs' : `, ${art} of them so no artist repeats within three songs`) : '')]);
+    const past = Object.values(t.songs || {}).filter(s => s.past).length;
+    if (n('list') != null) steps.push([RV_THREAD[0], `Threading the list: ${Number(n('list')).toLocaleString()} songs, each handed to the next` + (past ? `; ${past} filled in past the cut-off` : '')]);
+    return steps;
   }
   function reveal(t) {
     const ov = $('reveal'), pop = $('rpop'); if (!ov || !willReveal(t)) return;
     revealedThisSession = true;
     clearReveal();
     const still = reduceMotion();
+    const rc = $('rconst'), cap = $('rcap');
+    const size = Math.round(Math.max(200, Math.min(340, innerHeight - 250, innerWidth * 0.4)));
+    if (rc) rc.innerHTML = constSvg(t, { size, play: !still, walkAt: RV_WALK[0], walkMs: RV_WALK[1], threadAt: RV_THREAD[0], threadMs: RV_THREAD[1] });
+    const svg = rc && rc.querySelector('.cst');
+    if (rc) rc.hidden = !svg;
     $('rhl').innerHTML = '&nbsp;';
     $('rsieve').innerHTML = sieveHtml(t, { cls: 'r', open: false });
+    if (cap) { cap.textContent = ''; cap.classList.remove('in'); }
     ov.hidden = false; ov.classList.remove('fly'); ov.classList.add('show');
-    pop.style.transform = '';
-    const svs = Array.from($('rsieve').querySelectorAll('.sv'));
+    pop.style.transform = ''; pop.style.transformOrigin = '';
     const at = (ms, fn) => revealTimers.push(setTimeout(fn, still ? 0 : ms));
-    const lit = Math.max(0, svs.findIndex(e => e.classList.contains('on')));
-    svs.forEach((e, k) => {
+    // the "looked at" bar counts the songs as the walk ring passes them, not by the clock
+    const g = constGeo(t);
+    const ds = g ? g.field.filter(r => r.status !== 'next').map(r => g.pos.get(r.i)[2]).sort((a, b) => a - b) : [];
+    const walked = p => {
+      const lim = R0 + p * (g.reach - R0); let k = 0;
+      while (k < ds.length && ds[k] <= lim + 1e-6) k++;
+      return k / ds.length;
+    };
+    Array.from($('rsieve').querySelectorAll('.sv')).forEach((e, k) => {
       const bar = e.querySelector('.bar'), c = e.querySelector('.c');
-      const w = bar.style.width, n = +e.dataset.n;
+      const w = bar.style.width, n = +e.dataset.n, id = e.dataset.pop;
       if (!still) { bar.style.width = '0%'; c.textContent = '0'; }
-      const when = k < lit ? 150 + k * 300 : (k === lit ? 1800 : 2200 + (k - lit - 1) * 250);
-      at(when, () => { bar.style.width = w; if (!still) tick(c, n, 420); });
+      const ms = id === 'reach' ? RV_WALK[1] : id === 'list' ? RV_THREAD[1] : 420;
+      at(RV[id] != null ? RV[id] : 300 + k * 600, () => { bar.style.width = w; e.classList.add('grown'); if (!still) tick(c, n, ms, id === 'reach' && ds.length ? walked : null); });
     });
-    at(1800, () => { $('rhl').innerHTML = verdictHtml(t, { levers: false }).replace(/^<div class="vcard">/, '<div>'); });
-    at(still ? 2000 : 3000, flyReveal);
+    if (cap) for (const [ms, text] of revealSteps(t)) at(ms, () => { cap.classList.remove('in'); void cap.offsetWidth; cap.textContent = text; cap.classList.add('in'); });
+    if (svg) {
+      at(RV_CUT, () => svg.classList.add('cut'));
+      at(RV_HELD, () => svg.classList.add('held'));
+      at(RV_HELD + 650, () => svg.classList.remove('held'));
+    }
+    at(RV_HL, () => { $('rhl').innerHTML = verdictHtml(t, { levers: false }).replace(/^<div class="vcard">/, '<div>'); });
+    at(still ? 2500 : RV_END, flyReveal);
     revealing = true;
   }
   function flyReveal() {
     const ov = $('reveal'), pop = $('rpop'); if (!ov || ov.hidden) return;
     clearReveal();
+    // the same picture lands where it lives: the small one beside the headline (or the
+    // large one when the fold is open); with neither on screen, Show the magic in the side list
     const nav = document.querySelector('#tree li[data-view="magic"]');
-    if (nav && !reduceMotion()) {
-      const a = pop.getBoundingClientRect(), b = nav.getBoundingClientRect();
-      pop.style.setProperty('--fx', `${(b.left + b.width / 2) - (a.left + a.width / 2)}px`);
-      pop.style.setProperty('--fy', `${(b.top + b.height / 2) - (a.top + a.height / 2)}px`);
+    const home = Array.from(document.querySelectorAll('#mixStop .vorb, #mixStop .vconst .cst')).find(e => e.getClientRects().length);
+    const tgt = home || nav;
+    const src = ($('rconst') && $('rconst').querySelector('.cst')) || pop;
+    if (tgt && !reduceMotion()) {
+      const a = src.getBoundingClientRect(), b = tgt.getBoundingClientRect(), p = pop.getBoundingClientRect();
+      pop.style.transformOrigin = `${(a.left + a.width / 2 - p.left).toFixed(1)}px ${(a.top + a.height / 2 - p.top).toFixed(1)}px`;
+      pop.style.setProperty('--fx', `${((b.left + b.width / 2) - (a.left + a.width / 2)).toFixed(1)}px`);
+      pop.style.setProperty('--fy', `${((b.top + b.height / 2) - (a.top + a.height / 2)).toFixed(1)}px`);
+      pop.style.setProperty('--fs', (home ? Math.max(0.04, b.width / a.width) : 0.06).toFixed(3));
       ov.classList.add('fly');
     }
     revealTimers.push(setTimeout(() => {
       ov.classList.remove('show', 'fly'); ov.hidden = true;
-      if (nav) { nav.classList.remove('lit'); void nav.offsetWidth; nav.classList.add('lit'); setTimeout(() => nav.classList.remove('lit'), 1600); }
+      const lit = el => { if (!el) return; el.classList.remove('lit'); void el.getBoundingClientRect(); el.classList.add('lit'); setTimeout(() => el.classList.remove('lit'), 1600); };
+      lit(document.querySelector('#mixStop .vorb')); lit(nav);
       const nb = $('magicNew'); if (nb && !inMagic()) nb.hidden = false;
-    }, reduceMotion() ? 0 : 520));
+    }, reduceMotion() ? 0 : 600));
   }
   function skipReveal() { if (revealing) flyReveal(); }
 
@@ -786,9 +977,24 @@ const Trace = (() => {
     const strip_ = $('mixStop');
     if (strip_) strip_.addEventListener('click', e => {
       if (onCard(e)) return;
+      if (e.target.closest('.vfold .vtog, .vfold .hl, .vfold .vorb')) { foldOpen = !foldOpen; store.set('mixHeaderOpen', foldOpen); strip(); return; }
+      const nd = e.target.closest('.cst:not(.mini) .nd[data-i]');
+      if (nd) { e.stopPropagation(); showWhy(+nd.dataset.i, e.clientX, e.clientY); return; }
       const b = e.target.closest('.tstage'); if (!b) return;
       if (typeof showMagic === 'function') showMagic();
     });
+    // a sieve bar lights its songs in the connections beside it: hover "9 sound enough
+    // like it" and only those nine stay bright
+    const lightPop = e => {
+      const c = e.currentTarget.querySelector('.cst:not(.mini)'); if (!c) return;
+      const sv = e.target.closest && e.target.closest('.sv[data-pop]');
+      if (sv && POPS[sv.dataset.pop]) c.dataset.hi = sv.dataset.pop; else delete c.dataset.hi;
+    };
+    for (const box of [strip_, $('magicView')]) {
+      if (!box) continue;
+      box.addEventListener('mouseover', lightPop);
+      box.addEventListener('mouseleave', lightPop);
+    }
     const mv = $('magicView');
     if (mv) {
       mv.addEventListener('click', e => {
@@ -797,6 +1003,7 @@ const Trace = (() => {
         if (tb) { mtab = tb.dataset.mtab; store.set('magicTab', mtab); paint(); return; }
         const pb = e.target.closest('[data-mpop]');
         if (pb) { mpop = pb.dataset.mpop; paint(); return; }
+        const nd = e.target.closest('.cst .nd[data-i]'); if (nd) { e.stopPropagation(); showWhy(+nd.dataset.i, e.clientX, e.clientY); return; }
         const m = e.target.closest('.fitm'); if (m && m.dataset.i) { e.stopPropagation(); showWhy(+m.dataset.i, e.clientX, e.clientY); }
       });
       mv.addEventListener('dblclick', e => {
@@ -832,6 +1039,6 @@ const Trace = (() => {
   }
 
   return { paint, strip, fitCell, onView, showWhy, noteStep, noteRows, diff, diffWords, bind,
-           setView, showPop, willReveal, reveal, skipReveal, pullLever,
+           setView, showPop, willReveal, reveal, skipReveal, pullLever, constSvg,
            get runs() { return runs; }, WHY, TERM };
 })();

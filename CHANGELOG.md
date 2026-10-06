@@ -5,6 +5,27 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Changed (2026-10-06, the mix gets its room back, and the connections drawn)
+
+- **The card over a fresh mix folds to one line.** An arrow, a small drawing and the
+  sentence that decided the list ("Only 9 songs you own sound enough like Sandstorm"). The
+  card and its six bars took up to 340 pixels of a small window, so four songs of fifty
+  were in view; folded it takes 32, and sixteen are. Open it with the arrow, the drawing
+  or the sentence for the explanation, the controls and the bars; it stays as you leave it.
+- **The connections, drawn.** Every song Attune looked at sits around the seed, nearer the
+  middle the more it sounds like it, a line from the seed to each; the cut-off is a dashed
+  ring, songs held back are red, and the list is threaded through in play order, round
+  clockwise from the top, each hand-off thicker the closer it is. It sits beside the
+  sentence over the list, large when the card is open, and at the top of Show the magic.
+  Hover a bar ("9 sound enough like it") and only those songs stay lit; click a song for
+  Why this pick.
+- **The reveal plays for five seconds and draws the connections.** The way the list was
+  built, in the order it happened: every song scored, a ring walking out from the seed with
+  each song appearing as it passes, the cut-off, the songs held back, the list threaded
+  through. One line beside it says what is happening and the bars count in step. Then the
+  drawing shrinks into the small one over the list. Any click or Esc still skips it, and
+  Preferences, Appearance still says when it plays.
+
 ## [0.2.1] - 2026-10-05
 
 ### Changed (2026-10-05, the sound-alike cut-off after a vote, by ear)

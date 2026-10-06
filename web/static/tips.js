@@ -106,7 +106,7 @@
     // the trace (2026-10-05)
     ['#lTrace', 'Show the magic: everything Attune did to make this list, in a listener\'s words, with every song it looked at. T does the same.'],
     ['.vcard .hl', 'What decided this list, in words. The number is the one fact that ended it; the raw numbers are one hover away on the bars below.'],
-    ['.vcard .lever', 'A control that changes this outcome. Click to go to it.'],
+    ['.lever', 'A control that changes this outcome. Click to go to it.'],
     ['.sv', 'One stage of the run, its bar as wide as its count (on a log scale, so 21,000 and 50 both fit). The glowing one decided where the list ended. Click to see those songs.'],
     ['.hill', 'Every song the walk looked at, closest first, its fit as height. Amber is on the list, grey was filled in past the cut-off, red was held back. The dashed line is the cut-off.'],
     ['#prefReveal', 'When the short replay of how a list was made plays over the list.'],
