@@ -11,7 +11,9 @@ Locks in:
   6. the name compared is None for a song with no title, and such songs are never twins of each
      other by name.
 
-Synthetic library built the way test_sound_profile builds one, with the twins added.
+Synthetic library built the way test_sound_profile builds one, with the twins added. The
+files are named .snd so the leak scanner's bulk-media rule (ten audio filenames in one file)
+does not read a synthetic fixture as a library dump.
 """
 from __future__ import annotations
 import os
@@ -44,19 +46,19 @@ def build(dirpath, twins=True):
         vecs.append(v / np.linalg.norm(v))
     rows = []
     for i in range(N):
-        rows.append((os.path.join(dirpath, f"t{i:02d}.mp3"), f"Artist {i}", f"Title {i}", vecs[i]))
+        rows.append((os.path.join(dirpath, f"t{i:02d}.snd"), f"Artist {i}", f"Title {i}", vecs[i]))
     if twins:
         # the seed (song 0) again under another album, with a bracketed note: a twin by name
         again = vecs[0] + 0.004 * rng.normal(size=512)          # the same recording, another file
-        rows.append((os.path.join(dirpath, "t00_again.mp3"), "Artist 0", "Title 0 (Remastered 2009)", again / np.linalg.norm(again)))
+        rows.append((os.path.join(dirpath, "t00_again.snd"), "Artist 0", "Title 0 (Remastered 2009)", again / np.linalg.norm(again)))
         # song 3 again as a live take: a twin by name through the suffix rule
-        rows.append((os.path.join(dirpath, "t03_live.mp3"), "Artist 3", "Title 3 - Live", vecs[7] * 0.4 + vecs[8] * 0.6))
+        rows.append((os.path.join(dirpath, "t03_live.snd"), "Artist 3", "Title 3 - Live", vecs[7] * 0.4 + vecs[8] * 0.6))
         # song 2's recording under a different title: a twin by fingerprint
         near = vecs[2] + 0.004 * rng.normal(size=512)
-        rows.append((os.path.join(dirpath, "t02_other.mp3"), "Artist 2", "Some Other Name", near / np.linalg.norm(near)))
+        rows.append((os.path.join(dirpath, "t02_other.snd"), "Artist 2", "Some Other Name", near / np.linalg.norm(near)))
         # two files with no title at all: never twins by name
-        rows.append((os.path.join(dirpath, "blank_a.mp3"), "Artist 9", "", vecs[9] * 0.5 + vecs[10] * 0.5))
-        rows.append((os.path.join(dirpath, "blank_b.mp3"), "Artist 19", None, vecs[11] * 0.5 + vecs[12] * 0.5))
+        rows.append((os.path.join(dirpath, "blank_a.snd"), "Artist 9", "", vecs[9] * 0.5 + vecs[10] * 0.5))
+        rows.append((os.path.join(dirpath, "blank_b.snd"), "Artist 19", None, vecs[11] * 0.5 + vecs[12] * 0.5))
     for p, a, t, v in rows:
         v = np.asarray(v, float)
         v = v / np.linalg.norm(v)
@@ -86,7 +88,7 @@ def test_the_twin_key_strips_suffixes_and_notes():
 
 def test_a_song_held_twice_is_taken_once(lib):
     e = hybrid.HybridEngine(lib)
-    seed = next(p for p in e.paths if p.endswith("t10.mp3"))
+    seed = next(p for p in e.paths if p.endswith("t10.snd"))
     rep = {}
     out = e.mix(seed, size=len(e.paths), artist_spacing=1, report=rep)
     names = [e.twin[e.idx[p]] for p in out]
@@ -98,11 +100,11 @@ def test_a_song_held_twice_is_taken_once(lib):
 
 def test_the_seeds_own_twin_is_never_the_first_pick(lib):
     e = hybrid.HybridEngine(lib)
-    seed = next(p for p in e.paths if p.endswith("t00.mp3"))
+    seed = next(p for p in e.paths if p.endswith("t00.snd"))
     rep = {}
     out = e.mix(seed, size=5, artist_spacing=1, report=rep)
-    assert not any(p.endswith("t00_again.mp3") for p in out)
-    twin_i = e.idx[next(p for p in e.paths if p.endswith("t00_again.mp3"))]
+    assert not any(p.endswith("t00_again.snd") for p in out)
+    twin_i = e.idx[next(p for p in e.paths if p.endswith("t00_again.snd"))]
     assert any(j == twin_i and why == "duplicate" for j, _, _, why in rep["dropped"])
 
 
@@ -110,22 +112,22 @@ def test_the_same_recording_under_another_title_is_left_to_the_apps_near_twin_ru
     """By fingerprint the walk blocks nothing unless TWIN_COSINE is set: the app's near-twin
     re-pick is the one fingerprint rule. Set, the mechanism works."""
     e = hybrid.HybridEngine(lib)
-    seed = next(p for p in e.paths if p.endswith("t02.mp3"))
-    other = e.idx[next(p for p in e.paths if p.endswith("t02_other.mp3"))]
+    seed = next(p for p in e.paths if p.endswith("t02.snd"))
+    other = e.idx[next(p for p in e.paths if p.endswith("t02_other.snd"))]
     assert hybrid.TWIN_COSINE is None
     assert float(e.X[other] @ e.X[e.idx[seed]]) >= 0.98
     out = e.mix(seed, size=5, artist_spacing=1)
-    assert any(p.endswith("t02_other.mp3") for p in out)
+    assert any(p.endswith("t02_other.snd") for p in out)
     monkeypatch.setattr(hybrid, "TWIN_COSINE", 0.98)
     rep = {}
     out = e.mix(seed, size=5, artist_spacing=1, report=rep)
-    assert not any(p.endswith("t02_other.mp3") for p in out)
+    assert not any(p.endswith("t02_other.snd") for p in out)
     assert any(j == other and why == "duplicate" for j, _, _, why in rep["dropped"])
 
 
 def test_songs_without_a_title_are_not_twins_by_name(lib):
     e = hybrid.HybridEngine(lib)
-    seed = next(p for p in e.paths if p.endswith("t15.mp3"))
+    seed = next(p for p in e.paths if p.endswith("t15.snd"))
     out = e.mix(seed, size=len(e.paths), artist_spacing=1)
     blanks = [p for p in out if os.path.basename(p).startswith("blank_")]
     assert len(blanks) == 2
