@@ -372,6 +372,11 @@ class ScanJob:
                     return [analyzer, "embed_onnx", "--db", self.db_path]
                 return [heavy_python, embed_script, "--db", self.db_path]
 
+            def _loudness_argv():
+                if worker_mode:
+                    return [analyzer, "loudness", "--db", self.db_path]
+                return [imp_python, os.path.join(SRC, "loudness.py"), "--db", self.db_path]
+
             for d in folders:
                 if self.cancelled:
                     return
@@ -412,6 +417,17 @@ class ScanJob:
                                       "fingerprints to bring it across.")
                     else:
                         self.error = f"embed failed (rc={rc}) — see log tail"
+                return
+            if self.cancelled:
+                return
+            # Fourth stage (2026-10-06): each new or changed song's loudness, measured the
+            # broadcast way into the add-on loudness table (src/loudness.py). The songs are
+            # already mixable before it, so a failure here is logged and never turns the scan
+            # into a failed one; the next scan measures whatever this one did not.
+            rc = self._exec("loudness", _loudness_argv())
+            if rc != 0 and not self.cancelled:
+                self.logger.warning("loudness stage rc=%s; the songs are mixable, their "
+                                    "loudness is measured on the next scan", rc)
         finally:
             self.after = _db_counts(self.db_path)
             self.finished = int(time.time())

@@ -12,7 +12,9 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   integrated loudness (LUFS), loudness range and true peak in a new table beside the library.
   It copies the library first and checks the copy, picks up where it stopped if interrupted,
   measures a song again when its file changes, and never writes into a music file. On a library
-  of about 21,000 songs it took 80 minutes.
+  of about 21,000 songs it took 80 minutes. A scan now measures its new and changed songs by
+  itself, as its last step, about a quarter of a second a song; if that step fails, the scan
+  still counts as done and the next one measures what it missed.
 - **Loudness as an ingredient the engine can weigh, off by default.** The `loud` weight scores
   how near a song's loudness sits to the seed's, the same way the year is scored. Scored on 198
   seeds by three outside judges, it brought the lists closer to MusicIP Mixer's and further from

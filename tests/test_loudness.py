@@ -9,6 +9,9 @@
                  like every other ingredient (the formula is written out below)
   the promise    a library without the table scores exactly as before, whatever the weight
   the route      /api/lib/stats reports the weight and how many songs are measured
+  the scan       a fourth stage measures the new and changed songs, through the analyzer
+                 program when packaged, and never fails a scan
+  Radio          steers by measured loudness where the library has it, RMS exactly where not
 """
 from __future__ import annotations
 import importlib.util
@@ -26,6 +29,7 @@ sys.path.insert(0, HERE)
 
 import db as dbm                     # noqa: E402
 import hybrid                        # noqa: E402
+import loudness as lm                # noqa: E402
 from test_collections_fit import build_db, APP_PY   # noqa: E402
 
 _spec = importlib.util.spec_from_file_location("loudness_scan", os.path.join(ROOT, "tools", "loudness_scan.py"))
@@ -64,16 +68,16 @@ SILENT = SUMMARY.replace("I:          -7.8 LUFS", "I:          -inf LUFS").repla
 # ------------------------------------------------------------------ the parser
 
 def test_parser_reads_the_three_numbers():
-    assert ls.parse_summary(SUMMARY) == (-7.8, 5.7, 0.9)
+    assert lm.parse_summary(SUMMARY) == (-7.8, 5.7, 0.9)
 
 
 def test_parser_gives_nothing_for_a_file_ffmpeg_could_not_open():
-    assert ls.parse_summary(FAILED) is None
-    assert ls.parse_summary("") is None
+    assert lm.parse_summary(FAILED) is None
+    assert lm.parse_summary("") is None
 
 
 def test_parser_on_a_silent_song_gives_no_lufs():
-    lufs, lra, tp = ls.parse_summary(SILENT)
+    lufs, lra, tp = lm.parse_summary(SILENT)
     assert lufs is None and lra == 0.0 and tp is None
 
 
@@ -86,19 +90,19 @@ def test_measure_asks_an_mp3_again_as_mp3(monkeypatch, tmp_path):
         asked.append(as_format)
         return (SUMMARY if as_format == ("-f", "mp3") else FAILED), None
 
-    monkeypatch.setattr(ls, "_run", fake_run)
-    assert ls.measure("ffmpeg", str(p)) == (-7.8, 5.7, 0.9, None)
+    monkeypatch.setattr(lm, "_run", fake_run)
+    assert lm.measure("ffmpeg", str(p)) == (-7.8, 5.7, 0.9, None)
     assert asked == [(), ("-f", "mp3")]
 
 
 def test_measure_names_the_failure(monkeypatch, tmp_path):
     p = tmp_path / "x.snd"
     p.write_bytes(b"x")
-    monkeypatch.setattr(ls, "_run", lambda exe, path, as_format=(): (FAILED, None))
-    lufs, lra, tp, err = ls.measure("ffmpeg", str(p))
+    monkeypatch.setattr(lm, "_run", lambda exe, path, as_format=(): (FAILED, None))
+    lufs, lra, tp, err = lm.measure("ffmpeg", str(p))
     assert lufs is None and err.startswith("ffmpeg could not measure it")
-    lufs, lra, tp, err = ls.measure("ffmpeg", str(tmp_path / "gone.snd"))
-    assert err == ls.features.TRANSIENT_ERRORS[0]
+    lufs, lra, tp, err = lm.measure("ffmpeg", str(tmp_path / "gone.snd"))
+    assert err == lm.features.TRANSIENT_ERRORS[0]
 
 
 # ------------------------------------------------------------------ the table
@@ -113,15 +117,15 @@ def _schema_version(dbp):
 
 def _write(dbp, rows):
     """rows: {path: (lufs, mtime, error)}"""
-    ls.ensure_schema(dbp)
-    ls.write_batch(dbp, [(p, l, 6.0, -1.0, mt, 0.0, e) for p, (l, mt, e) in rows.items()])
+    lm.ensure_schema(dbp)
+    lm.write_batch(dbp, [(p, l, 6.0, -1.0, mt, 0.0, e) for p, (l, mt, e) in rows.items()])
 
 
 def test_table_is_added_without_touching_the_schema_version(tmp_path):
     dbp = build_db(str(tmp_path))
     before = _schema_version(dbp)
-    ls.ensure_schema(dbp)
-    ls.ensure_schema(dbp)                       # twice is harmless
+    lm.ensure_schema(dbp)
+    lm.ensure_schema(dbp)                       # twice is harmless
     assert _schema_version(dbp) == before == str(dbm.SCHEMA_VERSION)
     dbm.connect(dbp).close()                    # the guard still accepts the library
     assert hybrid.HybridEngine(dbp).paths       # and the engine still opens it
@@ -136,16 +140,16 @@ def test_fresh_rows_are_skipped_and_stale_ones_measured_again(tmp_path):
     _write(dbp, {p0: (-9.0, m0, None),           # fresh
                  p1: (-9.0, m1 - 100, None),     # the file changed since
                  p2: (None, m2, "ffmpeg could not measure it")})
-    todo = {p for p, _ in ls.todo(dbp)}
+    todo = {p for p, _ in lm.todo(dbp)}
     assert p0 not in todo and p1 in todo and p2 not in todo
     assert len(todo) == len(tracks) - 2
-    assert p2 in {p for p, _ in ls.todo(dbp, retry_errors=True)}
+    assert p2 in {p for p, _ in lm.todo(dbp, retry_errors=True)}
 
 
 def test_a_run_backs_up_then_writes_every_song(tmp_path, monkeypatch):
     dbp = build_db(str(tmp_path))
-    monkeypatch.setattr(ls.features, "ffmpeg_state", lambda: "ok")
-    monkeypatch.setattr(ls, "measure", lambda exe, path: (-10.0, 5.0, -1.0, None))
+    monkeypatch.setattr(lm.features, "ffmpeg_state", lambda: "ok")
+    monkeypatch.setattr(lm, "measure", lambda exe, path: (-10.0, 5.0, -1.0, None))
     assert ls.main(["--db", dbp, "--workers", "2"]) == 0
     c = sqlite3.connect(dbp)
     n_tracks = c.execute("SELECT count(*) FROM tracks").fetchone()[0]
@@ -153,7 +157,7 @@ def test_a_run_backs_up_then_writes_every_song(tmp_path, monkeypatch):
     c.close()
     backups = [f for f in os.listdir(tmp_path) if "before-loudness" in f]
     assert len(backups) == 1
-    assert ls.todo(dbp) == []                   # a second run has nothing to do
+    assert lm.todo(dbp) == []                   # a second run has nothing to do
 
 
 # ------------------------------------------------------------------ the term
@@ -356,3 +360,83 @@ def test_an_unmeasured_song_gets_lufs_from_its_rms_in_decibels(tmp_path):
     vals = np.concatenate([vals, np.full(others.sum(), np.nan)])  # songs with no usable RMS
     assert e.energy[i] == pytest.approx((line(feats[left_out]) - np.nanmean(vals)) / np.nanstd(vals))
     assert np.isnan(e.energy[others]).all()
+
+
+# ------------------------------------------------------------------ the scan's stage
+
+def test_the_stage_measures_only_what_is_new_or_changed(tmp_path, monkeypatch):
+    dbp = build_db(str(tmp_path))
+    c = sqlite3.connect(dbp)
+    tracks = c.execute("SELECT path, mtime FROM tracks ORDER BY path").fetchall()
+    c.close()
+    _write(dbp, {p: (-9.0, mt, None) for p, mt in tracks[:-3]})          # three never measured
+    asked = []
+    monkeypatch.setattr(lm.features, "ffmpeg_state", lambda: "ok")
+    monkeypatch.setattr(lm, "measure", lambda exe, path: (asked.append(path), (-12.0, 4.0, -0.5, None))[1])
+    assert lm.main(["--db", dbp]) == 0
+    assert sorted(asked) == sorted(p for p, _ in tracks[-3:])
+    assert lm.todo(dbp) == []
+    assert not [f for f in os.listdir(tmp_path) if "backup" in f]    # the stage makes no copy
+
+
+def test_the_stage_without_ffmpeg_says_so_and_does_not_fail(tmp_path, monkeypatch, capsys):
+    dbp = build_db(str(tmp_path))
+    monkeypatch.setattr(lm.features, "ffmpeg_state", lambda: "none")
+    assert lm.main(["--db", dbp]) == 0
+    assert "skipped, no working ffmpeg" in capsys.readouterr().out
+    c = sqlite3.connect(dbp)
+    assert not c.execute("SELECT 1 FROM sqlite_master WHERE name='loudness'").fetchone()
+    c.close()
+
+
+def test_the_analyzer_program_runs_the_stage():
+    spec = importlib.util.spec_from_file_location("worker_entry_loud", os.path.join(ROOT, "desktop", "worker_entry.py"))
+    we = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(we)
+    assert "loudness" in we.TOOLS
+    src = open(os.path.join(ROOT, "desktop", "build.py"), encoding="utf-8").read()
+    import ast
+    lists = {}
+    for node in ast.walk(ast.parse(src)):
+        if isinstance(node, ast.Assign) and getattr(node.targets[0], "id", "") in ("GUI_DATA", "ANALYZER_DATA"):
+            lists[node.targets[0].id] = {e.elts[0].value for e in node.value.elts}
+    assert "src/loudness.py" in lists["ANALYZER_DATA"] and "src/loudness.py" in lists["GUI_DATA"]
+
+
+def _scanjob_module():
+    spec = importlib.util.spec_from_file_location("attune_scanjob_loud", os.path.join(ROOT, "web", "scanjob.py"))
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+@pytest.mark.parametrize("loud_rc", [0, 1])
+def test_the_scan_runs_loudness_last_and_never_fails_for_it(tmp_path, loud_rc):
+    sj = _scanjob_module()
+    dbp = build_db(str(tmp_path))
+    job = sj.ScanJob(dbp)
+    ran = []
+
+    def fake_exec(name, argv):
+        ran.append((name, argv))
+        return loud_rc if name == "loudness" else 0
+
+    job._exec = fake_exec
+    job.running = True
+    job._run([str(tmp_path)], None)
+    names = [n for n, _ in ran]
+    assert names[-3:] == ["analyze", "embed (onnx)", "loudness"]
+    argv = dict(ran)["loudness"]
+    assert argv[1].endswith(os.path.join("src", "loudness.py")) and argv[2:] == ["--db", dbp]
+    assert job.error in (None, "")
+
+
+def test_a_failed_fingerprint_stage_skips_loudness(tmp_path):
+    sj = _scanjob_module()
+    dbp = build_db(str(tmp_path))
+    job = sj.ScanJob(dbp)
+    ran = []
+    job._exec = lambda name, argv: (ran.append(name), 1 if name.startswith("embed") else 0)[1]
+    job.running = True
+    job._run([str(tmp_path)], None)
+    assert "loudness" not in ran and job.error

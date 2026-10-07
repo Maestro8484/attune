@@ -34,7 +34,7 @@ import threading      # noqa: F401  embed_onnx.py
 import numpy          # noqa: F401  db.py, features.py, embed_onnx.py
 import mutagen        # noqa: F401  tag reads
 
-TOOLS = ("scan", "embed_onnx")
+TOOLS = ("scan", "embed_onnx", "loudness")
 
 
 def bundle_dir(fallback_root):
@@ -74,7 +74,8 @@ def is_analyzer_bundle(base):
 def run(tool, rest, fallback_root, bin_fallback, analyzer=None):
     """Run one analyzer tool in THIS process and exit. Never returns.
 
-    tool          "scan" | "embed_onnx" (module under attune/src whose main() we call)
+    tool          "scan" | "embed_onnx" | "loudness" (module under attune/src whose main()
+                  we call)
     rest          argv for that tool
     fallback_root the attune/ dir to use when not frozen
     bin_fallback  the ffmpeg/ffprobe dir to use when not frozen
@@ -116,6 +117,9 @@ def run(tool, rest, fallback_root, bin_fallback, analyzer=None):
         elif tool == "embed_onnx":
             import embed_onnx
             embed_onnx.main()
+        elif tool == "loudness":
+            import loudness
+            sys.exit(loudness.main() or 0)
         else:
             print(f"[attune-worker] unknown tool: {tool} (known: {', '.join(TOOLS)})",
                   file=sys.stderr)

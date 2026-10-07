@@ -136,6 +136,7 @@ GUI_DATA = [
     ("src/db.py",              "attune/src"),
     ("src/enrich.py",          "attune/src"),   # scan.py imports it (catalog tags, 2026-10-01)
     ("src/embed.py",           "attune/src"),
+    ("src/loudness.py",        "attune/src"),   # the scan's loudness stage (2026-10-06)
     # learned-metric engine (`engine: learned` in settings) — onnxruntime + this head
     # are the only ONNX pieces the GUI itself can use. The 276 MB CLAP encoder is
     # analysis-only and lives with the analyzer.
@@ -166,6 +167,7 @@ ANALYZER_DATA = [
     ("src/db.py",         "attune/src"),
     ("src/enrich.py",     "attune/src"),    # scan.py imports it; without it every scan dies at import
     ("src/embed_onnx.py", "attune/src"),
+    ("src/loudness.py",   "attune/src"),    # the scan's loudness stage: ffmpeg's ebur128, stdlib only
     # embed_onnx.py resolves MODELS_DIR from its own __file__, so this dest makes it
     # land on .../attune/src/models inside the analyzer bundle automatically.
     ("src/models/clap_music.onnx", "attune/src/models"),
