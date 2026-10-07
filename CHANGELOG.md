@@ -19,6 +19,14 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
   what listeners play together, so it ships at 0 and no list changes. The library stats report
   it and a mix accepts `loud=`, ready for a dial. A library without the table scores exactly as
   before.
+- **Radio holds loudness by the measured number.** Radio's steady, rising, falling and wave
+  settings used to judge loudness by a rough average of the waveform, which treats quiet and loud
+  songs unevenly. In a library with the loudness table they now use the measured loudness, and a
+  song added since the last measurement gets an estimate from that rough average. On about
+  21,000 songs, 200 random seeds: "hold steady" kept 88 in 100 songs about as loud as the seed
+  (within two steps on the broadcast scale), up from 70, and the rising, falling and wave
+  shapes follow their target more closely. A library without the table plays Radio exactly as
+  before.
 
 ### Added (2026-10-06, the knobs in the fold, and the hand-offs in the list)
 

@@ -291,3 +291,68 @@ def test_stats_reports_the_weight_and_the_count(tmp_path):
         assert r["weights"]["loud"] == 1.5
     finally:
         mp.undo()
+
+
+# ------------------------------------------------------------------ Radio's arc axis
+
+def _old_rms_axis(dbp, paths):
+    """The arc axis as the engine built it before 2026-10-06: every analyzed song's RMS
+    (descriptor 75), z-scored over all of them, NaN for a pool song with none."""
+    c = sqlite3.connect(dbp)
+    rms = {}
+    for p, blob, dim in c.execute("SELECT path, vec, dim FROM features WHERE vec IS NOT NULL"):
+        v = np.frombuffer(blob, np.float32).astype(np.float64)
+        if dim == 79 and np.isfinite(v).all():
+            rms[p] = v[75]
+    c.close()
+    r = np.array(list(rms.values()))
+    return np.array([(rms[p] - r.mean()) / r.std() if p in rms else np.nan for p in paths])
+
+
+def test_without_the_table_radio_keeps_the_rms_axis_exactly(tmp_path):
+    dbp = build_db(str(tmp_path))
+    e = hybrid.HybridEngine(dbp)
+    assert e.energy_axis == "rms"
+    assert np.array_equal(e.energy, _old_rms_axis(dbp, e.paths))
+
+
+def test_with_the_table_radio_steers_by_lufs(lib_with_loudness):
+    dbp, lufs = lib_with_loudness
+    e = hybrid.HybridEngine(dbp)
+    assert e.energy_axis == "lufs"
+    measured = ~np.isnan(e.lufs)
+    est = e.lufs.copy()
+    rms = e._lib_raw[:, 75].astype(np.float64)
+    need = np.isnan(est) & (rms > 0)
+    if need.any():                              # the one unmeasured song, if its RMS is usable
+        a, b = np.polyfit(20 * np.log10(rms[measured & (rms > 0)]), est[measured & (rms > 0)], 1)
+        est[need] = a * 20 * np.log10(rms[need]) + b
+    z = (est - np.nanmean(est)) / np.nanstd(est)
+    assert np.allclose(e.energy, z, equal_nan=True)
+    lo, hi = np.nanpercentile(z, [10, 90])
+    assert (e._energy_lo, e._energy_hi) == pytest.approx((lo, hi))
+
+
+def test_an_unmeasured_song_gets_lufs_from_its_rms_in_decibels(tmp_path):
+    """Measured songs whose LUFS is an exact line in their RMS decibels: the one left
+    unmeasured is placed on that same line."""
+    dbp = build_db(str(tmp_path))
+    c = sqlite3.connect(dbp)
+    feats = {p: np.frombuffer(b, np.float32)[75] for p, b in c.execute("SELECT path, vec FROM features")}
+    tracks = dict(c.execute("SELECT path, mtime FROM tracks").fetchall())
+    c.close()
+    loud = [p for p, r in feats.items() if r > 0]
+    assert len(loud) > 12
+    line = lambda r: 0.8 * 20 * np.log10(float(r)) - 3.0        # noqa: E731
+    left_out = loud[0]
+    _write(dbp, {p: (line(feats[p]), tracks[p], None) for p in loud[1:]})
+    e = hybrid.HybridEngine(dbp)
+    i = e.idx[left_out]
+    assert np.isnan(e.lufs[i])                   # the ingredient still sees it as unmeasured
+    have = ~np.isnan(e.lufs)
+    vals = np.append(e.lufs[have], line(feats[left_out]))
+    others = ~have
+    others[i] = False
+    vals = np.concatenate([vals, np.full(others.sum(), np.nan)])  # songs with no usable RMS
+    assert e.energy[i] == pytest.approx((line(feats[left_out]) - np.nanmean(vals)) / np.nanstd(vals))
+    assert np.isnan(e.energy[others]).all()

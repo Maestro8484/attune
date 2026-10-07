@@ -528,7 +528,12 @@ class HybridEngine:
     # period=40/sigma=0.8 only reached rho=0.41 for rise (too loose a corridor, and too
     # long a period to show a clear trend within one n=20 batch).
     ARC_PERIOD = 20         # tracks per full rise/fall/wave cycle
-    ARC_SIGMA = 0.35        # corridor width, in z-scored rms_mean units (std=1 population)
+    ARC_SIGMA = 0.35        # corridor width, in z units of the arc's axis (std=1 population):
+                            # rms_mean as tuned above, or LUFS where the library has the
+                            # loudness table (energy_axis; about 1.4 LU on the real library).
+                            # Measured 2026-10-06, 200 seeds, variety 3, n 20, judged in LUFS:
+                            # flat keeps 88% within 2 LU of the seed (RMS 70%); rise/fall/wave
+                            # track their target at 0.89/0.88/0.91 (RMS 0.77/0.73/0.81).
 
     def __init__(self, db_path, weights=None, fusion=None, clap_space=None, earfeel_file=None,
                  catalog=True, family_credit=None, profile=None, head_file=None):
@@ -789,6 +794,15 @@ class HybridEngine:
         # ingredient: None for a library without the loudness table, which then scores exactly
         # as before whatever the weight says. Read whatever the weight is, like the energy axis.
         self.lufs, self.lra = _load_loudness(db_path, paths)
+        # Radio's arc steers by the measured loudness where the library has it (2026-10-06,
+        # TODO.md row 69): the RMS above is a straight amplitude, so a corridor of one width in
+        # its units is narrow for quiet songs and wide for loud ones, and of the songs the flat
+        # arc let through as "as loud as the seed", about 1 in 4 sat more than 2 LU from it.
+        # "rms" is the axis above, kept exactly for a library without the table.
+        self.energy_axis = "rms"
+        if self.lufs is not None:
+            self.energy, self._energy_lo, self._energy_hi = self._lufs_energy()
+            self.energy_axis = "lufs"
 
         # The other forms of the fingerprint, built on first use and kept; and the five
         # Earfeel scores, one 0..1 percentile per song, or None when the file is absent.
@@ -993,6 +1007,30 @@ class HybridEngine:
         if w.get("loud") and self.lufs is not None:
             s = s - w["loud"] * self._loud_gap(si)
         return s
+
+    def _lufs_energy(self):
+        """Radio's arc axis from measured loudness: (energy, lo, hi), energy being each pool
+        song's LUFS as distance from the pool's average in units of its spread, and lo/hi its
+        10th and 90th percentiles, the same shape as the RMS axis so ARC_SIGMA keeps its
+        meaning. A song the loudness scan has not measured yet (added since it ran) gets its
+        LUFS estimated from its stored RMS in decibels, by a straight line fitted at load over
+        the songs that have both: on the real library 2026-10-06 that fit was r 0.916, nine in
+        ten within 1.85 LU. A song with neither stays NaN, which radio_next() reads as unknown."""
+        est = self.lufs.copy()
+        rms = self._lib_raw[:, self.RMS_MEAN_INDEX].astype(np.float64)
+        have = rms > 0
+        both = have & ~np.isnan(est)
+        need = have & np.isnan(est)
+        if need.any() and both.sum() >= 10:
+            a, b = np.polyfit(20.0 * np.log10(rms[both]), est[both], 1)
+            est[need] = a * 20.0 * np.log10(rms[need]) + b
+        if np.isnan(est).all():
+            return np.full(len(est), np.nan), -1.0, 1.0
+        mu, sd = np.nanmean(est), np.nanstd(est)
+        sd = sd if sd > 1e-9 else 1e-9
+        energy = (est - mu) / sd
+        lo, hi = np.nanpercentile(energy, [10, 90])
+        return energy, float(lo), float(hi)
 
     def _loud_gap(self, si):
         """The loudness gap over the pool for one seed: |LUFS - seed's LUFS| / LOUD_SCALE,
