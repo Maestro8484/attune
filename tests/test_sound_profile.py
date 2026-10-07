@@ -300,7 +300,7 @@ def test_the_window_is_told_the_engines_dials_and_lines(tmp_path, monkeypatch):
         assert as_window["weights"] == alone["weights"]
         blend = client.get(f"/api/mix/blend?i=0&i=1&size=20&max=1&min_fit={st['clap_line']}").get_json()
         assert blend["stop"]["line"] == st["clap_line"]
-    v2 = {k: hybrid.DEFAULT_WEIGHTS[k] for k in ("clap", "lib", "genre", "bpm", "era")}
+    v2 = {k: hybrid.DEFAULT_WEIGHTS[k] for k in ("clap", "lib", "genre", "bpm", "era", "loud")}
     sound = dict(v2, **{k: hybrid.SOUND_PROFILE["weights"][k] for k in v2})
     assert (seen["plain"]["profile"], seen["plain"]["weights"]) == ("v2", v2)
     assert (seen["plain"]["fit_line"], seen["plain"]["clap_line"]) == (hybrid.FIT_LINE_DEFAULT,

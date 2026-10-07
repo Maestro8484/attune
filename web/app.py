@@ -36,7 +36,7 @@ SRC = os.path.join(os.path.dirname(HERE), "src")
 
 # weights exposed as sliders in the UI (a subset of HybridEngine's full weight dict --
 # "key" stays fixed at its configured/default value, not user-tunable here). V2-only.
-SLIDER_KEYS = ("clap", "lib", "genre", "bpm", "era")
+SLIDER_KEYS = ("clap", "lib", "genre", "bpm", "era", "loud")
 
 # MusicIP-native controls exposed instead of the weight sliders when --engine musicip.
 # Defaults match musicip_engine.MIX_DEFAULTS (style=40, variety=5).
@@ -793,7 +793,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
     # inside it and will not pretend to.
     TERM_LABELS = {"clap": "Sound fingerprint", "lib": "Timbre", "genre": "Genre tags",
                    "bpm": "Tempo", "era": "Year", "key": "Key", "artist": "Artist links",
-                   "earfeel": "Earfeel"}
+                   "earfeel": "Earfeel", "loud": "Loudness"}
 
     def _recipe():
         """The score's ingredients as the engine holds them at this moment, with the
@@ -802,7 +802,7 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
         or a term whose data this library lacks, is left out rather than shown as 0."""
         w = getattr(eng, "w", {}) or {}
         terms = []
-        for k in ("clap", "lib", "genre", "bpm", "era", "key", "artist", "earfeel"):
+        for k in ("clap", "lib", "genre", "bpm", "era", "key", "artist", "earfeel", "loud"):
             wk = float(w.get(k) or 0.0)
             if not wk:
                 continue
@@ -811,6 +811,8 @@ def create_app(db_path, engine_name="musicip", musicip_url="http://localhost:100
             if k == "earfeel" and getattr(eng, "earfeel", None) is None:
                 continue
             if k == "artist" and not getattr(eng, "similar", None):
+                continue
+            if k == "loud" and getattr(eng, "lufs", None) is None:
                 continue
             label = TERM_LABELS[k]
             if k == "clap" and getattr(eng, "clap_space", "raw") == "head":

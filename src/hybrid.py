@@ -35,7 +35,15 @@ import numpy as np
 # the key idea was sound but lost by ear (and its code was reversed until fixed). The key
 # term remains available (set "key">0) now that _key_compat is correct, but ships off.
 DEFAULT_WEIGHTS = {"clap": 1.0, "lib": 0.4, "genre": 0.3, "bpm": 0.3, "era": 0.1, "key": 0.0,
-                   "earfeel": 0.0}
+                   "earfeel": 0.0, "loud": 0.0}
+
+# The loudness ingredient (2026-10-06, TODO.md row 65): how near a candidate's measured loudness
+# sits to the seed's, as integrated LUFS (EBU R128) from the library's add-on `loudness` table
+# (tools/loudness_scan.py). The same shape as the year term: the gap in LU over LOUD_SCALE,
+# subtracted, 0.5 when either song has no measurement. Off (weight 0) in every profile; it acts
+# only in a library that holds the table. With the scale at 10 LU an unknown side counts as a
+# 5 LU gap; on the z scale the scale itself cancels and only that 5 LU matters.
+LOUD_SCALE = 10.0
 
 # Scoring switches (2026-10-01). ALL OFF BY DEFAULT: with fusion "raw", clap_space "raw"
 # and the Earfeel weight at 0, _score() runs the V2 code it always ran and the byte-identical
@@ -120,7 +128,7 @@ MUSICIP_HEAD_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mo
 TRAINED_CLAP_WEIGHTS = "music_audioset_epoch_15_esc_90.14"
 SOUND_PROFILE = {
     "weights": {"clap": 1.0, "lib": 0.0, "genre": 0.2, "bpm": 0.0, "era": 1.5, "key": 0.0,
-                "earfeel": 0.25, "artist": 0.12},
+                "earfeel": 0.25, "artist": 0.12, "loud": 0.0},
     "fusion": "z", "clap_space": "head", "family_credit": 0.0,
 }
 # THE MUSICIP PROFILE (2026-10-06, TODO.md row 62). The fingerprint through the MusicIP-taught
@@ -135,7 +143,7 @@ SOUND_PROFILE = {
 # (the app's --profile flag). Whether it becomes the default is the owner's call, by ear.
 MUSICIP_PROFILE = {
     "weights": {"clap": 1.0, "lib": 0.0, "genre": 0.0, "bpm": 0.0, "era": 0.0, "key": 0.0,
-                "earfeel": 0.0, "artist": 0.0},
+                "earfeel": 0.0, "artist": 0.0, "loud": 0.0},
     "fusion": "z", "clap_space": "head", "family_credit": 0.0,
 }
 PROFILES = ("v2", "sound", "musicip")
@@ -323,6 +331,28 @@ def _fingerprint_weights(db_path):
         return None
     finally:
         conn.close()
+
+
+def _load_loudness(db_path, paths):
+    """(lufs, lra) over the pool, each an array with NaN where a song has no measurement, or
+    (None, None) when the library holds no `loudness` table or no measured row in it. The
+    table is tools/loudness_scan.py's add-on, outside SCHEMA_VERSION like `filestate`; its
+    absence is asked about, not caught, so a table of the wrong shape still raises."""
+    conn = _connect_readonly(db_path, timeout=30)
+    try:
+        if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='loudness'"
+                            ).fetchone():
+            return None, None
+        got = {p: (l, r) for p, l, r in conn.execute(
+            "SELECT path, lufs, lra FROM loudness WHERE error IS NULL AND lufs IS NOT NULL")}
+    finally:
+        conn.close()
+    if not got:
+        return None, None
+    rows = [got.get(p, (None, None)) for p in paths]
+    lufs = np.array([np.nan if l is None else l for l, _r in rows], float)
+    lra = np.array([np.nan if r is None else r for _l, r in rows], float)
+    return lufs, lra
 
 
 def _load_head(path=None):
@@ -755,6 +785,11 @@ class HybridEngine:
             self.energy = np.full(len(paths), np.nan)
             self._energy_lo, self._energy_hi = -1.0, 1.0   # unreachable: no energy data
 
+        # Measured loudness, integrated LUFS and loudness range (EBU R128), for the `loud`
+        # ingredient: None for a library without the loudness table, which then scores exactly
+        # as before whatever the weight says. Read whatever the weight is, like the energy axis.
+        self.lufs, self.lra = _load_loudness(db_path, paths)
+
         # The other forms of the fingerprint, built on first use and kept; and the five
         # Earfeel scores, one 0..1 percentile per song, or None when the file is absent.
         self._spaces = {}
@@ -874,6 +909,8 @@ class HybridEngine:
                         -np.where((self.year > 0) & (sy > 0), np.abs(self.year - sy) / 25.0, 0.5)))
         if w.get("artist") and self.artist_ids[si]:
             out.append(("artist", w["artist"], self._artist_affinity(si)))
+        if w.get("loud") and self.lufs is not None:
+            out.append(("loud", w["loud"], -self._loud_gap(si)))
         if w.get("earfeel") and self.earfeel is not None:
             # mean gap across the five scores, each already 0..1
             out.append(("earfeel", w["earfeel"],
@@ -951,7 +988,20 @@ class HybridEngine:
         # the candidate's artist with the seed's, 0 to 1; the same artist counts as 1.
         if w.get("artist") and self.artist_ids[si]:
             s = s + w["artist"] * self._artist_affinity(si)
+        # loudness: |ΔLUFS|/LOUD_SCALE, 0.5 when either side is unmeasured (the era form);
+        # only in a library that holds the loudness table
+        if w.get("loud") and self.lufs is not None:
+            s = s - w["loud"] * self._loud_gap(si)
         return s
+
+    def _loud_gap(self, si):
+        """The loudness gap over the pool for one seed: |LUFS - seed's LUFS| / LOUD_SCALE,
+        0.5 where either song has no measurement. Needs self.lufs (a library with the
+        loudness table)."""
+        sl = self.lufs[si]
+        if np.isnan(sl):
+            return np.full(len(self.paths), 0.5)
+        return np.where(np.isnan(self.lufs), 0.5, np.abs(self.lufs - sl) / LOUD_SCALE)
 
     def without_catalog(self):
         """A copy sharing this library's loaded vectors that scores as the engine did before
@@ -1657,8 +1707,13 @@ class HybridEngine:
         if w.get("artist") and self.artist_ids[si]:
             comp["artist"] = float(w["artist"] * self._artist_affinity(si)[ci])
 
+        if w.get("loud") and self.lufs is not None:
+            sl, cl = self.lufs[si], self.lufs[ci]
+            dl = abs(cl - sl) / LOUD_SCALE if not (np.isnan(sl) or np.isnan(cl)) else 0.5
+            comp["loud"] = float(-w["loud"] * dl)
+
         comp["total"] = (comp["clap"] + comp["lib"] + comp["genre"] + comp["bpm"] + comp["key"]
-                         + comp["era"] + comp.get("artist", 0.0))
+                         + comp["era"] + comp.get("artist", 0.0) + comp.get("loud", 0.0))
         return comp
 
 

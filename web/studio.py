@@ -775,7 +775,10 @@ def register(app, ctx):
             # is written with the V2 numbers and the window sends the dials with every mix,
             # so without this a sound-profile library was mixed in the window with V2's
             # numbers on top of the sound profile's scale, a recipe nobody chose.
-            weights={k: eng.w.get(k, 0.0) for k in ("clap", "lib", "genre", "bpm", "era")},
+            # `loud` is the measured-loudness ingredient (hybrid.LOUD_SCALE); the window has
+            # no dial for it yet, and `loudness` says whether this library has measurements
+            weights={k: eng.w.get(k, 0.0) for k in ("clap", "lib", "genre", "bpm", "era", "loud")},
+            loudness=(sum(1 for v in eng.lufs if v == v) if getattr(eng, "lufs", None) is not None else 0),
             profile=getattr(eng, "profile", "v2"),
             # where "count as a maximum" draws its line for this library, for the same
             # reason: the window sends its two boxes with every mix, and a box left at the

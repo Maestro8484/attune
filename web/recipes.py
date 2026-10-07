@@ -28,10 +28,10 @@ from flask import Blueprint, jsonify, request
 
 # Whitelist of legal recipe-param keys. Anything else in a saved/validated params dict
 # is rejected outright -- a recipe is a small, closed vocabulary, not an arbitrary blob.
-PARAM_KEYS = {"clap", "lib", "genre", "bpm", "era", "variety", "flow", "dedup", "size"}
+PARAM_KEYS = {"clap", "lib", "genre", "bpm", "era", "loud", "variety", "flow", "dedup", "size"}
 
 # Weight sliders the client exposes (app.py SLIDER_KEYS) -- floats, clamped 0..5.
-_WEIGHT_KEYS = ("clap", "lib", "genre", "bpm", "era")
+_WEIGHT_KEYS = ("clap", "lib", "genre", "bpm", "era", "loud")
 
 # Legal dedup field values -- MUST match app.py's DEDUP_FIELDS (web/app.py:180). Verified
 # by reading app.py directly: it is ("song", "title", "file"), NOT "artist"/"album".
