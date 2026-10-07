@@ -209,14 +209,185 @@ const Trace = (() => {
   }
   function foldHtml(t) {
     const v = t.verdict;
+    const knobs = knobsOn(t);
     const orb = foldOpen ? '' : `<span class="vorb" title="The connections Attune made for this list: every song it looked at around ${esc(likeOf(t))}, the list threaded through in play order. Click to open">${constSvg(t, { size: 26, mini: true })}</span>`;
+    const n = fitN(t);
+    const point = !foldOpen && knobs && n != null && n < FEW ? `<button type="button" class="vknob" title="${esc(`Fewer than ${FEW} songs you own sound enough like ${likeOf(t)} at the cut-off ${pct(t.line)}. Click to open the knobs: drag the cut-off and the list re-mixes as you go.`)}">only ${n}: widen it</button>` : '';
     const head = `<div class="vline vfold${foldOpen ? ' open' : ''}"><button type="button" class="vtog" aria-expanded="${foldOpen}" ` +
       `title="${foldOpen ? 'Fold away the connections, the explanation and the numbers of this run' : 'Open the connections, the explanation, the controls and the numbers of this run'}">${foldOpen ? '▾' : '▸'}</button>` +
-      `${orb}<span class="hl"${foldOpen ? '' : ` title="${esc(hlTip(t))}"`}>${hlHtml(v)}</span>${changedChip(t)}</div>`;
+      `${orb}<span class="hl"${foldOpen ? '' : ` title="${esc(hlTip(t))}"`}>${hlHtml(v)}</span>${point}${changedChip(t)}</div>`;
     if (!foldOpen) return head;
     const levers = leversHtml(v, { noMagic: true, t });
-    return head + `<div class="vopen"><div class="vconst">${constSvg(t, { size: 210 })}${legendHtml(t)}</div>` +
-      `<div class="vright"><div class="vcard vfoldbody">${v.body ? `<p class="body">${esc(v.body)}</p>` : ''}${levers ? `<div class="levers">${levers}</div>` : ''}</div>${sieveHtml(t)}</div></div>`;
+    return head + `<div class="vopen"><div class="vconst">${constSvg(t, { size: 210, knob: knobs })}${legendHtml(t)}</div>` +
+      `<div class="vright"><div class="vcard vfoldbody">${v.body ? `<p class="body">${esc(v.body)}</p>` : ''}${knobsHtml(t)}${levers ? `<div class="levers">${levers}</div>` : ''}</div>${sieveHtml(t)}</div></div>`;
+  }
+
+  /* ---- the knobs in the open fold (TODO.md row 66; Joe 2026-10-06: "if 'only a few songs
+     (less than 10) sound enough like ___' you point to how to modify that within the
+     fold-out section with real time updating the songs based on updated slider or knob
+     settings"). The cut-off is a slider tied both ways to the dashed ring in the drawing:
+     drag either. The count and the dots move at once, read off this run's own field; the
+     list itself re-mixes a moment later through the window's ordinary re-mix (no reveal),
+     and the count then says what the re-mix found. Each knob writes the Mix options field
+     the next Create Mix reads (the cut-off, But never fewer than, the length), so the two
+     never disagree. A whole drag is one step for Undo. */
+  const FEW = 10;
+  const fitN = t => { const s = (t && t.funnel || []).find(x => x.id === 'fit'); return s ? s.n : null; };
+  // a plain mix is cut at the fit line; a Blend, steering and an Adventure at the
+  // sound-alike line, the same split remixWithFilters() makes
+  const lineField = t => (t && t.kind === 'mix' ? 'fitLine' : 'clapLine');
+  function knobsOn(t) {
+    return !!(t && inMix() && t === S.trace && t.line != null && t.kind !== 'radio' && S.stats && S.stats.engine !== 'musicip' &&
+      $('fitMax') && $('fitMax').checked && typeof remixWithFilters === 'function');
+  }
+  function countWords(n, about) {
+    return `<em>${about ? 'about ' : ''}${Number(n).toLocaleString()}</em> sound enough`;
+  }
+  function knobsHtml(t) {
+    if (!knobsOn(t)) return '';
+    const n = fitN(t), few = n != null && n < FEW;
+    const floor = +$('fitFloor').value || 0, size = +$('mixSize').value || 100;
+    const unit = $('sizeType') && $('sizeType').value === 'minutes' ? 'minutes' : 'songs';
+    const like = likeOf(t);
+    const cutTip = `The cut-off: how much a song has to sound like ${like} to count, as a share of what an identical song would score. Drag this or the dashed ring in the drawing; the count and the dots move at once and the list re-mixes as you go. The same setting as Cut-off in Mix options.`;
+    const floorTip = `However few songs sound enough like ${like}, the list keeps at least this share of the length asked for, filled in past the cut-off and marked. The same setting as But never fewer than in Mix options.`;
+    const sizeTip = `How long the list may be. The same number as the length beside Create Mix.`;
+    return `<div class="vknobs${few ? ' few' : ''}">` +
+      `<label class="kn cut" title="${esc(cutTip)}"><span class="k">Cut-off</span>` +
+      `<input type="range" class="knr" id="knCut" min="0.05" max="0.95" step="0.01" value="${Number(t.line).toFixed(2)}">` +
+      `<b class="v" id="knCutV">${pct(t.line)}</b><span class="n" id="knCount">${n == null ? '' : countWords(n, false)}</span></label>` +
+      `<div class="kn2"><label class="kn" title="${esc(floorTip)}"><span class="k">Never fewer than</span>` +
+      `<input type="range" class="knr" id="knFloor" min="0" max="100" step="5" value="${floor}"><b class="v" id="knFloorV">${floor}%</b></label>` +
+      (t.kind === 'adventure' ? '' : `<label class="kn" title="${esc(sizeTip)}"><span class="k">Length</span>` +
+      `<input type="range" class="knr" id="knSize" min="20" max="150" step="5" value="${size}"><b class="v" id="knSizeV">${size} ${unit}</b></label>`) +
+      `</div></div>`;
+  }
+  /* the songs that would sound enough at another cut-off, from this run alone: the songs
+     taken at or over it (the server's own count at the cut-off it ran) and the ten it would
+     have reached next. Below where this run stopped looking it is a guess, said "about",
+     and the re-mix that follows replaces it with what it found */
+  function countAt(t, L) {
+    if (t.line != null && Math.abs(L - t.line) < 0.005 && fitN(t) != null) return { n: fitN(t), about: false };
+    const f = t.field || [];
+    let n = f.filter(r => r.fit != null && r.fit >= L - 1e-9 && (TAKEN.has(r.status) || r.status === 'next')).length;
+    const looked = f.filter(r => r.status !== 'next' && r.fit != null).map(r => r.fit);
+    let about = looked.length ? L < Math.min(...looked) : true;
+    const req = Number(t.requested) || 0;
+    if (req && n >= req) { n = req; about = false; }
+    return { n, about };
+  }
+  const kn = { held: false, drag: null, timer: 0, pending: false, busy: false, again: false, gesture: null, dirty: false, label: '' };
+  const fieldsNow = () => Object.fromEntries(['fitLine', 'clapLine', 'fitFloor', 'mixSize'].map(id => [id, $(id) ? $(id).value : null]));
+  function setFields(f) {
+    for (const [id, v] of Object.entries(f || {})) if ($(id) && v != null) $(id).value = v;
+    for (const id of ['fitLine', 'clapLine']) if (f[id] != null) store.set(id, f[id]);
+    store.set('fitLineProfile', (S.stats && S.stats.profile) || 'v2');
+    if (f.fitFloor != null) store.set('fitFloor', f.fitFloor);
+  }
+  /* the drawing follows the cut-off at once: the ring, its label, and every dot and line
+     over it lit as the songs that would sound enough */
+  function previewCut(L) {
+    const svg = document.querySelector('#mixStop .vconst .cst'); if (!svg || !svg.dataset.fhi) return;
+    svg.classList.add('lv');
+    const r = cutR(svg, L);
+    svg.querySelectorAll('.rg.cut, .rg.cuthit').forEach(c => c.setAttribute('r', r.toFixed(1)));
+    const lab = svg.querySelector('text.on');
+    if (lab) {
+      const text = `the cut-off ${pct(L)}`, [lx, ly] = cutLabelAt(r, 400 / (svg.width.baseVal.value || 300), text);
+      lab.setAttribute('x', lx.toFixed(1)); lab.setAttribute('y', ly.toFixed(1)); lab.textContent = text;
+    }
+    svg.querySelectorAll('.nd[data-f], .lk[data-f]').forEach(e => {
+      if (e.classList.contains('d') || e.classList.contains('n')) return;
+      const over = +e.dataset.f >= L - 1e-9;
+      e.classList.toggle('ov', over); e.classList.toggle('un', !over);
+    });
+  }
+  function setCut(L, from) {
+    const t = S.trace; if (!knobsOn(t)) return;
+    L = Math.round(Math.max(0.05, Math.min(0.95, L)) * 100) / 100;
+    const sl = $('knCut');
+    if (sl && from !== 'slider') sl.value = L.toFixed(2);
+    if ($('knCutV')) $('knCutV').textContent = pct(L);
+    previewCut(L);
+    const c = countAt(t, L);
+    if ($('knCount')) { $('knCount').innerHTML = countWords(c.n, c.about); $('knCount').classList.add('est'); }
+    const f = lineField(t), was = $(f).value;
+    $(f).value = L.toFixed(f === 'clapLine' ? 3 : 2);
+    if ($(f).value === was && !kn.gesture) return;
+    store.set(f, $(f).value); store.set('fitLineProfile', (S.stats && S.stats.profile) || 'v2');
+    knobChanged('cut', was, $(f).value);
+  }
+  function setKnob(id, v) {
+    if (id === 'knCut') return setCut(+v, 'slider');
+    if (id === 'knFloor') {
+      const was = $('fitFloor').value; $('fitFloor').value = v; store.set('fitFloor', String(v));
+      if ($('knFloorV')) $('knFloorV').textContent = `${v}%`;
+      return knobChanged('floor', was, String(v));
+    }
+    if (id === 'knSize') {
+      const was = $('mixSize').value; $('mixSize').value = v;
+      if ($('knSizeV')) $('knSizeV').textContent = `${v} ${$('sizeType') && $('sizeType').value === 'minutes' ? 'minutes' : 'songs'}`;
+      return knobChanged('size', was, String(v));
+    }
+  }
+  const KNOB_NAME = { cut: 'Cut-off', floor: 'Never fewer than', size: 'Length' };
+  const knobVal = (k, v) => k === 'cut' ? pct(v) : k === 'floor' ? `${v}%` : String(v);
+  function knobChanged(k, was, now) {
+    if (!kn.gesture) {
+      kn.gesture = { before: { snap: mixSnap(), trace: S.trace, fields: fieldsNow() }, k, from: was, ran: false };
+      kn.gesture.before.fields[k === 'cut' ? lineField(S.trace) : k === 'floor' ? 'fitFloor' : 'mixSize'] = was;
+      noteStep('');                  // the list before the change, for the "new · stayed" chip
+    }
+    if (kn.gesture.k !== k) { kn.gesture.k = k; kn.gesture.from = was; }
+    kn.label = `${KNOB_NAME[k]} ${knobVal(k, kn.gesture.from)} to ${knobVal(k, now)}`;
+    S.prevStep = kn.label;
+    clearTimeout(kn.timer); kn.pending = true;
+    kn.timer = setTimeout(() => { kn.pending = false; runKnobRemix(); }, 160);
+  }
+  async function runKnobRemix() {
+    if (kn.busy) { kn.again = true; return; }
+    kn.busy = true;
+    try {
+      stepPending = true;            // compared with the list before the knob first moved
+      await History.act('', async () => {
+        S.quiet = true;              // no toast per step of a drag
+        try { await remixWithFilters(); } finally { S.quiet = false; }
+        return null;
+      });
+    } catch (e) { /* the re-mix says its own error */ }
+    kn.busy = false;
+    if (kn.again) { kn.again = false; return runKnobRemix(); }
+    if (!kn.held && !kn.pending) endGesture();
+  }
+  function endGesture() {
+    const g = kn.gesture; if (!g) return;
+    kn.gesture = null;
+    const after = { snap: mixSnap(), trace: S.trace, fields: fieldsNow() };
+    if (JSON.stringify(g.before) === JSON.stringify(after)) return;
+    const back = st => async () => { setFields(st.fields); S.trace = st.trace; lastRun = st.trace; return mixRestore(st.snap); };
+    History.act(kn.label, async () => ({ undo: back(g.before), redo: back(after) }));
+  }
+  function releaseKnob() {
+    if (!kn.held) return;
+    kn.held = false; kn.drag = null;
+    if (kn.dirty) { kn.dirty = false; strip(); markPlaying(); }
+    if (!kn.busy && !kn.pending) endGesture();
+  }
+  /* while a knob is held the fold is not rebuilt under the pointer: the headline, the
+     chip and the count take the re-mix's numbers in place, and the rest follows on release */
+  function refreshHeld(t) {
+    kn.dirty = true;
+    const hl = document.querySelector('#mixStop .vline .hl'); if (hl && t.verdict) hl.innerHTML = hlHtml(t.verdict);
+    const chip = document.querySelector('#mixStop .vchg'), nc = changedChip(t);
+    if (chip) chip.outerHTML = nc || ''; else if (nc && hl) hl.insertAdjacentHTML('afterend', nc);
+    // the words, the levers and the sieve are not under the pointer: they take the run now
+    const body = document.querySelector('#mixStop .vfoldbody .body'); if (body && t.verdict) body.textContent = t.verdict.body || '';
+    const lv = document.querySelector('#mixStop .vfoldbody .levers'); if (lv && t.verdict) lv.innerHTML = leversHtml(t.verdict, { noMagic: true, t });
+    const sv = document.querySelector('#mixStop .vright .sieve'); if (sv) sv.outerHTML = sieveHtml(t);
+    const sl = $('knCut'), n = fitN(t);
+    if (sl && n != null && t.line != null && Math.abs(+sl.value - t.line) < 0.0051 && $('knCount')) {
+      $('knCount').innerHTML = countWords(n, false); $('knCount').classList.remove('est');
+    }
   }
 
   /* ---- the connections (2026-10-06, Joe: "more 'connection' visualizations of
@@ -253,7 +424,7 @@ const Trace = (() => {
     }
     const reach = looked.length ? rad(Math.min(...looked.map(r => r.fit))) : R1;
     const cut = t.line != null ? Math.max(R0 - 8, Math.min(R1 + 8, rad(t.line))) : null;
-    return { field, pos, reach, cut, rad };
+    return { field, pos, reach, cut, rad, fhi, flo };
   }
   function constSvg(t, opts = {}) {
     const g = constGeo(t); if (!g) return '';
@@ -269,9 +440,10 @@ const Trace = (() => {
     for (const r of g.field) {
       const [x, y, d] = g.pos.get(r.i), c = cls(r.status), p = pops(r);
       const at = r.status === 'next' ? walkAt + walkMs + 120 : when(d);
-      if (c !== 'n' && (!mini || c === 'k' || c === 'p')) links += `<line class="lk ${c}${p}" x1="0" y1="0" x2="${fx(x)}" y2="${fx(y)}" pathLength="1" data-i="${r.i}"${dly(at)}/>`;
+      const df = mini ? '' : ` data-f="${r.fit}"`;    // the knob recolours by fit as it moves
+      if (c !== 'n' && (!mini || c === 'k' || c === 'p')) links += `<line class="lk ${c}${p}" x1="0" y1="0" x2="${fx(x)}" y2="${fx(y)}" pathLength="1" data-i="${r.i}"${df}${dly(at)}/>`;
       const tip = mini ? '' : ` data-tip="${esc(`${r.label}: ${fitWords(r, t)}; ${WHY[r.status] || r.status}. Click for why.`)}"`;
-      nodes += `<circle class="nd ${c}${p}" cx="${fx(x)}" cy="${fx(y)}" r="${fx(rpx[c] * u)}" data-i="${r.i}"${tip}${dly(at)}/>`;
+      nodes += `<circle class="nd ${c}${p}" cx="${fx(x)}" cy="${fx(y)}" r="${fx(rpx[c] * u)}" data-i="${r.i}"${df}${tip}${dly(at)}/>`;
     }
     // the thread: the list in play order, one segment per hand-off, bowed so the path reads
     let thread = '';
@@ -293,26 +465,45 @@ const Trace = (() => {
     rings += `<circle class="rg reach" r="${fx(g.reach)}" style="stroke-width:${fx(1 * u)}px${after}"/>`;
     if (play) rings += `<circle class="rg walk" r="${R1}" style="--s0:${(R0 / R1).toFixed(3)};--s1:${(g.reach / R1).toFixed(3)};animation-duration:${walkMs}ms;animation-delay:${walkAt}ms"/>`;
     const cutRing = g.cut == null ? '' : `<circle class="rg cut" r="${fx(g.cut)}" style="stroke-width:${fx((mini ? 0.7 : 1.2) * u)}px;stroke-dasharray:${fx(4 * u)} ${fx(3 * u)}"/>`;
+    // the ring can be dragged (TODO.md row 66): a wide invisible band over it takes the
+    // pointer, under the dots so a dot near the ring still answers its own hover
+    const cutHit = g.cut == null || mini || play || !opts.knob ? '' : `<circle class="rg cuthit" r="${fx(g.cut)}" style="stroke-width:${fx(14 * u)}px" data-tip="Drag the cut-off ring: nearer the middle asks more of a song, further out lets more in. The list re-mixes as you go."/>`;
     let labels = '';
     const low = !mini && !play ? lowerBy(t) : null;
     if (low) {
       const gr = Math.max(R0 - 8, Math.min(R1 + 8, g.rad(low.to)));
       labels += `<circle class="rg ghost" r="${fx(gr)}" style="stroke-width:${fx(1.2 * u)}px;stroke-dasharray:${fx(2 * u)} ${fx(3 * u)}"/>` +
-        `<text class="gl" x="${fx(gr * Math.cos(0.5))}" y="${fx(gr * Math.sin(0.5) + 10 * u)}" style="${fs(9.5)}">at ${pct(low.to)}: ${low.more} more</text>`;
+        `<text class="gl" x="${fx(gr * Math.cos(0.5))}" y="${fx(gr * Math.sin(0.5) + 11 * u)}" style="${fs(11)}">at ${pct(low.to)}: ${low.more} more</text>`;
     }
     if (!mini) {
-      const a = -2.45;   // upper left, where the thread ends rather than where it starts
-      if (g.cut != null) labels += `<text class="on" x="${fx((g.cut + 4) * Math.cos(a))}" y="${fx((g.cut + 4) * Math.sin(a))}" text-anchor="end" style="${fs(9.5)}">the cut-off ${pct(t.line)}</text>`;
+      const a = CUT_A;   // upper left, where the thread ends rather than where it starts
+      if (g.cut != null) { const [lx, ly] = cutLabelAt(g.cut, u, `the cut-off ${pct(t.line)}`);
+        labels += `<text class="on" x="${fx(lx)}" y="${fx(ly)}" text-anchor="end" style="${fs(11)}">the cut-off ${pct(t.line)}</text>`; }
       const reachN = ((t.funnel || []).find(s => s.id === 'reach') || {}).n;
-      if (reachN) labels += `<text class="rl" x="${fx(-g.reach * 0.72)}" y="${fx(g.reach * 0.72 + 12 * u)}" text-anchor="middle" style="${fs(9)}${after}">${Number(reachN).toLocaleString()} looked at</text>`;
-      if (pool) labels += `<text x="0" y="${fx(-(R1 + 16) - 4 * u)}" text-anchor="middle" style="${fs(9)}">${Number(pool).toLocaleString()} scored, the rest further out</text>`;
+      const rlt = `${Number(reachN).toLocaleString()} looked at`;   // kept inside the drawing's left edge
+      if (reachN) labels += `<text class="rl" x="${fx(Math.max(-g.reach * 0.72, -198 + rlt.length * 0.28 * 11 * u))}" y="${fx(g.reach * 0.72 + 13 * u)}" text-anchor="middle" style="${fs(11)}${after}">${rlt}</text>`;
+      if (pool) labels += `<text x="0" y="${fx(-(R1 + 16) - 4 * u)}" text-anchor="middle" style="${fs(11)}">${Number(pool).toLocaleString()} scored, the rest further out</text>`;
       const name = likeOf(t).replace(/^.* - /, '');
-      labels += `<text class="sl" x="0" y="${fx(R0 * 0.55 + 12 * u)}" text-anchor="middle" style="${fs(10)}">${esc(name.length > 30 ? name.slice(0, 29) + '…' : name)}</text>`;
+      labels += `<text class="sl" x="0" y="${fx(R0 * 0.55 + 13 * u)}" text-anchor="middle" style="${fs(11)}">${esc(name.length > 30 ? name.slice(0, 29) + '…' : name)}</text>`;
     }
     const seed = `<circle class="seedh" r="${fx((mini ? 3 : 10) * u)}"/><circle class="seed" r="${fx((mini ? 1.9 : 5) * u)}"/>`;
-    return `<svg class="cst${mini ? ' mini' : ''}${play ? ' play' : ''}" viewBox="-200 -200 400 400" width="${size}" height="${size}" style="--cst-size:${size}" xmlns="http://www.w3.org/2000/svg" aria-label="The connections: every song looked at around the seed, the list threaded through">` +
-      rings + links + cutRing + thread + nodes + seed + labels + `</svg>`;
+    const span = mini ? '' : ` data-fhi="${g.fhi}" data-flo="${g.flo}"`;
+    return `<svg class="cst${mini ? ' mini' : ''}${play ? ' play' : ''}" viewBox="-200 -200 400 400" width="${size}" height="${size}" style="--cst-size:${size}"${span} xmlns="http://www.w3.org/2000/svg" aria-label="The connections: every song looked at around the seed, the list threaded through">` +
+      rings + links + cutRing + thread + cutHit + nodes + seed + labels + `</svg>`;
   }
+  const CUT_A = -2.45;
+  // where the cut-off's words sit: just outside the ring, upper left, pulled in so they
+  // never run off the drawing's left edge (the width is estimated from the letters)
+  function cutLabelAt(r, u, text) {
+    const x = (r + 4) * Math.cos(CUT_A), y = (r + 4) * Math.sin(CUT_A);
+    return [Math.max(x, -198 + text.length * 0.56 * 11 * u), y];
+  }
+  // a cut-off as a radius in a drawing already on screen, and back (the svg carries the
+  // span of fits it was drawn over); the ring stays inside the outer haze ring
+  const cutR = (svg, L) => { const hi = +svg.dataset.fhi, lo = +svg.dataset.flo;
+    return Math.max(R0 - 8, Math.min(R1 + 12, R0 + (R1 - R0) * (hi - L) / ((hi - lo) || 1))); };
+  const cutAt = (svg, d) => { const hi = +svg.dataset.fhi, lo = +svg.dataset.flo;
+    return hi - (d - R0) * ((hi - lo) || 1) / (R1 - R0); };
 
   /* ---- the sieve: the numbers of the run as bars sized by count (log scale, so 21,000
      and 50 both fit on one card), narrowing in the order the code ran them. The deciding
@@ -372,8 +563,15 @@ const Trace = (() => {
       el.hidden = false; return;
     }
     el.classList.add('fold');
+    if (kn.held && $('knCut')) { refreshHeld(t); el.hidden = false; return; }
+    // a knob moved by the keyboard keeps the keyboard; the list's own repaint may already
+    // have taken the focus with it, so the last knob keyed in the last few seconds counts too
+    const lost = !document.activeElement || document.activeElement === document.body;
+    const focus = el.contains(document.activeElement) && document.activeElement.id ? document.activeElement.id
+      : (lost && kn.key && Date.now() - kn.key.at < 4000 ? kn.key.id : null);
     el.innerHTML = foldHtml(t);
     el.hidden = false;
+    if (focus && $(focus)) $(focus).focus();
   }
 
   /* ---- the field: the list area becomes one population of the run */
@@ -567,6 +765,9 @@ const Trace = (() => {
     if ((inMix() || inMagic()) && t && t !== lastRun) {   // a new run arrived: remember it, show the list
       lastRun = t;
       lastWasStep = stepPending; stepPending = false;
+      // a knob dragged re-mixes many times; Runs keeps the latest of one drag, not each step
+      if (kn.gesture && kn.gesture.ran && runs.length) runs.pop();
+      if (kn.gesture) kn.gesture.ran = true;
       noteRun(t);
       showing = 'list'; view = 'list'; mpop = litPop(t);
       if (S.revealNext) { S.revealNext = false; if (inMix()) reveal(t); }
@@ -577,6 +778,7 @@ const Trace = (() => {
     paintArc();
     paintMagic();
     markCut();
+    markLinks();
     markNew();
     markPlaying();
     const lt = $('lTrace');
@@ -688,7 +890,7 @@ const Trace = (() => {
         ((t.seeds || []).length ? ' from ' + (t.seeds || []).map(s => s.label).join(' + ') : ''),
       inputs: {
         seeds: (t.seeds || []).map(s => s.label).join(' + ') || '',
-        recipe: (t.recipe || {}).sound_only ? 'sound alone' : ((t.recipe || {}).profile === 'sound' ? 'the sound profile' : 'the V2 recipe') +
+        recipe: (t.recipe || {}).sound_only ? 'sound alone' : (({ sound: 'the sound profile', musicip: 'the MusicIP-taught profile' })[(t.recipe || {}).profile] || 'the V2 recipe') +
           ((t.recipe || {}).terms ? ' (' + t.recipe.terms.map(x => `${TERM[x.id] || x.id} ×${x.weight}`).join(', ') + ')' : ''),
         line: t.line != null ? `${pct(t.line)} (${lineKind})` : 'none, the count is a quota',
         collection: t.collection || 'Full library',
@@ -915,6 +1117,31 @@ const Trace = (() => {
     const cell = row.querySelector('td.c-title') || row.lastElementChild;   // the widest cell carries the words
     if (cell) cell.dataset.cut = `the cut-off ${pct(t.line)}: below it, filled in`;
   }
+  /* the hand-offs in the list's left edge (TODO.md row 66, round two's proposal 2): a link
+     from each song down to the next, thicker where the two sound closer, the weakest one
+     marked. The same numbers as the thread in the drawing; only while the list is in play
+     order, the same check as the cut-off line */
+  function markLinks() {
+    const tb = $('tbody'); if (!tb) return;
+    tb.querySelectorAll('i.ho').forEach(e => e.remove());
+    const t = tr();
+    if (!inMix() || !t || showing !== 'list' || view !== 'list') return;
+    const rows = Array.from(tb.querySelectorAll('tr[data-i]'));
+    const order = t.order || [], trs = t.transitions || [];
+    if (!trs.length || rows.length !== order.length || rows.some((r, k) => +r.dataset.i !== order[k])) return;
+    const tv = trs.slice(0, rows.length - 1).filter(v => v != null); if (!tv.length) return;
+    const lo = Math.min(...tv), hi = Math.max(...tv), weak = trs.indexOf(lo);
+    for (let k = 0; k + 1 < rows.length; k++) {
+      const v = trs[k], cell = rows[k].querySelector('td.c-pos');
+      if (v == null || !cell) continue;
+      const i = document.createElement('i');
+      i.className = 'ho' + (k === weak ? ' weak' : '');
+      i.style.setProperty('--hw', (1 + 3 * (v - lo) / ((hi - lo) || 1)).toFixed(2) + 'px');
+      i.title = `#${k + 1} to #${k + 2}: the hand-off from ${label(order[k])} to ${label(order[k + 1])} is ${pct(v)} alike` +
+        (k === weak ? '. The weakest hand-off in the list' : '') + '. Thicker is closer';
+      cell.prepend(i);
+    }
+  }
 
   function setView(v) { view = v; if (v === 'arc') showing = 'list'; paint(); }
   function showPop(pop) {
@@ -953,7 +1180,12 @@ const Trace = (() => {
   }
   function pullLever(id) {
     if (id === 'magic') { if (typeof showMagic === 'function') showMagic(); return; }
-    if (id === 'line') return openOptionsFor('fitLine');
+    if (id === 'line') {
+      // with the knobs on screen the lever moves the cut-off to the dotted ring it previews
+      const sl = $('knCut'), low = lowerBy(S.trace);
+      if (sl && sl.getClientRects().length) { if (low) setCut(low.to, 'lever'); flashControl(sl); return; }
+      return openOptionsFor('fitLine');
+    }
     if (id === 'variety') return openOptionsFor('radioVariety');
     if (id === 'count') { const el = $('mixSize'); if (el) { flashControl(el); toast('Set the length here, then press Mix again'); } return; }
     if (id === 'undo') { const b = $('steerReset'); if (b) b.click(); else toast('No votes to clear on this list'); return; }
@@ -1142,11 +1374,39 @@ const Trace = (() => {
     if (strip_) strip_.addEventListener('click', e => {
       if (onCard(e)) return;
       if (e.target.closest('.vchg')) { mtab = 'changes'; store.set('magicTab', mtab); if (typeof showMagic === 'function') showMagic(); return; }
+      if (e.target.closest('.vknob')) {           // "only 9: widen it" opens the fold at the knob
+        foldOpen = true; store.set('mixHeaderOpen', true); strip(); markPlaying();
+        const sl = $('knCut'); if (sl) flashControl(sl);
+        return;
+      }
+      if (e.target.closest('.vknobs, .cuthit')) return;
       if (e.target.closest('.vfold .vtog, .vfold .hl, .vfold .vorb')) { foldOpen = !foldOpen; store.set('mixHeaderOpen', foldOpen); strip(); markPlaying(); return; }
       const nd = e.target.closest('.cst:not(.mini) .nd[data-i]');
       if (nd) { e.stopPropagation(); showWhy(+nd.dataset.i, e.clientX, e.clientY); return; }
       const b = e.target.closest('.tstage'); if (!b) return;
       if (typeof showMagic === 'function') showMagic();
+    });
+    // the knobs: a slider moved, or the cut-off ring dragged in the drawing beside it
+    if (strip_) {
+      strip_.addEventListener('input', e => { const k = e.target.closest('input.knr'); if (k) setKnob(k.id, k.value); });
+      strip_.addEventListener('keydown', e => { const k = e.target.closest('input.knr'); if (k) kn.key = { id: k.id, at: Date.now() }; });
+      strip_.addEventListener('pointerdown', e => {
+        if (e.target.closest('input.knr')) { kn.held = true; return; }
+        const hit = e.target.closest('.cst .cuthit'); if (!hit) return;
+        e.preventDefault();
+        const svg = hit.ownerSVGElement; kn.held = true; kn.drag = svg;
+        try { svg.setPointerCapture(e.pointerId); } catch (er) { /* a pointer already gone */ }
+        svg.classList.add('dragging');
+      });
+      strip_.addEventListener('pointermove', e => {
+        const svg = kn.drag; if (!svg) return;
+        const p = new DOMPoint(e.clientX, e.clientY).matrixTransform(svg.getScreenCTM().inverse());
+        setCut(cutAt(svg, Math.hypot(p.x, p.y)), 'ring');
+      });
+    }
+    for (const ev of ['pointerup', 'pointercancel']) window.addEventListener(ev, () => {
+      if (kn.drag) kn.drag.classList.remove('dragging');
+      releaseKnob();
     });
     // a sieve bar lights its songs in the connections beside it: hover "9 sound enough
     // like it" and only those nine stay bright
@@ -1221,5 +1481,6 @@ const Trace = (() => {
 
   return { paint, strip, fitCell, onView, showWhy, noteStep, noteRows, diff, diffWords, bind,
            setView, showPop, willReveal, reveal, skipReveal, pullLever, constSvg, markPlaying, mixStatus, lcdNote,
+           holding: () => kn.held && !!$('knCut'),
            get runs() { return runs; }, WHY, TERM };
 })();

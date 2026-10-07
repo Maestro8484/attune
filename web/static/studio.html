@@ -35,6 +35,9 @@
   <!-- Which songs the next mix may draw from. Always visible, so nobody has to remember
        whether a collection is switched on; click to open Mix options and change it. -->
   <span id="fromPill" class="pill" title="Which songs the next mix may draw from. Click to change.">from: Full library</span>
+  <!-- Shown only while the app runs the MusicIP-taught profile (started with it on purpose;
+       never the default), so the reason a list sounds different is in sight. -->
+  <span id="profilePill" class="pill" hidden title="Mixes are scored by the MusicIP-taught profile: the sound fingerprint through a model taught by MusicIP Mixer's own lists, nothing else. It is on because Attune was started with it; the default is the sound profile. Click for Mix options.">MusicIP-taught</span>
 
   <label class="field">
     <input id="mixSize" type="number" min="20" max="150" value="100" step="5" title="Mix length (20–150 tracks, or minutes)">
@@ -123,6 +126,7 @@
     <div class="presets">
       <span class="k">Presets</span>
       <button data-preset="sound" class="chip" hidden>Sound profile (default)</button>
+      <button data-preset="musicip" class="chip" hidden title="Put the dials back to the MusicIP-taught profile's own numbers: the fingerprint alone, through the model taught by MusicIP Mixer's lists">MusicIP-taught profile</button>
       <button data-preset="v2" class="chip">V2 (default)</button>
       <button data-preset="nobpm" class="chip">bpm = 0 <span class="tag">measured</span></button>
     </div>
@@ -175,8 +179,8 @@
     <button id="btnCollDelete" class="chip" hidden title="Delete the chosen collection. The songs stay in the library">Delete collection</button>
   </div>
   <label class="chk" title="On: a mix stops when the next-best song no longer fits, so asking for 50 can return 12; it still keeps the share below, marked, so it is never empty. Off: the count is a quota and the list is padded with the nearest songs however poor"><input id="fitMax" type="checkbox" checked> Stop when songs stop fitting (count is a maximum)</label>
-  <label class="row"><span class="k">Fit line <span class="tag">provisional</span></span>
-    <input id="fitLine" type="number" min="0" max="1" step="0.01" value="0.70" title="A song fits when its score is at least this fraction of a perfect twin's score under the current recipe. It starts at the value set for this library's recipe, not a tuned one; where the line belongs is judged by ear"></label>
+  <label class="row"><span class="k">Cut-off <span class="tag">provisional</span></span>
+    <input id="fitLine" type="number" min="0" max="1" step="0.01" value="0.70" title="The cut-off (the fit line): a song fits when its score is at least this fraction of a perfect twin's score under the current recipe. It starts at the value set for this library's recipe, not a tuned one; where it belongs is judged by ear. The slider in the open fold over a mix moves this same number"></label>
   <label class="row"><span class="k">Sound-alike line <span class="tag">provisional</span></span>
     <input id="clapLine" type="number" min="0" max="1" step="0.001" value="0.990" title="The same idea for Blend, steering and Adventure, which compare sound alone: the closeness a song needs to its target, 1.000 being identical. It starts at the value set for this library's fingerprints"></label>
   <label class="row"><span class="k">But never fewer than</span>

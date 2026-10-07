@@ -287,18 +287,24 @@ function applyEngineDefaults() {
 
 /* The engine's name and the preset chips say which recipe the library is mixed by. The
    V2 chips set V2's numbers, which on a sound-profile library would not give V2 (the
-   scale and the trained head stay), so there they give way to the sound profile's own. */
+   scale and the trained head stay), so there they give way to the profile's own. The
+   MusicIP-taught profile (2026-10-06, TODO.md row 62) is never the default: it is on only
+   when the app was started with it, so the window names it in the top bar as well, where
+   a list that sounds different from yesterday's has its reason in sight. */
 function paintEngineName(s) {
-  const sound = s.profile === 'sound';
+  const PROFILE_NAME = { sound: 'Attune sound profile', musicip: 'Attune MusicIP-taught profile' };
+  const own = PROFILE_NAME[s.profile] ? s.profile : null;
   $('engineName').textContent = s.engine === 'musicip' ? 'MusicIP Mixer (live)'
-    : sound ? 'Attune sound profile' : 'Attune V2';
+    : own ? PROFILE_NAME[own] : 'Attune V2';
   for (const b of document.querySelectorAll('.chip[data-preset]'))
-    b.hidden = (b.dataset.preset === 'sound') !== sound;
+    b.hidden = own ? b.dataset.preset !== own : !!PROFILE_NAME[b.dataset.preset];
+  const pill = $('profilePill');
+  if (pill) pill.hidden = !(s.engine !== 'musicip' && own === 'musicip');
   // The engine decides at load whether the timbre descriptor takes part (hybrid.py
-  // use_lib); under the sound profile it does not, so the dial would move and change
+  // use_lib); under either profile it does not, so the dial would move and change
   // nothing. Say so instead of offering it.
-  $('lib').disabled = sound;
-  $('lib').title = sound ? 'Timbre takes no part under the sound profile.' : '';
+  $('lib').disabled = !!own;
+  $('lib').title = own ? `Timbre takes no part under the ${own === 'sound' ? 'sound' : 'MusicIP-taught'} profile.` : '';
 }
 
 function findRecipe(name) {
@@ -619,6 +625,7 @@ async function initCollections() {
   $('clapLine').addEventListener('change', typed('clapLine'));
   $('fitFloor').addEventListener('change', () => store.set('fitFloor', $('fitFloor').value));
   $('fromPill').onclick = () => $('btnOptions').click();
+  if ($('profilePill')) $('profilePill').onclick = () => $('btnOptions').click();
   $('collList').addEventListener('click', e => {
     const use = e.target.closest('.cuse');
     if (use) { e.stopPropagation(); selectCollection(use.dataset.cid); return; }
@@ -1611,7 +1618,7 @@ async function mixFrom(seedI, opts) {
 /* Say it once, out loud, when a list came back shorter than asked for or empty. The
    full sentence stays on the mix header (#mixStop) for as long as the mix is open. */
 function noteStop(stop) {
-  if (!stop || !stop.sentence) return;
+  if (!stop || !stop.sentence || S.quiet) return;   // S.quiet: a knob in the fold is re-mixing as it moves
   if (['fit', 'floor', 'none_fit', 'empty', 'exhausted', 'trimmed'].includes(stop.reason)) {
     // the reveal (trace.js) says it for a fresh list; the toast is for a step, and it
     // speaks in the verdict's words when the trace carries them
@@ -1792,10 +1799,14 @@ async function showMix(opts = {}) {
   // blend's seeds) sit at the top of the list, so the list on screen is longer by
   // that many. Say so, or "12 of 50" beside "13 tracks" reads as a contradiction.
   const extra = S.stop && S.mix.length ? S.mix.length - (S.stop.returned || 0) : 0;
-  stopEl.textContent = (S.stop && S.stop.sentence)
-    ? S.stop.sentence + (extra > 0 && S.stop.reason !== 'quota' ? ` Plus the ${extra === 1 ? 'seed' : extra + ' seeds'}, ${S.mix.length} on screen.` : '')
-    : '';
-  stopEl.hidden = !stopEl.textContent;
+  // a knob in the open fold is being dragged: the fold stays under the pointer and
+  // Trace.paint() below brings it the new numbers in place
+  if (!(typeof Trace !== 'undefined' && Trace.holding())) {
+    stopEl.textContent = (S.stop && S.stop.sentence)
+      ? S.stop.sentence + (extra > 0 && S.stop.reason !== 'quota' ? ` Plus the ${extra === 1 ? 'seed' : extra + ' seeds'}, ${S.mix.length} on screen.` : '')
+      : '';
+    stopEl.hidden = !stopEl.textContent;
+  }
   stopEl.classList.toggle('short', !!(S.stop && ['fit', 'floor', 'none_fit', 'empty', 'exhausted'].includes(S.stop.reason)));
   if (!S.mix.length) {
     renderRows([]);
@@ -2895,7 +2906,7 @@ async function refine(focusI, msg) {
     }
     const votes = S.liked.length + S.likedArtists.length;
     const against = S.disliked.length + S.dislikedArtists.length;
-    toast(msg || `Steering: +${votes} / −${against}`);
+    if (!S.quiet) toast(msg || `Steering: +${votes} / −${against}`);
   } catch (e) { toast(e.message, true); }
 }
 
@@ -3433,7 +3444,7 @@ function bindEvents() {
   });
 
   document.querySelectorAll('.chip[data-preset]').forEach(b => b.onclick = () => {
-    const w = b.dataset.preset === 'sound' ? ENGINE_DEFAULTS
+    const w = ['sound', 'musicip'].includes(b.dataset.preset) ? ENGINE_DEFAULTS
       : b.dataset.preset === 'nobpm'
       ? { clap: 1.0, lib: 0.4, genre: 0.3, bpm: 0.0, era: 0.1 }
       : { clap: 1.0, lib: 0.4, genre: 0.3, bpm: 0.3, era: 0.1 };
@@ -3567,7 +3578,7 @@ function bindEvents() {
     if (!e.target.closest('.ctxmenu')) $('ctx').hidden = true;
     if (!e.target.closest('#colMenu') && !e.target.closest('#thead-row')) $('colMenu').hidden = true;
     if (!e.target.closest('.why')) $('why').hidden = true;
-    if (!e.target.closest('.popover') && !e.target.closest('#toolbar button')
+    if (!e.target.closest('.popover') && !e.target.closest('#toolbar button') && !e.target.closest('#toolbar .pill')
         && !e.target.closest('#queueTools button') && !e.target.closest('#listTools button')
         && !e.target.closest('#sendBar button'))
       { $('optionsPanel').hidden = true; $('exportPanel').hidden = true; }

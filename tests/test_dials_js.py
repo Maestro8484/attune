@@ -56,7 +56,8 @@ function boot(stats, ls, recipes) {
     recipeSel: el(''), recipeActions: el(''), mixSize: el('100'), dedupOn: el(''),
     dedupField: el(''), engineName: el('') };
   els.fitMax.checked = true;
-  const chips = ['sound', 'v2', 'nobpm'].map(p => { const b = el(''); b.dataset.preset = p; b.hidden = p === 'sound'; return b; });
+  const chips = ['sound', 'musicip', 'v2', 'nobpm'].map(p => { const b = el(''); b.dataset.preset = p; b.hidden = p === 'sound' || p === 'musicip'; return b; });
+  els.profilePill = el(''); els.profilePill.hidden = true;
   const writes = [];
   for (const k of ['clap', 'lib', 'genre', 'bpm', 'era']) {
     const e = els[k]; let v = e.value;
@@ -78,7 +79,7 @@ function state(b) {
   const e = b.els;
   return { dials: ['clap', 'lib', 'genre', 'bpm', 'era'].map(k => +e[k].value),
            fit: b.ctx.api.fitParams(false), clap: b.ctx.api.fitParams(true),
-           name: e.engineName.textContent, libOff: e.lib.disabled,
+           name: e.engineName.textContent, libOff: e.lib.disabled, pill: !e.profilePill.hidden,
            shown: b.chips.filter(c => !c.hidden).map(c => c.dataset.preset), writes: b.writes.slice() };
 }
 const v2 = { engine: 'v2', profile: 'v2', weights: { clap: 1.0, lib: 0.4, genre: 0.3, bpm: 0.3, era: 0.1 }, fit_line: 0.7, clap_line: 0.99 };
@@ -86,6 +87,8 @@ const snd = { engine: 'v2', profile: 'sound', weights: { clap: 1.0, lib: 0.0, ge
 const out = {};
 out.v2 = state(boot(v2, {}));
 out.sound = state(boot(snd, {}));
+const mip = { engine: 'v2', profile: 'musicip', weights: { clap: 1.0, lib: 0.0, genre: 0.0, bpm: 0.0, era: 0.0 }, fit_line: 0.3, clap_line: 0.66 };
+out.musicip = state(boot(mip, {}));
 out.typedForV2OnSound = state(boot(snd, { 'attune.fitLine': '"0.75"', 'attune.clapLine': '"0.995"' }));
 out.typedForSoundOnSound = state(boot(snd, { 'attune.fitLine': '"0.60"', 'attune.clapLine': '"0.800"', 'attune.fitLineProfile': '"sound"' }));
 out.typedForV2OnV2 = state(boot(v2, { 'attune.fitLine': '"0.75"' }));
@@ -123,6 +126,19 @@ def test_the_dials_and_lines_start_from_the_engine():
     assert s["fit"]["min_fit"] == "0.54" and s["clap"]["min_fit"] == "0.79"
     assert s["name"] == "Attune sound profile" and s["shown"] == ["sound"]
     assert s["libOff"], "the Timbre dial does nothing under the sound profile and must say so"
+    assert not s["pill"] and not v2["pill"], "the top bar names a profile only when it is the MusicIP-taught one"
+
+
+def test_the_musicip_taught_profile_is_named_where_it_is_on():
+    """TODO.md row 66 (row 62's last note): started with --profile musicip, the window says so
+    in Mix options, the Presets offer that profile's own numbers and not V2's or the sound
+    profile's, and the top bar carries its name."""
+    m = _run()["musicip"]
+    assert m["name"] == "Attune MusicIP-taught profile"
+    assert m["shown"] == ["musicip"]
+    assert m["pill"] and m["libOff"]
+    assert m["dials"] == [1, 0, 0, 0, 0]
+    assert m["fit"]["min_fit"] == "0.3"
 
 
 def test_a_typed_line_belongs_to_the_recipe_it_was_typed_under():

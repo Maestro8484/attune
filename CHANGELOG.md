@@ -5,6 +5,31 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-06, the knobs in the fold, and the hand-offs in the list)
+
+- **When fewer than 10 songs sound enough like the seed, the folded line says so and points
+  to the fix:** "only 9: widen it" opens the fold at the cut-off.
+- **The cut-off is a slider in the open fold, tied both ways to the dashed ring in the
+  drawing: drag either one.** The count and the dots over the cut-off move at once, read from
+  the run's own record, and the list re-mixes while the pointer is still held (about a quarter
+  of a second on the reference library), without the reveal. Beside it, "Never fewer than" and
+  the length do the same. Each knob writes the same setting Mix options holds (the cut-off is
+  now called Cut-off there too), so the two never disagree; a whole drag is one step for Undo,
+  and one entry in Runs. "Lower the cut-off" moves the slider to the dotted ring it previews.
+- **The list carries the hand-offs in its left edge:** a link from each song to the next, as
+  thick as the two sound alike, the weakest one red with a dot, the same numbers as the thread
+  in the drawing. Shown while the list is in play order, like the cut-off line.
+- **The MusicIP-taught profile is named where it is on:** a small pill in the top bar, the
+  engine name in Mix options, and its own chip in Presets (the V2 chips give way to it, as
+  they do to the sound profile's). The pill, like the "from:" pill beside it, opens Mix
+  options; neither did until now.
+
+### Changed (2026-10-06, easier to read)
+
+- **The faintest grey text is one step brighter** (halfway to the second grey, in every
+  theme) and **no text is smaller than 11 pixels** (37 places were 9 to 10.5), the drawing's
+  own labels included.
+
 ### Changed (2026-10-06, lists fill, and one recording once)
 
 - **The sound profile's cut-off moved from 0.54 to 0.30,** on the owner's yes, placed where a
