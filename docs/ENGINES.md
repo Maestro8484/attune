@@ -33,7 +33,17 @@ year gap                               1.5
 Earfeel                                0.25
 artist links                           0.12   (only in a library that holds that table)
 timbre descriptor, tempo               0
+loudness gap (LUFS)                    0      (only in a library that holds the loudness table)
 ```
+
+**Loudness** (2026-10-06) is each song's integrated loudness in LUFS, the EBU R128 measure,
+stored by `tools/loudness_scan.py` in a table beside the library. The ingredient is the gap
+between a song's loudness and the seed's over 10 LU, subtracted, with an unmeasured side
+counted as 0.5, the year term's shape. It ships at 0: scored on 198 held-out seeds, every
+weight from 0.25 to 2 raised the songs in common with MusicIP Mixer and lowered both listener
+judges, so none passed. The table and the other roads tried (a hard loudness corridor, the
+MusicIP profile with loudness) are in `audit-sonic/loudness_results.txt` in the development
+workspace.
 
 The **trained head** (`src/models/sound_head.npz`, 3 MB) reshapes the 512 numbers of a
 fingerprint into 256 so that songs by artists ListenBrainz listeners play together sit
@@ -81,6 +91,7 @@ score = w_clap  * cosine(CLAP)
       - w_bpm   * |tempo gap| / 40          (LINEAR, not octave-folded)
       - w_era   * |year gap| / 25
       + w_key   * key compatibility         (OFF by default)
+      - w_loud  * |LUFS gap| / 10           (OFF by default; needs the loudness table)
 ```
 
 The shipped weights, `DEFAULT_WEIGHTS` in `src/hybrid.py`, are

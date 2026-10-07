@@ -5,6 +5,21 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Added (2026-10-06, loudness measured the broadcast way)
+
+- **Every song's loudness, measured the way radio and streaming services measure it.**
+  `tools/loudness_scan.py` reads each song once with ffmpeg's EBU R128 meter and stores its
+  integrated loudness (LUFS), loudness range and true peak in a new table beside the library.
+  It copies the library first and checks the copy, picks up where it stopped if interrupted,
+  measures a song again when its file changes, and never writes into a music file. On a library
+  of about 21,000 songs it took 80 minutes.
+- **Loudness as an ingredient the engine can weigh, off by default.** The `loud` weight scores
+  how near a song's loudness sits to the seed's, the same way the year is scored. Scored on 198
+  seeds by three outside judges, it brought the lists closer to MusicIP Mixer's and further from
+  what listeners play together, so it ships at 0 and no list changes. The library stats report
+  it and a mix accepts `loud=`, ready for a dial. A library without the table scores exactly as
+  before.
+
 ### Added (2026-10-06, the knobs in the fold, and the hand-offs in the list)
 
 - **When fewer than 10 songs sound enough like the seed, the folded line says so and points
