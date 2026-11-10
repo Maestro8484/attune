@@ -9,7 +9,7 @@ Usage:
   python scan.py stats
 """
 from __future__ import annotations
-import sys, os, re, json, time, shutil, argparse, subprocess, sqlite3
+import sys, os, re, json, time, shutil, argparse, subprocess, sqlite3, hashlib, contextlib
 import concurrent.futures as cf
 import db as dbm
 import enrich
@@ -428,7 +428,8 @@ def _ffprobe_tags(path):
         return {"title": os.path.splitext(os.path.basename(path))[0]}
 
 
-def import_folder(db_path, music_dir, workers=8, exclude=(), catalog_tags=False):
+def import_folder(db_path, music_dir, workers=8, exclude=(), catalog_tags=False,
+                  allow_second_copy=False):
     """`catalog_tags` also reads each file's catalog tags (recording id, artist ids, original
     release date, STYLE) into catalog_ids. Off by default: those rows change how a mix is
     scored (src/enrich.py), and that waits on a listening test."""
@@ -456,6 +457,8 @@ def import_folder(db_path, music_dir, workers=8, exclude=(), catalog_tags=False)
             if os.path.splitext(n)[1].lower() in AUDIO_EXTS:
                 files.append(os.path.abspath(os.path.join(root, n)))
     print(f"found {len(files)} audio files under {music_dir}")
+    if not allow_second_copy:
+        _refuse_second_copy(conn, music_dir, files)
     n = n_cat = 0
 
     def _read(path):
@@ -648,6 +651,176 @@ def _clear_clap(conn, paths, only_failed=True):
 _SAID_NO_CLAP_TABLE = False
 
 
+SIG_BLOCK = 65536        # bytes hashed
+SIG_BACK = 262144        # where the block starts, counted back from the end of the file
+
+
+def audio_signature(path):
+    """A short hash that stays the same while a file's AUDIO stays the same, or None if
+    the file cannot be read.
+
+    It hashes one 64 KB block that starts 256 KB before the end of the file. Tags sit at
+    the very start of a file (ID3v2, FLAC and Ogg comments, usually the MP4 index) or in
+    its last few hundred bytes (ID3v1), so rewriting them, or changing nothing but the
+    file's date, leaves this block byte for byte where it was, counted from the end.
+
+    The standard answer is a checksum of the decoded audio (FLAC stores one in its
+    header); it is not used here because it costs a full decode of every song, which is
+    the cost this exists to avoid. The shortcut is allowed to be wrong in one direction
+    only: a tag written at the END of the file that changes the file's length (an APE
+    tag, an MP4 index kept at the end), or any file under 256 KB, reads as changed and is
+    analyzed again, which is what happened to every such file before this existed. It
+    cannot read different audio as unchanged short of a hash collision."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            if size > SIG_BACK:
+                f.seek(size - SIG_BACK)
+                data = f.read(SIG_BLOCK)
+            else:
+                data = f.read()
+        return hashlib.sha1(data).hexdigest()
+    except OSError:
+        return None
+
+
+def _signatures(paths, read_map, workers=8):
+    """{path: signature} for `paths`, read a few at a time (a NAS answers slowly)."""
+    if not paths:
+        return {}
+    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+        sigs = ex.map(lambda p: audio_signature(_read_path(p, read_map)), paths)
+        return dict(zip(paths, sigs))
+
+
+def _settle_unchanged_audio(conn, read_map=None):
+    """Before anything is analyzed: find the songs whose file DATE moved while their audio
+    did not, mark them current, and return their paths.
+
+    A scan used to decide "changed" by the date alone. On 2026-11-09 a date sync between a
+    local disk and a NAS, with some tag edits, queued 20,083 of 21,310 songs for about four
+    hours of analysis that could only reproduce the numbers already stored (ISSUES.md row
+    104). The loudness table keys on the same date, so its rows for these songs are moved
+    along too, or the loudness stage would measure all of them again.
+
+    Also notes the signature of every up-to-date song that has none yet (a library made
+    before this existed), so that library is covered from its next scan on."""
+    has_loud = bool(conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='loudness'").fetchone())
+    stale = conn.execute(
+        """SELECT f.path, f.audio_sig, f.src_mtime, t.mtime
+             FROM features f JOIN tracks t ON t.path = f.path
+            WHERE f.vec IS NOT NULL AND f.audio_sig IS NOT NULL
+              AND f.src_mtime IS NOT NULL AND t.mtime IS NOT NULL
+              AND f.src_mtime != t.mtime""").fetchall()
+    now = _signatures([r[0] for r in stale], read_map)
+    same = []
+    for path, sig, old, new in stale:
+        if now.get(path) == sig:
+            conn.execute("UPDATE features SET src_mtime=? WHERE path=?", (new, path))
+            if has_loud:
+                conn.execute("UPDATE loudness SET src_mtime=? WHERE path=? AND src_mtime=?",
+                             (new, path, old))
+            same.append(path)
+    if stale:
+        conn.commit()
+        print(f"{len(same)} of {len(stale)} songs with a new file date hold the same audio "
+              f"as before; they are not analyzed again")
+    unsigned = [r[0] for r in conn.execute(
+        """SELECT f.path FROM features f JOIN tracks t ON t.path = f.path
+            WHERE f.vec IS NOT NULL AND f.audio_sig IS NULL
+              AND f.src_mtime IS NOT NULL AND f.src_mtime = t.mtime""")]
+    if unsigned:
+        print(f"noting the audio of {len(unsigned)} analyzed songs, once, so a changed "
+              f"file date alone never sends them back through analysis", flush=True)
+        n = 0
+        for path, sig in _signatures(unsigned, read_map).items():
+            if sig:
+                conn.execute("UPDATE features SET audio_sig=? WHERE path=?", (sig, path))
+                n += 1
+        conn.commit()
+        print(f"noted {n} of {len(unsigned)}")
+    return same
+
+
+def _tail(path, parts=3):
+    """The last few components of a path, lower-cased: album folder and file name, which
+    stay the same when one music folder is reached through two drive letters."""
+    bits = re.split(r"[\\/]+", os.path.normcase(path))
+    return "/".join(bits[-parts:])
+
+
+def _second_copy(conn, music_dir, files, sample=400):
+    """(count of new files, the folder the library already has them under) when `music_dir`
+    holds music the library already lists under ANOTHER folder; else None.
+
+    Songs are keyed by their full path, so the same folder reached as L:\\... and again as
+    M:\\... imports as two separate libraries' worth of songs. On 2026-11-09 that took a
+    library from 21,310 songs to 42,671 in ten minutes and queued the copies for eight
+    hours of analysis (ISSUES.md row 105). The test: of the files not yet in the library,
+    do at least 20, and at least 8 in 10 of an even sample, end in the same
+    album-folder/file-name as a song already listed somewhere outside `music_dir`."""
+    root = os.path.normcase(os.path.abspath(music_dir)).rstrip("\\/")
+    known = [r[0] for r in conn.execute("SELECT path FROM tracks")]
+    listed = {os.path.normcase(p) for p in known}
+    new = [f for f in files if os.path.normcase(f) not in listed]
+    if len(new) < 20:
+        return None
+    elsewhere = {}
+    for p in known:
+        pn = os.path.normcase(p)
+        if not pn.startswith(root + os.sep):
+            elsewhere[_tail(pn)] = p
+    step = max(1, len(new) // sample)
+    picked = new[::step][:sample]
+    hits = [elsewhere[_tail(f)] for f in picked if _tail(f) in elsewhere]
+    if len(hits) < 20 or len(hits) < 0.8 * len(picked):
+        return None
+    try:
+        other = os.path.commonpath(hits)
+    except ValueError:
+        other = os.path.dirname(hits[0])
+    return len(new), other
+
+
+def _refuse_second_copy(conn, music_dir, files):
+    twin = _second_copy(conn, music_dir, files)
+    if not twin:
+        return
+    n, other = twin
+    # One line, starting with the words web/scanjob.py looks for (_TWIN_MARK), because the
+    # window shows this sentence to the person as it is written here.
+    print(f"NOT imported: the songs in {music_dir} are already in your library from "
+          f"{other}. Scanning both would list every song twice ({n} songs). Scan only one "
+          f"of the two folders: remove the other in Preferences, Library.", flush=True)
+    raise SystemExit(3)
+
+
+@contextlib.contextmanager
+def _pool_that_drops_its_queue(workers, conn):
+    """A thread pool for analyze() that, when the block using it raises, DROPS the songs
+    still queued instead of working through them.
+
+    analyze() queues every song up front, and a plain `with ThreadPoolExecutor` waits for
+    the whole queue on the way out, whatever happened. So when the save loop died (most
+    often: the window reading our output was closed, and the next progress line had
+    nowhere to go) the process still analyzed every remaining song, for hours, on every
+    core, and saved none of them. Seen 2026-11-09 with 40,945 songs queued (ISSUES.md row
+    103). The handful already in flight finish; what has been saved is committed."""
+    ex = cf.ThreadPoolExecutor(max_workers=workers)
+    try:
+        yield ex
+    except BaseException:
+        ex.shutdown(wait=False, cancel_futures=True)
+        try:
+            conn.commit()
+        except Exception:
+            pass
+        raise
+    else:
+        ex.shutdown(wait=True)
+
+
 def _select_todo(want, done, force=False, named=False):
     """The tracks this run analyzes: `want` minus the up-to-date ones, unless `force`.
 
@@ -674,6 +847,9 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     # Ask once, on this thread, so the worker threads all find the answer cached rather
     # than each spawning its own `ffmpeg -version` on first use.
     feat.decoder_available()
+    # First settle the songs whose date moved but whose audio did not, so the query below
+    # already counts them as done.
+    _settle_unchanged_audio(conn, read_map)
     done = dbm.up_to_date_paths(conn)   # skip only unchanged, already-analyzed tracks
     retry = _retry_paths(conn, retry_failed)
     if retry:
@@ -710,7 +886,7 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
     local = sum(1 for p in todo if _read_path(p, read_map) != p)
     if read_map:
         print(f"reading {local}/{len(todo)} from local mirror, the rest from original path")
-    with cf.ThreadPoolExecutor(max_workers=workers) as ex:
+    with _pool_that_drops_its_queue(workers, conn) as ex:
         futs = {ex.submit(_analyze_one, p, _read_path(p, read_map)): p for p in todo}
         for i, fut in enumerate(cf.as_completed(futs), 1):
             path, vec, tempo, err, dt, redecoded, short_read, an_seconds = fut.result()
@@ -726,7 +902,9 @@ def analyze(db_path, limit=None, workers=4, paths_file=None, read_map=None,
             else:
                 dbm.save_features(conn, path, vec, tempo, int(time.time()), err,
                                   src_mtime=mtimes.get(path),
-                                  analyzed_seconds=an_seconds)
+                                  analyzed_seconds=an_seconds,
+                                  audio_sig=(audio_signature(_read_path(path, read_map))
+                                             if vec is not None else None))
             if err:
                 n_err += 1
             else:
@@ -813,10 +991,14 @@ def main():
                     help="with import-folder: also read each file's MusicBrainz recording and "
                          "artist ids, original release date and STYLE into catalog_ids "
                          "(settings `read_catalog_tags` feeds this; off by default)")
+    ap.add_argument("--allow-second-copy", action="store_true",
+                    help="with import-folder: import the folder even when its songs are "
+                         "already in the library under another folder, listing each twice")
     a = ap.parse_args()
     add_user_bin_to_path()
     if a.cmd == "import-folder":
-        import_folder(a.db, a.arg, exclude=a.exclude or (), catalog_tags=a.catalog_tags)
+        import_folder(a.db, a.arg, exclude=a.exclude or (), catalog_tags=a.catalog_tags,
+                      allow_second_copy=a.allow_second_copy)
     elif a.cmd == "import-catalog":
         import_catalog(a.db, a.arg)
     elif a.cmd == "analyze":

@@ -75,6 +75,13 @@ def connect(db_path: str) -> sqlite3.Connection:
     if "src_mtime" not in cols:
         conn.execute("ALTER TABLE features ADD COLUMN src_mtime INTEGER")
         conn.commit()
+    # Same additive shape for audio_sig: a short hash of a block of the file's audio,
+    # taken when the song was analyzed (scan.audio_signature). It is what lets a scan tell
+    # "the file's date changed" from "the audio changed", so a tag edit or a date sync
+    # never sends a whole library back through analysis (ISSUES.md row 104).
+    if "audio_sig" not in cols:
+        conn.execute("ALTER TABLE features ADD COLUMN audio_sig TEXT")
+        conn.commit()
     # Same additive shape for analyzed_seconds, and deliberately NOT a SCHEMA_VERSION
     # bump: the validate branch below is fail-closed and would tell every existing
     # library to delete itself, which is the opposite of what this column is for. A
@@ -141,19 +148,21 @@ def upsert_track(conn, rec: dict):
 
 
 def save_features(conn, path: str, vec, tempo, analyzed_at, error=None, src_mtime=None,
-                  analyzed_seconds=None):
+                  analyzed_seconds=None, audio_sig=None):
     blob = None if vec is None else np.asarray(vec, dtype=np.float32).tobytes()
     dim = None if vec is None else int(np.asarray(vec).shape[0])
     conn.execute(
         """INSERT INTO features(path,dim,vec,tempo,analyzed_at,error,src_mtime,
-                                analyzed_seconds)
-           VALUES(?,?,?,?,?,?,?,?)
+                                analyzed_seconds,audio_sig)
+           VALUES(?,?,?,?,?,?,?,?,?)
            ON CONFLICT(path) DO UPDATE SET
              dim=excluded.dim, vec=excluded.vec, tempo=excluded.tempo,
              analyzed_at=excluded.analyzed_at, error=excluded.error,
              src_mtime=excluded.src_mtime,
-             analyzed_seconds=excluded.analyzed_seconds""",
-        (path, dim, blob, tempo, analyzed_at, error, src_mtime, analyzed_seconds),
+             analyzed_seconds=excluded.analyzed_seconds,
+             audio_sig=excluded.audio_sig""",
+        (path, dim, blob, tempo, analyzed_at, error, src_mtime, analyzed_seconds,
+         audio_sig),
     )
 
 

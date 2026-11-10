@@ -5,6 +5,27 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+### Fixed (2026-11-09, a rescan that would not stop)
+
+- **Closing Attune now stops the scan.** Closing the window during a scan used to leave the
+  analyzer running in the background for hours, on every processor core, saving nothing, until
+  it was ended from Task Manager. The analyzer is now tied to the window: however Attune ends,
+  Windows ends the analyzer with it, within seconds. The analyzer also stops by itself when
+  nothing is reading its progress any more.
+- **A changed file date no longer sends the whole library back through analysis.** A scan used
+  to decide a song had changed by its "date modified" alone, so editing tags or syncing dates
+  between two drives queued every song to be listened to again, about four hours on a library of
+  21,000. A scan now checks the audio itself and re-listens only to songs whose audio changed.
+  A library made by an earlier version is covered from its next scan on.
+- **The same music under a second folder is refused, not listed twice.** Scanning a folder
+  whose songs are already in the library under another folder or drive letter (a NAS copy of
+  the same music, for one) used to add every song a second time. The scan now stops before
+  importing anything and says which folder already holds them.
+- **The scan log no longer reads like a failing scan.** The MP3 decoder's remarks about odd tag
+  frames and stray bytes, hundreds of lines saying "error" for songs that decoded perfectly,
+  are counted in one line per stage instead of written out. A song that really could not be
+  read is still counted and named.
+
 ### Added (2026-10-06, loudness measured the broadcast way)
 
 - **Every song's loudness, measured the way radio and streaming services measure it.**

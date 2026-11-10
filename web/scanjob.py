@@ -81,6 +81,87 @@ ANALYZER_SUBDIR = "analyzer"
 ANALYZER_EXE = "AttuneAnalyzer.exe"
 
 
+# What the MP3 decoder and librosa mutter on stderr while a song decodes perfectly well: odd
+# tag frames, a few junk bytes at the end of a file, a deprecation notice. On 2026-11-09 a
+# real scan wrote 515 lines saying "error" in 28 minutes while its own count read
+# `ok=800 err=0`, and they read as a failing scan (ISSUES.md row 106). They are counted
+# per stage and left out of the log and the window; a song that really could not be read
+# is counted in the progress line's err= and named by the analyzer itself.
+_CHATTER_RE = re.compile(
+    r"libmpg123"
+    r"|^Note: (Illegal Audio-MPEG-Header|Trying to resync|Skipped [0-9]+ bytes|Hit end of)"
+    r"|^Warning: Xing stream size off"
+    r"|UserWarning: PySoundFile failed"
+    r"|FutureWarning: librosa"
+    r"|Deprecated as of librosa version"
+    r"|It will be removed in librosa version"
+    r"|^[ \t]*y, (_|sr_native) = ")
+
+# The words scan.py's import stage starts its refusal with when a folder holds music the
+# library already has under another folder (src/scan.py, _refuse_second_copy).
+_TWIN_MARK = "NOT imported:"
+
+# ---- the analyzer must never outlive the window (ISSUES.md row 103) -----------------
+# Closing Attune during a scan used to leave AttuneAnalyzer.exe running for hours on every
+# core. The standard Windows answer is a job object marked kill-on-close: this process
+# holds the only handle, so however it ends (closed, crashed, ended from Task Manager)
+# Windows ends every process in the job with it, the analyzer's own ffmpeg children
+# included. ctypes, not pywin32: the app does not ship pywin32.
+_JOB = None
+_JOB_LOCK = threading.Lock()
+
+
+def _tie_to_this_process(proc):
+    """Put `proc` in this process's kill-on-close job. True if it is tied. Never raises:
+    a scan that cannot be tied still runs, and the analyzer's own exit when nobody reads
+    its output (src/scan.py analyze) is the second line of defence."""
+    global _JOB
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.CreateJobObjectW.restype = wintypes.HANDLE
+        k32.CreateJobObjectW.argtypes = (ctypes.c_void_p, wintypes.LPCWSTR)
+        k32.SetInformationJobObject.argtypes = (wintypes.HANDLE, ctypes.c_int,
+                                                ctypes.c_void_p, wintypes.DWORD)
+        k32.AssignProcessToJobObject.argtypes = (wintypes.HANDLE, wintypes.HANDLE)
+        with _JOB_LOCK:
+            if _JOB is None:
+                class _Basic(ctypes.Structure):
+                    _fields_ = [("PerProcessUserTimeLimit", ctypes.c_longlong),
+                                ("PerJobUserTimeLimit", ctypes.c_longlong),
+                                ("LimitFlags", wintypes.DWORD),
+                                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                                ("ActiveProcessLimit", wintypes.DWORD),
+                                ("Affinity", ctypes.c_size_t),
+                                ("PriorityClass", wintypes.DWORD),
+                                ("SchedulingClass", wintypes.DWORD)]
+
+                class _Extended(ctypes.Structure):
+                    _fields_ = [("BasicLimitInformation", _Basic),
+                                ("IoInfo", ctypes.c_ulonglong * 6),
+                                ("ProcessMemoryLimit", ctypes.c_size_t),
+                                ("JobMemoryLimit", ctypes.c_size_t),
+                                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                                ("PeakJobMemoryUsed", ctypes.c_size_t)]
+
+                h = k32.CreateJobObjectW(None, None)
+                if not h:
+                    return False
+                info = _Extended()
+                info.BasicLimitInformation.LimitFlags = 0x2000   # KILL_ON_JOB_CLOSE
+                if not k32.SetInformationJobObject(h, 9, ctypes.byref(info),
+                                                   ctypes.sizeof(info)):
+                    return False
+                _JOB = h
+        return bool(k32.AssignProcessToJobObject(_JOB, wintypes.HANDLE(int(proc._handle))))
+    except Exception:
+        return False
+
+
 def _analyzer_exe():
     return os.path.join(os.path.dirname(os.path.abspath(sys.executable)),
                         ANALYZER_SUBDIR, ANALYZER_EXE)
@@ -304,9 +385,16 @@ class ScanJob:
             self.logger.error("stage %s failed to start: %s", name, e)
             self.stages_done.append({"name": name, "rc": -1, "seconds": 0})
             return -1
+        if not _tie_to_this_process(self.proc) and os.name == "nt":
+            self.logger.warning("stage %s could not be tied to this window; it stops by "
+                                "itself once its output is no longer read", name)
+        chatter = 0
         for line in self.proc.stdout:
             line = line.rstrip()
             if not line:
+                continue
+            if _CHATTER_RE.search(line):
+                chatter += 1
                 continue
             self.lines.append(line)
             self.logger.info("[%s] %s", name, line)
@@ -315,6 +403,10 @@ class ScanJob:
                 self.progress = (int(m.group(1)), int(m.group(2)))
         rc = self.proc.wait()
         self.proc = None
+        if chatter:
+            self.logger.info("[%s] %s decoder notes about odd tags or stray bytes were left "
+                             "out of this log; a song that could not be read is counted in "
+                             "err= above", name, chatter)
         seconds = round(time.time() - t0, 1)
         self.stages_done.append({"name": name, "rc": rc, "seconds": seconds})
         self.logger.info("stage done: %s rc=%s seconds=%s", name, rc, seconds)
@@ -392,7 +484,11 @@ class ScanJob:
                                            *self._catalog_args()))
                 if rc != 0:
                     if not self.cancelled:
-                        self.error = f"import failed (rc={rc}) — see log tail"
+                        # A refusal is not a failure: the import declined to list every
+                        # song twice, and its own sentence says which folder and what to do.
+                        twin = next((l for l in self.lines if _TWIN_MARK in l), None)
+                        self.error = (twin.strip() if twin
+                                      else f"import failed (rc={rc}) — see log tail")
                     return
             if self.cancelled:
                 return
