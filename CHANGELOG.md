@@ -5,6 +5,8 @@ Format loosely follows [Keep a Changelog](https://keepachangelog.com/).
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-09
+
 ### Fixed (2026-11-09, a rescan that would not stop)
 
 - **Closing Attune now stops the scan.** Closing the window during a scan used to leave the
